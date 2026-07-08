@@ -69,12 +69,13 @@ class GoogleWebhookHandler(BaseWebhookHandler):
     # BaseWebhookHandler interface
     # ------------------------------------------------------------------
 
-    def extract_user_id(self, payload: dict[str, Any]) -> str | None:
-        """healthUserId lives under ``data`` — pull it for log correlation."""
-        data = payload.get("data")
-        if isinstance(data, dict):
-            value = data.get("healthUserId")
-            return str(value) if value is not None else None
+    def extract_user_id(self, payload: Any) -> str | None:
+        """healthUserId lives under each notification's ``data`` — pull the first for log correlation."""
+        items = payload if isinstance(payload, list) else [payload]
+        for item in items:
+            data = item.get("data") if isinstance(item, dict) else None
+            if isinstance(data, dict) and data.get("healthUserId") is not None:
+                return str(data["healthUserId"])
         return None
 
     def verify_signature(self, request: Request, body: bytes) -> bool:
@@ -94,36 +95,52 @@ class GoogleWebhookHandler(BaseWebhookHandler):
         expected = f"Bearer {secret_setting.get_secret_value()}"
         return self._verify_token(expected, provided)
 
-    def parse_payload(self, body: bytes) -> dict[str, Any]:
+    def parse_payload(self, body: bytes) -> dict[str, Any] | list[Any]:
         try:
             payload = json.loads(body)
         except (json.JSONDecodeError, ValueError) as exc:
+            log_structured(
+                logger,
+                "warning",
+                "Google webhook: unparseable body",
+                provider="google",
+                action="webhook_bad_payload",
+                body_len=len(body),
+                body_preview=body[:500].decode("utf-8", "replace"),
+            )
             raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
-        if not isinstance(payload, dict):
+        if not isinstance(payload, (dict, list)):
+            log_structured(
+                logger,
+                "warning",
+                "Google webhook: unexpected JSON root",
+                provider="google",
+                action="webhook_bad_payload",
+                json_type=type(payload).__name__,
+                body_preview=body[:500].decode("utf-8", "replace"),
+            )
             raise HTTPException(status_code=400, detail="Invalid JSON body")
         return payload
 
-    def dispatch(self, db: DbSession, payload: dict[str, Any]) -> dict[str, Any]:
-        """Ack the verification handshake, or enqueue async processing of a notification.
+    def dispatch(self, db: DbSession, payload: dict[str, Any] | list[Any]) -> dict[str, Any]:
+        """Ack the verification handshake, or enqueue async processing of a notification batch.
 
-        By the time we get here ``verify_signature`` has already passed, so an
+        Google sends the verification handshake as an object (``{"type": "verification"}``)
+        and data notifications as a JSON array. ``verify_signature`` has already passed, so an
         authenticated verification handshake simply returns 200.
         """
-        if payload.get("type") == "verification":
+        if isinstance(payload, dict) and payload.get("type") == "verification":
             log_structured(logger, "info", "Google webhook endpoint verified", provider="google")
             return {"status": "verified"}
 
         trace_id = str(uuid4())[:8]
-        data = payload.get("data") or {}
         log_structured(
             logger,
             "info",
             "Received Google webhook",
             provider="google",
             trace_id=trace_id,
-            operation=data.get("operation", "unknown"),
-            data_type=data.get("dataType", "unknown"),
-            provider_user_id=data.get("healthUserId", "unknown"),
+            notifications=len(payload) if isinstance(payload, list) else 1,
         )
 
         store_raw_payload(source="webhook", provider="google", payload=payload, trace_id=trace_id)
@@ -146,17 +163,25 @@ class GoogleWebhookHandler(BaseWebhookHandler):
     # Async processing (called by the process_webhook_push Celery task)
     # ------------------------------------------------------------------
 
-    def process_payload(self, db: DbSession, payload: dict[str, Any], trace_id: str) -> dict[str, Any]:
+    def process_payload(self, db: DbSession, payload: dict[str, Any] | list[Any], trace_id: str) -> dict[str, Any]:
+        """Process one notification or a batch; Google sends data notifications as an array."""
+        items = payload if isinstance(payload, list) else [payload]
+        results = [self._process_one(db, item, trace_id) for item in items]
+        records = sum(int(r.get("records_saved") or 0) for r in results)
+        return {"status": "processed", "notifications": len(items), "records_saved": records, "results": results}
+
+    def _process_one(self, db: DbSession, item: Any, trace_id: str) -> dict[str, Any]:
         """Resolve the user, fetch the changed data over its intervals, and persist it."""
         try:
-            notification = GoogleWebhookNotification(**payload)
+            notification = GoogleWebhookNotification.model_validate(item)
         except (ValidationError, TypeError) as exc:
             log_structured(
                 logger,
                 "warning",
-                "Invalid Google webhook payload",
+                "Invalid Google webhook notification",
                 provider="google",
                 trace_id=trace_id,
+                item_keys=sorted(item.keys()) if isinstance(item, dict) else None,
                 error=str(exc),
             )
             return {"status": "error", "error": f"Invalid payload: {exc}"}
