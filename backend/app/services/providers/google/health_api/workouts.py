@@ -19,6 +19,7 @@ from app.schemas.enums import ProviderName
 from app.schemas.model_crud.activities import EventRecordCreate, EventRecordDetailCreate
 from app.services.event_record_service import event_record_service
 from app.services.providers.google.health_api.helpers import (
+    GOOGLE_HEALTH_API_SOURCE,
     as_int,
     extract_source,
     parse_duration_seconds,
@@ -118,7 +119,7 @@ class GoogleHealthApiWorkouts(BaseWorkoutsTemplate):
             category="workout",
             type=get_unified_google_workout_type(exercise.get("exerciseType", "")).value,
             provider=ProviderName.GOOGLE.value,
-            source="google",
+            source=GOOGLE_HEALTH_API_SOURCE,
             source_name=source_name,
             device_model=device_model,
             external_id=raw_workout.get("name"),

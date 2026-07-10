@@ -23,6 +23,7 @@ from app.schemas.model_crud.activities.sleep import SleepStage
 from app.services.event_record_service import event_record_service
 from app.services.providers.api_client import make_authenticated_request
 from app.services.providers.google.health_api.helpers import (
+    GOOGLE_HEALTH_API_SOURCE,
     as_int,
     extract_source,
     parse_interval,
@@ -118,7 +119,7 @@ class GoogleHealthApiSleep:
             id=record_id,
             category="sleep",
             provider=ProviderName.GOOGLE.value,
-            source="google",
+            source=GOOGLE_HEALTH_API_SOURCE,
             source_name=source_name,
             device_model=device_model,
             external_id=point.get("name") or metadata.get("externalId"),

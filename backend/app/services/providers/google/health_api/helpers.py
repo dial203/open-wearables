@@ -6,6 +6,8 @@ from typing import Any
 
 from app.utils.dates import offset_to_iso
 
+GOOGLE_HEALTH_API_SOURCE = "google_health_api"
+
 
 def _to_rfc3339(dt: datetime) -> str:
     """RFC3339 UTC with a 'Z' suffix; naive datetimes are assumed UTC."""
@@ -66,9 +68,10 @@ def extract_source(data_source: Any) -> tuple[str, str | None]:
         return "Google Health", None
     device = data_source.get("device") or {}
     platform = data_source.get("platform")
+    form_factor = device.get("formFactor")
     device_model = (
         device.get("displayName")
-        or " ".join(p for p in (device.get("manufacturer"), device.get("formFactor")) if p)
+        or " ".join(p for p in (device.get("manufacturer"), form_factor.lower() if form_factor else None) if p)
         or platform
         or None
     )

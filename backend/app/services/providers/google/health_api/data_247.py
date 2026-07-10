@@ -25,6 +25,7 @@ from app.schemas.model_crud.activities import TimeSeriesSampleCreate
 from app.schemas.providers.google import DataTypeMetric, ListSpec, RollupSpec, TimeShape
 from app.services.providers.api_client import make_authenticated_request
 from app.services.providers.google.health_api.helpers import (
+    GOOGLE_HEALTH_API_SOURCE,
     extract_source,
     parse_date,
     parse_rfc3339,
@@ -381,7 +382,7 @@ class GoogleHealth247Data(Base247DataTemplate):
         return TimeSeriesSampleCreate(
             id=uuid4(),
             user_id=user_id,
-            source=self.provider_name,
+            source=GOOGLE_HEALTH_API_SOURCE,
             provider=self.provider_name,
             device_model=device_model,
             recorded_at=recorded_at,
