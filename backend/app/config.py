@@ -14,6 +14,7 @@ from pydantic import AnyHttpUrl, Field, SecretStr, ValidationInfo, field_validat
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.utils.config_utils import (
+    AccessLogLevel,
     EncryptedField,
     EnvironmentType,
     FernetDecryptorField,
@@ -42,6 +43,9 @@ class Settings(BaseSettings):
     paging_limit: int = 100
     cors_origins: list[AnyHttpUrl] = []
     cors_allow_all: bool = False
+
+    # None → derived in derive_access_log_level (prod: errors only, else: all)
+    access_log_level: AccessLogLevel | None = None
 
     # DATABASE SETTINGS
     db_host: str = "db"
@@ -210,6 +214,14 @@ class Settings(BaseSettings):
     svix_jwt_secret: SecretStr | None = None
     # Bearer token for the Svix API.  If unset, auto-generated from svix_jwt_secret at startup.
     svix_auth_token: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def derive_access_log_level(self) -> "Settings":
+        if self.access_log_level is None:
+            self.access_log_level = (
+                AccessLogLevel.ERRORS if self.environment == EnvironmentType.PRODUCTION else AccessLogLevel.ALL
+            )
+        return self
 
     @model_validator(mode="after")
     def derive_svix_jwt_secret(self) -> "Settings":
