@@ -16,6 +16,7 @@ from app.schemas.model_crud.data_priority import (
     ProviderPriorityListResponse,
     ProviderPriorityResponse,
 )
+from app.utils.device_registry import humanize_device_model
 from app.utils.exceptions import handle_exceptions
 
 
@@ -152,7 +153,9 @@ class PriorityService:
             # column is a String, not a native enum), so there is no .value.
             parts.append(ds.provider.capitalize())
         if ds.device_model:
-            parts.append(ds.device_model)
+            # Prefer a marketing name for opaque hardware codes; fall back to the
+            # raw device_model when the code is unknown (never lost).
+            parts.append(humanize_device_model(ds.device_model) or ds.device_model)
         elif ds.original_source_name:
             parts.append(ds.original_source_name)
         return " - ".join(parts) if parts else "Unknown Source"

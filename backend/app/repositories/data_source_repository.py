@@ -10,6 +10,7 @@ from app.repositories.provider_priority_repository import ProviderPriorityReposi
 from app.repositories.repositories import CrudRepository
 from app.schemas.enums import DeviceType, ProviderName, infer_device_type_from_model, infer_device_type_from_source_name
 from app.schemas.model_crud.data_priority import DataSourceCreate, DataSourceUpdate
+from app.utils.device_registry import resolve_brand
 
 
 class DataSourceRepository(
@@ -58,6 +59,13 @@ class DataSourceRepository(
         source: str | None = None,
         original_source_name: str | None = None,
     ) -> DataSource:
+        # Non-destructive brand tagging: when the provider did not supply an
+        # original_source_name, derive a canonical brand (e.g. Oura data arriving
+        # via Apple/Google Health) so the same brand groups across ingest paths.
+        # device_model is never touched - the raw hardware code is preserved.
+        if original_source_name is None:
+            original_source_name = resolve_brand(provider, device_model, source)
+
         existing = self.get_by_identity(db_session, user_id, provider, device_model, source)
         if existing:
             updated = False
