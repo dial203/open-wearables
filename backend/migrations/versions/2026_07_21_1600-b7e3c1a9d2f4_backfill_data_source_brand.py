@@ -28,10 +28,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     conn = op.get_bind()
     rows = conn.execute(
-        sa.text(
-            "SELECT id, provider, device_model, source FROM data_source "
-            "WHERE original_source_name IS NULL"
-        )
+        sa.text("SELECT id, provider, device_model, source FROM data_source WHERE original_source_name IS NULL")
     ).fetchall()
     for row in rows:
         try:

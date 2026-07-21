@@ -43,20 +43,25 @@ P = ProviderName
         (P.SAMSUNG, "SM-Q501", "Galaxy Ring", "Samsung"),
     ],
 )
-def test_resolve_brand(provider, device_model, source, expected):
+def test_resolve_brand(
+    provider: ProviderName,
+    device_model: str | None,
+    source: str | None,
+    expected: str | None,
+) -> None:
     assert resolve_brand(provider, device_model, source) == expected
 
 
-def test_resolve_brand_unknown_provider_without_signal_returns_none():
+def test_resolve_brand_unknown_provider_without_signal_returns_none() -> None:
     assert resolve_brand(P.UNKNOWN, None, None) is None
 
 
-def test_humanize_device_model_maps_known_codes():
+def test_humanize_device_model_maps_known_codes() -> None:
     assert humanize_device_model("iPhone10,5") == "iPhone 8 Plus"
     assert humanize_device_model("SM-S901U") == "Galaxy S22"
 
 
-def test_humanize_device_model_unknown_returns_none():
+def test_humanize_device_model_unknown_returns_none() -> None:
     # Unknown codes fall back to the raw identifier (caller keeps device_model).
     assert humanize_device_model("Watch99,9") is None
     assert humanize_device_model(None) is None
