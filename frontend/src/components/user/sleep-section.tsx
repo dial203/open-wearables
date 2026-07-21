@@ -30,6 +30,7 @@ import type { DateRangeValue } from '@/components/ui/date-range-selector';
 import { CursorPagination } from '@/components/common/cursor-pagination';
 import { MetricCard } from '@/components/common/metric-card';
 import { SourceBadge } from '@/components/common/source-badge';
+import { DeviceBadge } from '@/components/common/device-badge';
 import { SectionHeader } from '@/components/common/section-header';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -217,6 +218,9 @@ function SleepSessionRow({
             )}
             {session.source?.provider && (
               <SourceBadge provider={session.source.provider} />
+            )}
+            {session.source?.device && (
+              <DeviceBadge device={session.source.device} />
             )}
           </div>
           <div className="flex items-center gap-2">
