@@ -1,53 +1,69 @@
 name: Build and push images
 
+# Builds the production images and pushes them to GHCR on every push to main
+# (and on demand). Portainer's "Pull and redeploy" then fetches the updated
+# :latest tags — no `docker compose build` on the host.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 jobs:
-  backend:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+            dockerfile: ./backend/Dockerfile
+            image: ghcr.io/dial203/open-wearables-platform
+          - name: frontend
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
+            image: ghcr.io/dial203/open-wearables-frontend
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          push: true
-          tags: ghcr.io/dial203/open-wearables-platform:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
-  frontend:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+
+      - name: Derive image tags & labels
+        id: meta
+        uses: docker/metadata-action@v5
         with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
+          images: ${{ matrix.image }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha
+
+      - name: Build and push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Baked into the backend image as the Sentry release. The frontend
+          # Dockerfile doesn't declare this ARG and simply ignores it.
+          #
+          # No VITE_API_URL is baked in: the frontend resolves the backend URL
+          # at runtime from the container's VITE_API_URL env var, so the same
+          # image points at any backend without a rebuild.
+          # See frontend/src/lib/api/runtime-config.ts.
           build-args: |
-            VITE_API_URL=https://api-openwearables.dialedup.info
-          tags: ghcr.io/dial203/open-wearables-frontend:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
