@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from pydantic import AnyHttpUrl, Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.schemas.enums.data_granularity import DataGranularity
 from app.utils.config_utils import (
     AccessLogLevel,
     EncryptedField,
@@ -111,6 +112,10 @@ class Settings(BaseSettings):
     # Independent of ingest_workout_samples (DB samples) and raw_payload_storage (JSON payloads).
     store_fit_files: bool = False
 
+    # Default 24/7 data granularity (raw | hourly | daily) for providers that support it
+    # (Google Health), used when a provider has no explicit ProviderSetting.data_granularity.
+    default_data_granularity: DataGranularity = DataGranularity.RAW
+
     # SCORE SETTINGS
     score_backfill_days: int = 30  # How far back the missing-score query looks
     sleep_score_interval_seconds: int = 600  # How often to run the fill-missing-scores task (default: 10 min)
@@ -176,6 +181,29 @@ class Settings(BaseSettings):
     ultrahuman_client_secret: SecretStr | None = None
     ultrahuman_redirect_uri: str | None = None  # Deprecated: use API_BASE_URL
     ultrahuman_default_scope: str = "ring_data cgm_data profile"
+
+    # GOOGLE OAUTH SETTINGS
+    google_client_id: str | None = None
+    google_client_secret: SecretStr | None = None
+    google_default_scope: str = (
+        "openid email "
+        "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly "
+        "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly "
+        "https://www.googleapis.com/auth/googlehealth.nutrition.readonly "
+        "https://www.googleapis.com/auth/googlehealth.sleep.readonly "
+        "https://www.googleapis.com/auth/googlehealth.settings.readonly"
+    )
+    # Bearer secret Google echoes in the Authorization header of every webhook
+    # notification. Defaults to secret_key (see derive_google_webhook_secret).
+    google_webhook_secret: SecretStr | None = None
+    # GCP project NUMBER (not ID) for Health API subscriber registration.
+    google_project_id: str | None = None
+    # Path to the service-account JSON key used to authenticate project-level
+    # subscriber registration. If unset, Application Default Credentials are used.
+    google_service_account_file: str | None = None
+    # with RAW granularity, either list or reconcile is used
+    # true - reconcile, false - list; for details check docs
+    google_use_reconcile: bool = True
 
     # EMAIL SETTINGS (Resend)
     resend_api_key: SecretStr | None = None
@@ -248,6 +276,12 @@ class Settings(BaseSettings):
             or self.oura_webhook_verification_token.get_secret_value() == ""
         ):
             self.oura_webhook_verification_token = SecretStr(self.secret_key)
+        return self
+
+    @model_validator(mode="after")
+    def derive_google_webhook_secret(self) -> "Settings":
+        if self.google_webhook_secret is None or self.google_webhook_secret.get_secret_value() == "":
+            self.google_webhook_secret = SecretStr(self.secret_key)
         return self
 
     @field_validator("cors_origins", mode="after")
