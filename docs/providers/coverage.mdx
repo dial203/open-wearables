@@ -54,7 +54,7 @@ This guide gives an overview of data type support across the integrated wearable
 | `heart_rate` | bpm | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `heart_rate_recovery_one_minute` | bpm | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | `heart_rate_variability_rmssd` | ms | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ |
-| `heart_rate_variability_sdnn` | ms | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| `heart_rate_variability_sdnn` | ms | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | `resting_heart_rate` | bpm | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ |
 | `walking_heart_rate_average` | bpm | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
@@ -405,7 +405,9 @@ Key differences and limitations to be aware of when working with each provider:
   - 14 activity type ID mappings plus 25 name-based fallbacks to the unified taxonomy; unrecognized activities map to "other"
 </Accordion>
 
-<Accordion title="Google Health Connect">
+<Accordion title="Google Health — Health Connect (mobile SDK)">
+  Google is a single provider with two ingestion paths under one `google` identity. This is the **Health Connect** path; stored records carry the originating app's name in `source` (e.g. the app that wrote to Health Connect), which distinguishes them from the cloud API path below.
+
   **Integration Method:** Push-based via Android SDK (no OAuth)
 
   - 25+ Health Connect record types mapped to unified series: heart rate, resting HR, HRV, SpO2, blood pressure, respiratory rate, body measurements, steps, calories, and distance
@@ -417,6 +419,20 @@ Key differences and limitations to be aware of when working with each provider:
   - Health Connect basal metabolic rate is a kcal/day rate stored into the kcal `basal_energy` series
   - All Health Connect distance is stored as `distance_walking_running` regardless of activity type
   - No health scores; GPS routes and in-workout sample streams are accepted by the SDK payload but not yet processed
+</Accordion>
+
+<Accordion title="Google Health — Health API (cloud OAuth)">
+  The **cloud API** path of the unified `google` provider; stored records carry the fixed marker `source = "google_health_api"`, which separates them from Health Connect SDK data (whose `source` is the originating app name). All endpoints are under `https://health.googleapis.com/v4/users/me`.
+
+  **Integration Method:** OAuth 2.0 (cloud pull) + push webhooks (notify-only, trigger a windowed pull)
+
+  - **24/7 metrics** (heart rate, steps, calories, distance, SpO2, respiratory rate, body measurements, etc.) come from `dataTypes/{dataType}/dataPoints:reconcile` (default) or `dataTypes/{dataType}/dataPoints` (list) at native resolution, or `dataTypes/{dataType}/dataPoints:rollUp` when an hourly/daily granularity is configured
+  - **reconcile** merges and deduplicates datapoints across all contributing source apps to match what the native Google Health app shows; **list** returns raw per-source datapoints (carries `dataSource`). Steered by the `GOOGLE_USE_RECONCILE` flag (reconcile is the default)
+  - **Sleep** sessions come from `dataTypes/sleep/dataPoints`, with full stages, duration, time in bed, and efficiency
+  - **Workouts** come from `dataTypes/exercise/dataPoints`; ~150 `Exercise.ExerciseType` values mapped to the unified workout taxonomy
+  - **Identity** (`healthUserId`) is read from `users/me/identity` and stored as the provider user id for webhook routing
+  - **Webhooks** are registered per GCP project at `projects/{project}/subscribers`; notifications are notify-only and only carry the changed window, which is then pulled via the operations above
+  - Coverage in the matrix above is the union of both paths; the cloud API path alone does not populate every workout/sleep field the shared SDK pipeline does
 </Accordion>
 
 ---
