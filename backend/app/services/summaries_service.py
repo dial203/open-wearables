@@ -252,6 +252,7 @@ class SummariesService:
         end_date: datetime,
         cursor: str | None,
         limit: int,
+        filter_by_priority: bool = True,
     ) -> PaginatedResponse[SleepSummary]:
         """Get daily sleep summaries aggregated by date, provider, and device."""
         self.logger.debug(f"Fetching sleep summaries for user {user_id} from {start_date} to {end_date}")
@@ -259,8 +260,11 @@ class SummariesService:
         # Get aggregated data from repository (now returns list of dicts)
         results = self.event_record_repo.get_sleep_summaries(db_session, user_id, start_date, end_date, cursor, limit)
 
-        # Filter by priority to get best source per date
-        results = self._filter_by_priority(db_session, user_id, results, date_key="sleep_date")
+        # Collapse to the highest-priority source per date, unless the caller
+        # wants every source (filter_by_priority=false) — downstream apps that do
+        # their own reconciliation need access to all sources' summaries.
+        if filter_by_priority:
+            results = self._filter_by_priority(db_session, user_id, results, date_key="sleep_date")
 
         # Check if there's more data
         has_more = len(results) > limit
@@ -380,6 +384,7 @@ class SummariesService:
         end_date: datetime,
         cursor: str | None,
         limit: int,
+        filter_by_priority: bool = True,
     ) -> PaginatedResponse[RecoverySummary]:
         """Get daily recovery summaries from HealthScore(RECOVERY) records.
 
@@ -390,7 +395,8 @@ class SummariesService:
             db_session, user_id, start_date, end_date, cursor, limit
         )
 
-        results = self._filter_by_priority(db_session, user_id, results, date_key="recovery_date")
+        if filter_by_priority:
+            results = self._filter_by_priority(db_session, user_id, results, date_key="recovery_date")
 
         has_more = len(results) > limit
         if has_more:
@@ -448,6 +454,7 @@ class SummariesService:
         cursor: str | None,
         limit: int,
         sort_order: str = "asc",
+        filter_by_priority: bool = True,
     ) -> PaginatedResponse[ActivitySummary]:
         """Get daily activity summaries aggregated by date, provider, and device.
 
@@ -470,8 +477,10 @@ class SummariesService:
         # Merge archived data when archival is enabled
         results = self._merge_archive_activity(db_session, user_id, start_date, end_date, results)
 
-        # Filter by priority to get best source per date
-        results = self._filter_by_priority(db_session, user_id, results, date_key="activity_date")
+        # Collapse to the highest-priority source per date unless the caller wants
+        # every source (filter_by_priority=false).
+        if filter_by_priority:
+            results = self._filter_by_priority(db_session, user_id, results, date_key="activity_date")
 
         # Get workout aggregates (elevation, distance, energy from workouts)
         workout_aggregates = self.event_record_repo.get_daily_workout_aggregates(
