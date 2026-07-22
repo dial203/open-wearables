@@ -108,9 +108,14 @@ class Settings(BaseSettings):
     # Per-provider granularity will be added via ProviderSetting in a future release.
     ingest_workout_samples: bool = False
 
-    # Whether to store raw FIT files in S3 when received via provider APIs.
+    # Whether to store raw FIT files when received via provider APIs.
     # Independent of ingest_workout_samples (DB samples) and raw_payload_storage (JSON payloads).
     store_fit_files: bool = False
+
+    # Where to store raw FIT files. When set (and store_fit_files is true), files are
+    # written to this local directory (e.g. a mounted volume) and no S3 is needed.
+    # When unset, FIT storage falls back to S3 (uses the raw-payload S3 client/bucket).
+    fit_files_dir: str | None = None
 
     # Default 24/7 data granularity (raw | hourly | daily) for providers that support it
     # (Google Health), used when a provider has no explicit ProviderSetting.data_granularity.
