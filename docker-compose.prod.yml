@@ -33,6 +33,10 @@ services:
       - REDIS_HOST=redis
     ports:
       - "${API_PORT:-8000}:8000"
+    # Shares the FIT volume so store_fit_file() can write regardless of which
+    # service (app or worker) configures it. Harmless when STORE_FIT_FILES=false.
+    volumes:
+      - fit_files:/data/fit-files
     depends_on:
       db:
         condition: service_healthy
@@ -50,6 +54,11 @@ services:
     environment:
       - DB_HOST=db
       - REDIS_HOST=redis
+    # FIT files are downloaded and written by the worker (Garmin activityFiles /
+    # Strava). Mount matches FIT_FILES_DIR when STORE_FIT_FILES=true; harmless
+    # (empty) when disabled.
+    volumes:
+      - fit_files:/data/fit-files
     depends_on:
       - redis
       - db
@@ -168,3 +177,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  fit_files:
