@@ -61,6 +61,7 @@ raw_payload_storage.configure(
     s3_prefix=settings.raw_payload_s3_prefix,
     s3_endpoint_url=settings.raw_payload_s3_endpoint_url,
     fit_files_enabled=settings.store_fit_files,
+    fit_files_dir=settings.fit_files_dir,
 )
 
 add_cors_middleware(api)

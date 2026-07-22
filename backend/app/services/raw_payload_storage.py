@@ -29,6 +29,7 @@ _s3_bucket: str | None = None
 _s3_prefix: str = "raw-payloads"
 _s3_client: Any = None
 _fit_files_enabled: bool = False
+_fit_files_dir: str | None = None
 
 
 def configure(
@@ -38,29 +39,41 @@ def configure(
     s3_prefix: str = "raw-payloads",
     s3_endpoint_url: str | None = None,
     fit_files_enabled: bool = False,
+    fit_files_dir: str | None = None,
 ) -> None:
     """Called once at startup from settings."""
-    global _storage_backend, _max_size_bytes, _s3_bucket, _s3_prefix, _s3_client, _fit_files_enabled
+    global _storage_backend, _max_size_bytes, _s3_bucket, _s3_prefix, _s3_client, _fit_files_enabled, _fit_files_dir
     _storage_backend = storage_backend
     _max_size_bytes = max_size_bytes
     _s3_prefix = s3_prefix
     _fit_files_enabled = False
+    _fit_files_dir = None
 
-    if storage_backend == "s3" or fit_files_enabled:
+    # FIT files to the local filesystem: no S3 needed.
+    if fit_files_enabled and fit_files_dir:
+        _fit_files_enabled = True
+        _fit_files_dir = fit_files_dir
+
+    # S3 client is required for the s3 raw-payload backend, or for FIT files when
+    # no local directory was given (S3-backed FIT storage).
+    if storage_backend == "s3" or (fit_files_enabled and not fit_files_dir):
         _s3_bucket = s3_bucket
         if not _s3_bucket:
             logger.error("S3 storage requested but no S3 bucket configured")
-            _storage_backend = "disabled"
+            if storage_backend == "s3":
+                _storage_backend = "disabled"
             return
         _s3_client = _create_s3_client(endpoint_url=s3_endpoint_url)
         if _s3_client is None:
             logger.error("Failed to create S3 client - raw payload storage disabled")
-            _storage_backend = "disabled"
+            if storage_backend == "s3":
+                _storage_backend = "disabled"
             return
         if storage_backend != "s3":
             # Client created solely for FIT file storage
             _storage_backend = "disabled"
-        _fit_files_enabled = fit_files_enabled
+        if fit_files_enabled and not fit_files_dir:
+            _fit_files_enabled = True
 
 
 def _create_s3_client(endpoint_url: str | None = None) -> Any:
@@ -198,6 +211,19 @@ def _store_to_s3(
         logger.exception("Failed to store raw payload to S3: s3://%s/%s", _s3_bucket, key)
 
 
+def _store_fit_file_local(rel_path: str, fit_bytes: bytes) -> None:
+    """Write a FIT file under the configured local directory."""
+    from pathlib import Path
+
+    dest = Path(_fit_files_dir or "") / rel_path
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(fit_bytes)
+        logger.debug("Stored FIT file locally: %s (%d bytes)", dest, len(fit_bytes))
+    except Exception:
+        log_structured(logger, "error", "Failed to store FIT file to disk", path=str(dest))
+
+
 def store_fit_file(
     *,
     provider: str,
@@ -205,19 +231,26 @@ def store_fit_file(
     user_id: str,
     activity_id: str,
 ) -> None:
-    """Store a raw FIT file to S3. No-op when STORE_FIT_FILES is disabled.
+    """Store a raw FIT file. No-op when STORE_FIT_FILES is disabled.
 
-    Key format: fit-files/{provider}/{YYYY-MM-DD}/{user_id}/{activity_id}.fit
-    Uses the same S3 client and bucket as raw payload storage.
+    Path: fit-files/{provider}/{YYYY-MM-DD}/{user_id}/{activity_id}.fit — written to
+    the local FIT_FILES_DIR when set, otherwise uploaded to S3 (same client/bucket
+    as raw payload storage).
     """
     if not _fit_files_enabled:
-        return
-    if _s3_client is None or _s3_bucket is None:
-        log_structured(logger, "warning", "Cannot store FIT file — S3 not configured")
         return
 
     now = datetime.now(UTC)
     key = f"fit-files/{provider}/{now.strftime('%Y-%m-%d')}/{user_id}/{activity_id}.fit"
+
+    if _fit_files_dir:
+        _store_fit_file_local(key, fit_bytes)
+        return
+
+    if _s3_client is None or _s3_bucket is None:
+        log_structured(logger, "warning", "Cannot store FIT file — S3 not configured")
+        return
+
     try:
         _s3_client.put_object(
             Bucket=_s3_bucket,
