@@ -37,6 +37,24 @@ export function useDisconnectProvider(provider: string, userId: string) {
   });
 }
 
+export function useSetConnectionDeviceLabel(provider: string, userId: string) {
+  return useMutation({
+    mutationFn: (deviceLabel: string | null) =>
+      healthService.setConnectionDeviceLabel(userId, provider, deviceLabel),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.connections.all(userId),
+      });
+      toast.success('Device model updated');
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : 'Failed to update device';
+      toast.error(message);
+    },
+  });
+}
+
 /**
  * Get user connections for a user
  * Uses GET /api/v1/users/{user_id}/connections

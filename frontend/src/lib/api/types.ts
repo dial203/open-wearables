@@ -271,6 +271,8 @@ export interface UserConnection {
   provider_username?: string;
   scope?: string;
   id: string;
+  /** Manually-set or auto-derived device behind this connection (e.g. "Whoop 5.0"). */
+  device_label?: string | null;
   status: 'active' | 'revoked' | 'expired';
   last_synced_at?: string;
   created_at: string;

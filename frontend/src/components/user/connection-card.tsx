@@ -8,6 +8,7 @@ import {
   Loader2,
   Link2,
   MinusCircle,
+  Pencil,
   PlayCircle,
   RefreshCw,
   RotateCcw,
@@ -45,6 +46,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import {
   STAGE_LABELS,
@@ -55,6 +65,7 @@ import {
 } from '@/lib/utils/sync-format';
 import {
   useDisconnectProvider,
+  useSetConnectionDeviceLabel,
   useSynchronizeDataFromProvider,
   useSyncHistoricalData,
   useGarminBackfillStatus,
@@ -253,6 +264,10 @@ export function ConnectionCard({
 }: ConnectionCardProps) {
   const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
   const [showLastSyncs, setShowLastSyncs] = useState(false);
+  const [showDeviceDialog, setShowDeviceDialog] = useState(false);
+  const [deviceInput, setDeviceInput] = useState(connection.device_label ?? '');
+  const { mutate: setDeviceLabel, isPending: isSavingDevice } =
+    useSetConnectionDeviceLabel(connection.provider, connection.user_id);
 
   const { mutate: disconnectProvider, isPending: isDisconnecting } =
     useDisconnectProvider(connection.provider, connection.user_id);
@@ -362,6 +377,12 @@ export function ConnectionCard({
                     })
                   : 'Never'}
               </p>
+              {connection.device_label && (
+                <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                  <Watch className="h-3 w-3" />
+                  {connection.device_label}
+                </p>
+              )}
               {(connection.live_sync_mode || scopeItems.length > 0) && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   {connection.live_sync_mode &&
@@ -456,6 +477,16 @@ export function ConnectionCard({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onClick={() => {
+                    setDeviceInput(connection.device_label ?? '');
+                    setShowDeviceDialog(true);
+                  }}
+                >
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Set device model
+                </DropdownMenuItem>
                 {connection.status !== 'revoked' && (
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive cursor-pointer"
@@ -490,6 +521,49 @@ export function ConnectionCard({
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
+            <Dialog open={showDeviceDialog} onOpenChange={setShowDeviceDialog}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Set device model</DialogTitle>
+                  <DialogDescription>
+                    Record the device behind this {connection.provider}{' '}
+                    connection (e.g. &quot;Whoop 5.0&quot;), for providers that
+                    don&apos;t report one. Applies to existing and future data.
+                    Leave empty to clear.
+                  </DialogDescription>
+                </DialogHeader>
+                <Input
+                  value={deviceInput}
+                  onChange={(e) => setDeviceInput(e.target.value)}
+                  placeholder="e.g. Whoop 5.0"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !isSavingDevice) {
+                      setDeviceLabel(deviceInput.trim() || null, {
+                        onSuccess: () => setShowDeviceDialog(false),
+                      });
+                    }
+                  }}
+                />
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowDeviceDialog(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    disabled={isSavingDevice}
+                    onClick={() =>
+                      setDeviceLabel(deviceInput.trim() || null, {
+                        onSuccess: () => setShowDeviceDialog(false),
+                      })
+                    }
+                  >
+                    {isSavingDevice ? 'Saving…' : 'Save'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </CardHeader>
