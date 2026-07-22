@@ -132,6 +132,21 @@ export const healthService = {
   },
 
   /**
+   * Manually set (or clear) the device model behind a connection, for providers
+   * whose API doesn't report one (e.g. Whoop).
+   */
+  async setConnectionDeviceLabel(
+    userId: string,
+    provider: string,
+    deviceLabel: string | null
+  ): Promise<{ provider: string; device_label: string | null }> {
+    return apiClient.put(
+      API_ENDPOINTS.userConnectionDeviceLabel(userId, provider),
+      { device_label: deviceLabel }
+    );
+  },
+
+  /**
    * Get user connections for a user
    */
   async getUserConnections(userId: string): Promise<UserConnection[]> {
