@@ -223,6 +223,18 @@ class OuraPersonalInfoJSON(BaseModel):
     email: str | None = None
 
 
+class OuraRingConfigJSON(BaseModel):
+    """Ring hardware config from Oura API v2 /usercollection/ring_configuration."""
+
+    id: str | None = None
+    color: str | None = None
+    design: str | None = None  # e.g. "heritage", "horizon"
+    firmware_version: str | None = None
+    hardware_type: str | None = None  # e.g. "gen2", "gen3", "gen4"
+    set_up_at: str | None = None
+    size: int | None = None
+
+
 # ---------------------------------------------------------------------------
 # Webhook Notification
 # ---------------------------------------------------------------------------

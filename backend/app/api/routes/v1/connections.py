@@ -1,7 +1,8 @@
 import contextlib
 from uuid import UUID
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, HTTPException, Response, status
+from pydantic import BaseModel
 
 from app.database import DbSession
 from app.models import ProviderSetting
@@ -80,3 +81,33 @@ def disconnect_provider_endpoint(
     strategy = ProviderFactory().get_provider(provider.value)
     user_connection_service.disconnect(db, user_id, provider.value, oauth=strategy.oauth)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class DeviceLabelUpdate(BaseModel):
+    """Device identifier to attach to a connection (null to clear)."""
+
+    device_label: str | None = None
+
+
+class DeviceLabelResponse(BaseModel):
+    provider: str
+    device_label: str | None
+
+
+@router.put("/users/{user_id}/connections/{provider}/device-label")
+def set_connection_device_label_endpoint(
+    user_id: UUID,
+    provider: ProviderName,
+    body: DeviceLabelUpdate,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> DeviceLabelResponse:
+    """Manually set the device model behind a connection (e.g. "Whoop 5.0").
+
+    Fills data_source.device_model for providers whose API reports no device.
+    Applies to existing device-less data sources and future ingested data.
+    """
+    connection = user_connection_service.set_device_label(db, user_id, provider, body.device_label)
+    if connection is None:
+        raise HTTPException(status_code=404, detail=f"No {provider.value} connection found for user")
+    return DeviceLabelResponse(provider=provider.value, device_label=connection.device_label)

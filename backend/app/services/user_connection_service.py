@@ -1,10 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from logging import Logger, getLogger
 from uuid import UUID
 
 from app.database import DbSession
 from app.models import UserConnection
+from app.repositories.data_source_repository import DataSourceRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
+from app.schemas.enums import ProviderName
 from app.schemas.model_crud.user_management import UserConnectionCreate, UserConnectionUpdate
 from app.schemas.responses.upload import ConnectionsCoverage, ProviderConnectionCount
 from app.services.outgoing_webhooks.events import on_connection_revoked
@@ -25,6 +27,31 @@ class UserConnectionService(
             log=log,
             **kwargs,
         )
+        self._data_source_repo = DataSourceRepository()
+
+    @handle_exceptions
+    def set_device_label(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: ProviderName,
+        device_label: str | None,
+    ) -> UserConnection | None:
+        """Set the device label on a user's connection and relabel that
+        provider's existing device-less data sources so already-ingested data
+        also carries it (future data is filled by ensure_data_source).
+        Returns None when the user has no connection for the provider.
+        """
+        connection = self.crud.get_by_user_and_provider(db_session, user_id, provider.value)
+        if connection is None:
+            return None
+        connection.device_label = device_label
+        connection.updated_at = datetime.now(timezone.utc)
+        db_session.add(connection)
+        self._data_source_repo.set_connection_device_label(db_session, user_id, provider, device_label)
+        db_session.commit()
+        db_session.refresh(connection)
+        return connection
 
     def get_active_count_in_range(self, db_session: DbSession, start_date: datetime, end_date: datetime) -> int:
         """Get count of active connections created within a date range."""

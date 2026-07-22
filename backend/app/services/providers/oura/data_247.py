@@ -15,6 +15,7 @@ from app.database import DbSession
 from app.models import EventRecord
 from app.repositories import EventRecordRepository, UserConnectionRepository
 from app.repositories.data_point_series_repository import WriteCounts
+from app.repositories.data_source_repository import DataSourceRepository
 from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
@@ -30,7 +31,7 @@ from app.schemas.providers.oura import (
     OuraDailySleepJSON,
     OuraSleepJSON,
 )
-from app.schemas.providers.oura.imports import OuraIntervalData, OuraPersonalInfoJSON
+from app.schemas.providers.oura.imports import OuraIntervalData, OuraPersonalInfoJSON, OuraRingConfigJSON
 from app.services.event_record_service import event_record_service
 from app.services.health_score_service import health_score_service
 from app.services.providers.api_client import make_authenticated_request
@@ -1232,6 +1233,53 @@ class Oura247Data(Base247DataTemplate):
     # Combined Load
     # -------------------------------------------------------------------------
 
+    # -------------------------------------------------------------------------
+    # Ring Configuration - /v2/usercollection/ring_configuration
+    # -------------------------------------------------------------------------
+
+    def get_ring_configuration(self, db: DbSession, user_id: UUID) -> dict[str, Any]:
+        """Fetch ring hardware config from Oura API."""
+        return self._make_api_request(db, user_id, "/v2/usercollection/ring_configuration") or {}
+
+    @staticmethod
+    def _derive_ring_model(raw: dict[str, Any]) -> str | None:
+        """Build a device label like "Oura Ring Gen3 Horizon" from ring config.
+
+        Uses the most recently set-up ring when several are present.
+        """
+        items = raw.get("data") if isinstance(raw, dict) else None
+        if not items:
+            return None
+        ring = max(items, key=lambda r: r.get("set_up_at") or "")
+        try:
+            cfg = OuraRingConfigJSON(**ring)
+        except Exception:
+            return None
+        parts = ["Oura Ring"]
+        if cfg.hardware_type:
+            parts.append(cfg.hardware_type.replace("_", " ").title())
+        if cfg.design:
+            parts.append(cfg.design.replace("_", " ").title())
+        return " ".join(parts)
+
+    def save_ring_configuration(self, db: DbSession, user_id: UUID) -> int:
+        """Auto-detect the ring model and store it as the connection's device
+        label so data_source.device_model gets populated (Oura's data endpoints
+        don't carry a device). A manually-set label is never overwritten.
+        """
+        model = self._derive_ring_model(self.get_ring_configuration(db, user_id))
+        if not model:
+            return 0
+        connection = self.connection_repo.get_by_user_and_provider(db, user_id, ProviderName.OURA.value)
+        if connection is None or connection.device_label:
+            return 0  # no connection, or a (manual) label already set
+        connection.device_label = model
+        connection.updated_at = datetime.now(timezone.utc)
+        db.add(connection)
+        DataSourceRepository().set_connection_device_label(db, user_id, ProviderName.OURA, model)
+        db.commit()
+        return 1
+
     def load_and_save_all(
         self,
         db: DbSession,
@@ -1292,6 +1340,7 @@ class Oura247Data(Base247DataTemplate):
                 db, user_id, self.get_heart_rate_data(db, user_id, start_time, end_time)
             ),
             "personal_info": lambda: self.save_personal_info(db, user_id, self.get_personal_info(db, user_id)),
+            "ring_configuration": lambda: self.save_ring_configuration(db, user_id),
             "vo2_max": lambda: self.save_vo2_data(db, user_id, self.get_vo2_data(db, user_id, start_time, end_time)),
         }
 

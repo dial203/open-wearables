@@ -5,7 +5,7 @@ from sqlalchemy import Index
 from sqlalchemy.orm import Mapped
 
 from app.database import BaseDbModel
-from app.mappings import FKUser, PrimaryKey, str_64
+from app.mappings import FKUser, PrimaryKey, str_64, str_100
 from app.schemas.auth import ConnectionStatus
 
 
@@ -36,6 +36,13 @@ class UserConnection(BaseDbModel):
     # Provider user data
     provider_user_id: Mapped[str | None]
     provider_username: Mapped[str | None]
+
+    # Device identifier for the hardware behind this connection (e.g. "Whoop 5.0",
+    # "Oura Ring Gen3"). Filled in for providers whose API doesn't report a device
+    # model: set manually via the API, or auto-derived (Oura ring_configuration).
+    # ensure_data_source() uses it to populate data_source.device_model when the
+    # provider passes None.
+    device_label: Mapped[str_100 | None]
 
     # OAuth tokens (optional for SDK-based providers like Apple)
     access_token: Mapped[str | None]
