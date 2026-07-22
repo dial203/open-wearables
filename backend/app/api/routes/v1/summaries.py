@@ -29,6 +29,10 @@ def get_activity_summary(
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=400)] = 50,
     sort_order: Annotated[str, Query(pattern="^(asc|desc)$")] = "asc",
+    filter_by_priority: Annotated[
+        bool,
+        Query(description="Collapse to the highest-priority source per day. Set false to return every source."),
+    ] = True,
 ) -> PaginatedResponse[ActivitySummary]:
     """Returns daily aggregated activity metrics.
 
@@ -37,7 +41,7 @@ def get_activity_summary(
     start_datetime = parse_query_datetime(start_date)
     end_datetime = parse_query_datetime(end_date)
     return summaries_service.get_activity_summaries(
-        db, user_id, start_datetime, end_datetime, cursor, limit, sort_order
+        db, user_id, start_datetime, end_datetime, cursor, limit, sort_order, filter_by_priority=filter_by_priority
     )
 
 
@@ -50,11 +54,17 @@ def get_sleep_summary(
     _api_key: ApiKeyDep,
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    filter_by_priority: Annotated[
+        bool,
+        Query(description="Collapse to the highest-priority source per day. Set false to return every source."),
+    ] = True,
 ) -> PaginatedResponse[SleepSummary]:
     """Returns daily sleep metrics."""
     start_datetime = parse_query_datetime(start_date)
     end_datetime = parse_query_datetime(end_date)
-    return summaries_service.get_sleep_summaries(db, user_id, start_datetime, end_datetime, cursor, limit)
+    return summaries_service.get_sleep_summaries(
+        db, user_id, start_datetime, end_datetime, cursor, limit, filter_by_priority=filter_by_priority
+    )
 
 
 @router.get("/users/{user_id}/summaries/recovery")
@@ -66,11 +76,17 @@ def get_recovery_summary(
     _api_key: ApiKeyDep,
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    filter_by_priority: Annotated[
+        bool,
+        Query(description="Collapse to the highest-priority source per day. Set false to return every source."),
+    ] = True,
 ) -> PaginatedResponse[RecoverySummary]:
     """Returns daily recovery metrics (recovery score, HRV, resting HR, SpO2)."""
     start_datetime = parse_query_datetime(start_date)
     end_datetime = parse_query_datetime(end_date)
-    return summaries_service.get_recovery_summaries(db, user_id, start_datetime, end_datetime, cursor, limit)
+    return summaries_service.get_recovery_summaries(
+        db, user_id, start_datetime, end_datetime, cursor, limit, filter_by_priority=filter_by_priority
+    )
 
 
 @router.get("/users/{user_id}/summaries/body")
