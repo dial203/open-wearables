@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.database import DbSession
-from app.models import DataSource, ProviderPriority
+from app.models import DataSource, ProviderPriority, UserConnection
 from app.repositories.provider_priority_repository import ProviderPriorityRepository
 from app.repositories.repositories import CrudRepository
 from app.schemas.enums import DeviceType, ProviderName, infer_device_type_from_model, infer_device_type_from_source_name
@@ -48,6 +48,56 @@ class DataSourceRepository(
             .one_or_none()
         )
 
+    def _connection_device_label(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: ProviderName,
+    ) -> str | None:
+        """The manually-set or auto-derived device label for a user's connection.
+
+        Used to fill device_model when the provider reports none. One connection
+        per (user, provider) is guaranteed by a unique index.
+        """
+        return (
+            db_session.query(UserConnection.device_label)
+            .filter(
+                UserConnection.user_id == user_id,
+                UserConnection.provider == provider.value,
+                UserConnection.device_label.isnot(None),
+            )
+            .scalar()
+        )
+
+    def set_connection_device_label(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: ProviderName,
+        device_label: str | None,
+    ) -> int:
+        """Retroactively relabel a user's existing device-less data sources.
+
+        Sets device_model = device_label for this user/provider's data sources
+        that currently have no device_model, so already-ingested data picks up
+        the label too (future data is handled by ensure_data_source). Returns the
+        number of rows updated.
+        """
+        if not device_label:
+            return 0
+        return (
+            db_session.query(self.model)
+            .filter(
+                self.model.user_id == user_id,
+                self.model.provider == provider,
+                self.model.device_model.is_(None),
+            )
+            .update(
+                {self.model.device_model: device_label},
+                synchronize_session=False,
+            )
+        )
+
     def ensure_data_source(
         self,
         db_session: DbSession,
@@ -59,10 +109,15 @@ class DataSourceRepository(
         source: str | None = None,
         original_source_name: str | None = None,
     ) -> DataSource:
+        # Fill device_model from the connection's device_label when the provider
+        # didn't report a device (e.g. Whoop, which exposes none; Oura, auto-filled
+        # from ring_configuration). Manual entry / auto-detection both land here.
+        if device_model is None:
+            device_model = self._connection_device_label(db_session, user_id, provider)
+
         # Non-destructive brand tagging: when the provider did not supply an
         # original_source_name, derive a canonical brand (e.g. Oura data arriving
         # via Apple/Google Health) so the same brand groups across ingest paths.
-        # device_model is never touched - the raw hardware code is preserved.
         if original_source_name is None:
             original_source_name = resolve_brand(provider, device_model, source)
 
