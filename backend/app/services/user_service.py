@@ -76,7 +76,7 @@ class UserService(AppService[UserRepository, User, UserCreateInternal, UserUpdat
             try:
                 strategy = provider_factory.get_provider(connection.provider)
                 if oauth := strategy.oauth:
-                    oauth.deregister_user(connection.access_token)
+                    oauth.deregister_user(connection.access_token, provider_user_id=connection.provider_user_id)
             except Exception as e:
                 log_structured(
                     self.logger,
