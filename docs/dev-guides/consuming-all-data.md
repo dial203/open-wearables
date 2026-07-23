@@ -172,6 +172,35 @@ fields) — parse it with any FIT library. OW also ingests the workout's per-sec
 into `/timeseries` when `INGEST_WORKOUT_SAMPLES=true`, so apps can choose the raw file or
 the normalized series.
 
+### Gold-standard RR intervals (Polar H10) — import + `rr_interval` series
+
+Raw beat-to-beat **RR intervals** (e.g. from a Polar H10 chest strap) are *not* available
+through Polar's AccessLink cloud API — they only exist in the **RR CSV** you export from
+Polar Flow (`duration,offline` header, one interval in ms per row). OW ingests that file
+and exposes it as a normal time series:
+
+**Import** (used by an automated fetch job, not a browser):
+```
+POST /users/{user_id}/import/polar/rr?workout_id={workout_id}
+  (multipart body: file=<the RR CSV>)
+```
+- Ties the RR data to an existing OW workout; per-beat timestamps are reconstructed from
+  that workout's start time (the CSV has none).
+- `offline`-flagged rows (strap dropouts) are excluded, but the clock still advances over
+  them so the remaining beats stay correctly timed.
+- 404 if the workout isn't found for the user; 400 if the CSV is malformed. Re-importing
+  the same file is idempotent (upsert on timestamp).
+
+**Read** — it's a first-class series, so pull it like any other:
+```
+GET /users/{user_id}/timeseries?types=rr_interval&resolution=raw&start_time=…&end_time=…
+```
+- Each sample's `value` is one RR interval in **milliseconds**, timestamped at the beat
+  that closes it. Use `resolution=raw` — downsampling would average intervals and destroy
+  the HRV signal.
+- High volume: an hour of RR is ~4–5k samples (an overnight recording ~20k+), so query
+  bounded windows.
+
 ## Rule of thumb for a downstream app
 
 1. **Pull raw / all-sources** everywhere: `filter_by_priority=false` on `/summaries/*`,

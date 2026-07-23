@@ -24,6 +24,7 @@ class SeriesType(str, Enum):
     heart_rate_recovery_one_minute = "heart_rate_recovery_one_minute"
     walking_heart_rate_average = "walking_heart_rate_average"
     heart_rate_variability_rmssd = "heart_rate_variability_rmssd"
+    rr_interval = "rr_interval"
 
     # =========================================================================
     # BIOMETRICS - Blood & Respiratory (IDs 20-39)
@@ -185,6 +186,7 @@ SERIES_TYPE_DEFINITIONS: list[tuple[int, SeriesType, str]] = [
     (4, SeriesType.heart_rate_recovery_one_minute, "bpm"),
     (5, SeriesType.walking_heart_rate_average, "bpm"),
     (7, SeriesType.heart_rate_variability_rmssd, "ms"),
+    (6, SeriesType.rr_interval, "ms"),  # raw beat-to-beat (RR/IBI) intervals, e.g. Polar H10 chest strap
     # -------------------------------------------------------------------------
     # BIOMETRICS - Blood & Respiratory (IDs 20-39)
     # -------------------------------------------------------------------------
