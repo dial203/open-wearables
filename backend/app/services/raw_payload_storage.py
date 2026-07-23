@@ -211,8 +211,8 @@ def _store_to_s3(
         logger.exception("Failed to store raw payload to S3: s3://%s/%s", _s3_bucket, key)
 
 
-def _store_fit_file_local(rel_path: str, fit_bytes: bytes) -> None:
-    """Write a FIT file under the configured local directory."""
+def _store_fit_file_local(rel_path: str, fit_bytes: bytes) -> bool:
+    """Write a FIT file under the configured local directory. Returns True on success."""
     from pathlib import Path
 
     dest = Path(_fit_files_dir or "") / rel_path
@@ -220,8 +220,10 @@ def _store_fit_file_local(rel_path: str, fit_bytes: bytes) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(fit_bytes)
         logger.debug("Stored FIT file locally: %s (%d bytes)", dest, len(fit_bytes))
+        return True
     except Exception:
         log_structured(logger, "error", "Failed to store FIT file to disk", path=str(dest))
+        return False
 
 
 def store_fit_file(
@@ -230,26 +232,26 @@ def store_fit_file(
     fit_bytes: bytes,
     user_id: str,
     activity_id: str,
-) -> None:
-    """Store a raw FIT file. No-op when STORE_FIT_FILES is disabled.
+) -> str | None:
+    """Store a raw FIT file. No-op (returns None) when STORE_FIT_FILES is disabled.
 
     Path: fit-files/{provider}/{YYYY-MM-DD}/{user_id}/{activity_id}.fit — written to
     the local FIT_FILES_DIR when set, otherwise uploaded to S3 (same client/bucket
-    as raw payload storage).
+    as raw payload storage). Returns the storage key on success (for later retrieval
+    via get_fit_file), or None if storage is disabled or the write failed.
     """
     if not _fit_files_enabled:
-        return
+        return None
 
     now = datetime.now(UTC)
     key = f"fit-files/{provider}/{now.strftime('%Y-%m-%d')}/{user_id}/{activity_id}.fit"
 
     if _fit_files_dir:
-        _store_fit_file_local(key, fit_bytes)
-        return
+        return key if _store_fit_file_local(key, fit_bytes) else None
 
     if _s3_client is None or _s3_bucket is None:
         log_structured(logger, "warning", "Cannot store FIT file — S3 not configured")
-        return
+        return None
 
     try:
         _s3_client.put_object(
@@ -262,3 +264,34 @@ def store_fit_file(
         logger.debug("Stored FIT file to S3: s3://%s/%s (%d bytes)", _s3_bucket, key, len(fit_bytes))
     except Exception:
         log_structured(logger, "error", "Failed to store FIT file to S3", bucket=_s3_bucket, key=key)
+        return None
+    return key
+
+
+def get_fit_file(key: str) -> bytes | None:
+    """Read a stored FIT file by its storage key. Returns None if not found or unconfigured.
+
+    Reads from the local FIT_FILES_DIR when configured, otherwise from S3 (same
+    client/bucket used to store it).
+    """
+    from pathlib import Path
+
+    if _fit_files_dir:
+        dest = Path(_fit_files_dir) / key
+        try:
+            return dest.read_bytes()
+        except FileNotFoundError:
+            return None
+        except Exception:
+            log_structured(logger, "error", "Failed to read FIT file from disk", path=str(dest))
+            return None
+
+    if _s3_client is not None and _s3_bucket is not None:
+        try:
+            response = _s3_client.get_object(Bucket=_s3_bucket, Key=key)
+            return response["Body"].read()
+        except Exception:
+            log_structured(logger, "error", "Failed to read FIT file from S3", bucket=_s3_bucket, key=key)
+            return None
+
+    return None

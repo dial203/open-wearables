@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.database import DbSession
 from app.schemas.model_crud.activities import EventRecordQueryParams
@@ -65,6 +65,31 @@ def list_sleep_sessions(
         limit=limit,
     )
     return event_record_service.get_sleep_sessions(db, user_id, params, filter_by_priority=filter_by_priority)
+
+
+@router.get("/users/{user_id}/events/workouts/{workout_id}/fit")
+def download_workout_fit(
+    user_id: UUID,
+    workout_id: UUID,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> Response:
+    """Download the raw FIT file stored for a workout.
+
+    Only Garmin delivers raw FIT files, and only when `STORE_FIT_FILES` is enabled on the
+    instance. Returns the `.fit` bytes as an attachment. Use the `has_fit_file` flag on the
+    workout list/detail responses to know which workouts have a file. Responds 404 when the
+    workout doesn't exist for this user or no FIT file is stored for it.
+    """
+    result = event_record_service.get_workout_fit_file(db, user_id, workout_id)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No FIT file available for this workout")
+    fit_bytes, filename = result
+    return Response(
+        content=fit_bytes,
+        media_type="application/vnd.ant.fit",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/users/{user_id}/events/menstrual-cycles")

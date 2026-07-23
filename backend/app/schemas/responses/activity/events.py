@@ -26,6 +26,11 @@ class Workout(BaseModel):
     max_heart_rate_bpm: int | None = None
     avg_pace_sec_per_km: int | float | None = None
     elevation_gain_meters: float | None = None
+    has_fit_file: bool = Field(
+        False,
+        description="Whether a raw FIT file is stored for this workout and downloadable "
+        "at /users/{user_id}/events/workouts/{workout_id}/fit (Garmin only).",
+    )
 
 
 class WorkoutDetailed(Workout):

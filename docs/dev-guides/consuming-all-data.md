@@ -147,6 +147,31 @@ GET /users/{user_id}/summaries/data?start_date=…&end_date=…
 
 ---
 
+### Raw FIT files — `/events/workouts/{workout_id}/fit`
+
+When the instance has FIT retention enabled (`STORE_FIT_FILES=true`), OW keeps the raw
+`.fit` file for workouts that deliver one (**Garmin only** — Strava/others don't expose a
+raw FIT over their API) and serves it over HTTP:
+
+```
+GET /users/{user_id}/events/workouts/{workout_id}/fit
+```
+
+- Returns the `.fit` bytes as an attachment (`application/vnd.ant.fit`).
+- **404** if the workout doesn't exist for the user, or no FIT file is stored for it.
+- The workout list/detail responses carry a **`has_fit_file`** boolean — use it to know
+  which workouts have a downloadable file instead of probing each one.
+
+```
+GET /users/{id}/events/workouts?...      → each workout has "has_fit_file": true|false
+GET /users/{id}/events/workouts/{workout_id}/fit   → the raw .fit bytes
+```
+
+The `.fit` is the provider's original file (full per-record streams, laps, developer
+fields) — parse it with any FIT library. OW also ingests the workout's per-second samples
+into `/timeseries` when `INGEST_WORKOUT_SAMPLES=true`, so apps can choose the raw file or
+the normalized series.
+
 ## Rule of thumb for a downstream app
 
 1. **Pull raw / all-sources** everywhere: `filter_by_priority=false` on `/summaries/*`,
