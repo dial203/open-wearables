@@ -147,6 +147,60 @@ GET /users/{user_id}/summaries/data?start_date=…&end_date=…
 
 ---
 
+### Raw FIT files — `/events/workouts/{workout_id}/fit`
+
+When the instance has FIT retention enabled (`STORE_FIT_FILES=true`), OW keeps the raw
+`.fit` file for workouts that deliver one (**Garmin only** — Strava/others don't expose a
+raw FIT over their API) and serves it over HTTP:
+
+```
+GET /users/{user_id}/events/workouts/{workout_id}/fit
+```
+
+- Returns the `.fit` bytes as an attachment (`application/vnd.ant.fit`).
+- **404** if the workout doesn't exist for the user, or no FIT file is stored for it.
+- The workout list/detail responses carry a **`has_fit_file`** boolean — use it to know
+  which workouts have a downloadable file instead of probing each one.
+
+```
+GET /users/{id}/events/workouts?...      → each workout has "has_fit_file": true|false
+GET /users/{id}/events/workouts/{workout_id}/fit   → the raw .fit bytes
+```
+
+The `.fit` is the provider's original file (full per-record streams, laps, developer
+fields) — parse it with any FIT library. OW also ingests the workout's per-second samples
+into `/timeseries` when `INGEST_WORKOUT_SAMPLES=true`, so apps can choose the raw file or
+the normalized series.
+
+### Gold-standard RR intervals (Polar H10) — import + `rr_interval` series
+
+Raw beat-to-beat **RR intervals** (e.g. from a Polar H10 chest strap) are *not* available
+through Polar's AccessLink cloud API — they only exist in the **RR CSV** you export from
+Polar Flow (`duration,offline` header, one interval in ms per row). OW ingests that file
+and exposes it as a normal time series:
+
+**Import** (used by an automated fetch job, not a browser):
+```
+POST /users/{user_id}/import/polar/rr?workout_id={workout_id}
+  (multipart body: file=<the RR CSV>)
+```
+- Ties the RR data to an existing OW workout; per-beat timestamps are reconstructed from
+  that workout's start time (the CSV has none).
+- `offline`-flagged rows (strap dropouts) are excluded, but the clock still advances over
+  them so the remaining beats stay correctly timed.
+- 404 if the workout isn't found for the user; 400 if the CSV is malformed. Re-importing
+  the same file is idempotent (upsert on timestamp).
+
+**Read** — it's a first-class series, so pull it like any other:
+```
+GET /users/{user_id}/timeseries?types=rr_interval&resolution=raw&start_time=…&end_time=…
+```
+- Each sample's `value` is one RR interval in **milliseconds**, timestamped at the beat
+  that closes it. Use `resolution=raw` — downsampling would average intervals and destroy
+  the HRV signal.
+- High volume: an hour of RR is ~4–5k samples (an overnight recording ~20k+), so query
+  bounded windows.
+
 ## Rule of thumb for a downstream app
 
 1. **Pull raw / all-sources** everywhere: `filter_by_priority=false` on `/summaries/*`,

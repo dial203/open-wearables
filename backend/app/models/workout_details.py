@@ -1,7 +1,7 @@
 from sqlalchemy import Index
 from sqlalchemy.orm import Mapped
 
-from app.mappings import FKEventRecordDetail, json_binary, numeric_5_2, numeric_10_3
+from app.mappings import FKEventRecordDetail, json_binary, numeric_5_2, numeric_10_3, str_255
 
 from .event_record_detail import EventRecordDetail
 
@@ -54,3 +54,9 @@ class WorkoutDetails(EventRecordDetail):
     segments: Mapped[json_binary | None]
     hr_zones: Mapped[json_binary | None]
     power_zones: Mapped[json_binary | None]
+
+    # Storage key of the raw FIT file for this workout (set when STORE_FIT_FILES is on
+    # and a provider delivers a FIT file, e.g. Garmin). Layout:
+    # fit-files/{provider}/{YYYY-MM-DD}/{user_id}/{activity_id}.fit. Used by the
+    # workout FIT-download endpoint to locate the file (local dir or S3).
+    fit_file_key: Mapped[str_255 | None]

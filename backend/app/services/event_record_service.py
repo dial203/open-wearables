@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Query
 
+import app.services.raw_payload_storage as raw_payload_storage
 from app.database import DbSession
 from app.models import (
     DataPointSeries,
@@ -739,6 +740,7 @@ class EventRecordService(
                 elevation_gain_meters=float(details.total_elevation_gain)
                 if details and details.total_elevation_gain
                 else None,
+                has_fit_file=bool(details.fit_file_key) if details else False,
             )
             data.append(workout)
 
@@ -803,8 +805,38 @@ class EventRecordService(
             elevation_gain_meters=float(details.total_elevation_gain)
             if details and details.total_elevation_gain
             else None,
+            has_fit_file=bool(details.fit_file_key) if details else False,
             heart_rate_samples=[],  # TODO: Fetch from DataPointSeries if needed
         )
+
+    @handle_exceptions
+    def get_workout_fit_file(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        workout_id: UUID,
+    ) -> tuple[bytes, str] | None:
+        """Return (fit_bytes, filename) for a workout's stored raw FIT file, or None.
+
+        None when the workout doesn't exist for this user, no FIT file was stored for
+        it, or the stored file can no longer be read. The filename is derived from the
+        provider activity id (external_id) so consumers get a stable name.
+        """
+        record = self.crud.get_record_with_details(db_session, workout_id, "workout")
+        if not record:
+            return None
+        data_source = self.data_source_repo.get(db_session, record.data_source_id)
+        if not data_source or data_source.user_id != user_id:
+            return None
+        details: WorkoutDetails | None = record.detail if isinstance(record.detail, WorkoutDetails) else None
+        key = details.fit_file_key if details else None
+        if not key:
+            return None
+        fit_bytes = raw_payload_storage.get_fit_file(key)
+        if fit_bytes is None:
+            return None
+        filename = f"{record.external_id or record.id}.fit"
+        return fit_bytes, filename
 
     @handle_exceptions
     def get_sleep_sessions(

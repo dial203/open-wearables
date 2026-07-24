@@ -1,9 +1,12 @@
 import json
 from json import JSONDecodeError
+from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
 from pydantic import ValidationError
 
+from app.database import DbSession
 from app.integrations.celery.tasks.process_xml_upload_task import process_xml_upload
 from app.schemas.providers.apple.apple_xml import (
     PresignedURLRequest,
@@ -14,6 +17,7 @@ from app.schemas.responses.upload import UploadDataResponse
 from app.services import ApiKeyDep
 from app.services.apple.apple_xml.presigned_url_service import presigned_url_service
 from app.services.apple.apple_xml.sns_service import sns_service
+from app.services.polar_rr_import_service import PolarRrImportError, polar_rr_import_service
 
 router = APIRouter()
 
@@ -45,6 +49,33 @@ def import_xml_file(
         "task_id": task.id,
         "user_id": user_id,
     }
+
+
+@router.post("/users/{user_id}/import/polar/rr")
+def import_polar_rr(
+    user_id: UUID,
+    workout_id: Annotated[UUID, Query(description="OW workout id this RR recording belongs to")],
+    file: UploadFile,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> dict[str, int | str]:
+    """Import a Polar Flow RR-interval CSV for a workout.
+
+    The CSV is Polar Flow's per-exercise RR export (`duration,offline` header, one
+    beat-to-beat interval in ms per row). Per-beat timestamps are reconstructed from
+    the workout's start time; the data is stored as an `rr_interval` time series on the
+    workout's source and is then queryable via `/timeseries?types=rr_interval`.
+
+    404 if the workout doesn't exist for this user; 400 if the CSV is malformed.
+    """
+    contents = file.file.read()
+    try:
+        result = polar_rr_import_service.import_rr_csv(db, user_id, workout_id, contents)
+    except PolarRrImportError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workout not found for this user")
+    return result
 
 
 @router.post("/sns/notification", status_code=status.HTTP_202_ACCEPTED)

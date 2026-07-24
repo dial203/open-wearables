@@ -49,7 +49,12 @@ export interface SummaryParams {
   cursor?: string;
   limit?: number; // 1-100, default 50
   sort_order?: 'asc' | 'desc';
-  [key: string]: string | number | undefined;
+  /**
+   * When false, return every source's summary per day instead of collapsing to
+   * the highest-priority source. Defaults to true on the backend.
+   */
+  filter_by_priority?: boolean;
+  [key: string]: string | number | boolean | undefined;
 }
 
 export const healthService = {

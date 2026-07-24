@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { format } from 'date-fns';
+import { format, startOfDay, endOfDay, subDays, addDays } from 'date-fns';
 import {
   Bar,
   BarChart,
@@ -17,12 +17,15 @@ import {
   ChevronDown,
   ChevronUp,
   Trash2,
+  HeartPulse,
+  Activity,
 } from 'lucide-react';
 import {
   useSleepSessions,
   useSleepSummaries,
   useTimeSeries,
   useDeleteSleepSession,
+  useRecoverySummaries,
 } from '@/hooks/api/use-health';
 import { useCursorPagination } from '@/hooks/use-cursor-pagination';
 import { useDateRange, useAllTimeRange } from '@/hooks/use-date-range';
@@ -190,6 +193,32 @@ function SleepSessionRow({
 
   // Prepare HR chart data using utility function
   const hrChartData = useMemo(() => prepareHrChartData(hrData?.data), [hrData]);
+
+  // Overnight recovery metrics (RHR / HRV) for this night from ALL sources.
+  // filter_by_priority=false returns one row per source instead of only the
+  // prioritized winner. Fetched only when the row is expanded.
+  const nightEnd = useMemo(
+    () => new Date(session.end_time),
+    [session.end_time]
+  );
+  const nightDate = format(nightEnd, 'yyyy-MM-dd');
+  const { data: recoveryData, isLoading: recoveryLoading } =
+    useRecoverySummaries(
+      userId,
+      {
+        start_date: startOfDay(subDays(nightEnd, 1)).toISOString(),
+        end_date: endOfDay(addDays(nightEnd, 1)).toISOString(),
+        limit: 100,
+        filter_by_priority: false,
+      },
+      isExpanded
+    );
+
+  // Recovery date is the wake (morning) date, matching this session's end date.
+  const nightRecovery = useMemo(
+    () => (recoveryData?.data ?? []).filter((r) => r.date === nightDate),
+    [recoveryData, nightDate]
+  );
 
   // Get detail fields using utility function
   const detailFields = useMemo(
@@ -377,6 +406,74 @@ function SleepSessionRow({
             ) : (
               <p className="text-xs text-muted-foreground text-center py-4">
                 No heart rate data available for this session
+              </p>
+            )}
+          </div>
+
+          {/* Overnight RHR & HRV — every source that reported this night */}
+          <div>
+            <h4 className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider">
+              Overnight RHR &amp; HRV — all sources
+            </h4>
+            {recoveryLoading ? (
+              <div className="h-12 flex items-center justify-center">
+                <div className="h-5 w-5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : nightRecovery.length > 0 ? (
+              <div className="space-y-2">
+                {nightRecovery.map((r, i) => (
+                  <div
+                    key={`${r.source?.provider ?? 'unknown'}-${r.source?.device ?? ''}-${i}`}
+                    className="flex items-center justify-between gap-3 py-2 px-3 rounded-lg bg-card/40 border border-border/40"
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {r.source?.provider && (
+                        <SourceBadge provider={r.source.provider} />
+                      )}
+                      {r.source?.device && (
+                        <DeviceBadge device={r.source.device} />
+                      )}
+                    </div>
+                    <div className="flex items-center gap-6 flex-shrink-0">
+                      <div className="flex items-center gap-2">
+                        <HeartPulse className="h-4 w-4 text-rose-400" />
+                        <div className="text-right">
+                          <p className="text-sm font-medium text-foreground tabular-nums">
+                            {r.resting_heart_rate_bpm !== null
+                              ? Math.round(r.resting_heart_rate_bpm)
+                              : '-'}
+                            <span className="text-xs text-muted-foreground ml-1">
+                              bpm
+                            </span>
+                          </p>
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                            RHR
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Activity className="h-4 w-4 text-emerald-400" />
+                        <div className="text-right">
+                          <p className="text-sm font-medium text-foreground tabular-nums">
+                            {r.avg_hrv_sdnn_ms !== null
+                              ? Math.round(r.avg_hrv_sdnn_ms)
+                              : '-'}
+                            <span className="text-xs text-muted-foreground ml-1">
+                              ms
+                            </span>
+                          </p>
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                            HRV
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-4">
+                No overnight RHR/HRV data for this night
               </p>
             )}
           </div>

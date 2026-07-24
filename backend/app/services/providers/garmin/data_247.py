@@ -1838,6 +1838,24 @@ class Garmin247Data(Base247DataTemplate):
             fields["power_zones"] = power_zones
         self.event_record_detail_repo.update_workout_fields(db, record.id, fields)
 
+    def _save_fit_file_key(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        activity_id: str,
+        fit_file_key: str,
+    ) -> None:
+        """Persist the stored FIT file's storage key onto the workout_details row.
+
+        No-op if the event_record doesn't exist yet (activityFiles arrived before the
+        activity summary created the record). Within a single webhook batch,
+        activityDetails is processed before activityFiles, so the record normally exists.
+        """
+        record = self.event_record_repo.get_by_external_id(db, user_id, activity_id, source=self.provider_name)
+        if record is None:
+            return
+        self.event_record_detail_repo.update_workout_fields(db, record.id, {"fit_file_key": fit_file_key})
+
     # -------------------------------------------------------------------------
     # Batch Processing (for webhook handlers)
     # -------------------------------------------------------------------------
@@ -1977,12 +1995,26 @@ class Garmin247Data(Base247DataTemplate):
                                 error=str(e),
                             )
                             continue
-                        store_fit_file(
+                        fit_file_key = store_fit_file(
                             provider=self.provider_name,
                             fit_bytes=fit_bytes,
                             user_id=str(user_id),
                             activity_id=activity_id,
                         )
+                        if fit_file_key:
+                            try:
+                                self._save_fit_file_key(db, user_id, activity_id, fit_file_key)
+                            except Exception as e:
+                                log_structured(
+                                    self.logger,
+                                    "warning",
+                                    "Failed to save FIT file key",
+                                    provider="garmin",
+                                    task="process_items_batch",
+                                    user_id=str(user_id),
+                                    activity_id=activity_id,
+                                    error=str(e),
+                                )
                         try:
                             fit_result = parse_fit_file(fit_bytes, user_id, source=self.provider_name)
                         except Exception as e:
