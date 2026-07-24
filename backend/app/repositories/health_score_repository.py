@@ -13,6 +13,22 @@ from app.schemas.model_crud.activities import HealthScoreCreate, HealthScoreQuer
 from app.utils.pagination import decode_cursor
 
 
+def _first_component_value(components: dict[str, Any], *keys: str) -> Any:
+    """Return the first present component value across candidate keys.
+
+    Providers store the same recovery metric under different `components` keys:
+    Oura/Garmin use 'resting_heart_rate' / 'hrv_rmssd_milli', while Polar's nightly
+    recharge uses 'heart_rate_avg' (overnight average HR) / 'heart_rate_variability_avg'
+    (RMSSD, ms). Coalescing across the aliases lets the recovery summary surface RHR/HRV
+    from every provider instead of only the ones using the canonical keys.
+    """
+    for key in keys:
+        entry = components.get(key)
+        if isinstance(entry, dict) and entry.get("value") is not None:
+            return entry["value"]
+    return None
+
+
 class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, HealthScoreUpdate]):
     def get_by_all_components(self, db_session: DbSession, components: list[str]) -> list[HealthScore]:
         """Return health scores whose components JSONB contains all specified keys (?& operator)."""
@@ -135,20 +151,27 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
 
         rows = query.limit(limit + 1).all()
 
-        return [
-            {
-                "recovery_date": row.recorded_at.date(),
-                "source": row.provider,
-                "device_model": None,
-                "record_id": row.id,
-                "recorded_at": row.recorded_at,
-                "recovery_score": int(row.value) if row.value is not None else None,
-                "resting_heart_rate": cast(dict, row.components or {}).get("resting_heart_rate", {}).get("value"),
-                "hrv_rmssd_milli": cast(dict, row.components or {}).get("hrv_rmssd_milli", {}).get("value"),
-                "spo2_percentage": cast(dict, row.components or {}).get("spo2_percentage", {}).get("value"),
-            }
-            for row in rows
-        ]
+        summaries = []
+        for row in rows:
+            components = cast(dict, row.components or {})
+            summaries.append(
+                {
+                    "recovery_date": row.recorded_at.date(),
+                    "source": row.provider,
+                    "device_model": None,
+                    "record_id": row.id,
+                    "recorded_at": row.recorded_at,
+                    "recovery_score": int(row.value) if row.value is not None else None,
+                    # Coalesce provider-specific aliases so Polar (heart_rate_avg /
+                    # heart_rate_variability_avg) surfaces alongside Oura/Garmin.
+                    "resting_heart_rate": _first_component_value(components, "resting_heart_rate", "heart_rate_avg"),
+                    "hrv_rmssd_milli": _first_component_value(
+                        components, "hrv_rmssd_milli", "heart_rate_variability_avg"
+                    ),
+                    "spo2_percentage": _first_component_value(components, "spo2_percentage"),
+                }
+            )
+        return summaries
 
     def get_latest_per_category(
         self,

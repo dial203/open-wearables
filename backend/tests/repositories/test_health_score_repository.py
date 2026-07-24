@@ -230,3 +230,35 @@ class TestHealthScoreRepositoryBulkCreate:
         results = db.query(HealthScore).filter(HealthScore.data_source_id == data_source.id).all()
         assert len(results) == 1
         assert results[0].value == Decimal("80.00")
+
+
+class TestFirstComponentValue:
+    """Unit tests for _first_component_value coalescing (provider-specific aliases)."""
+
+    def test_prefers_canonical_key(self) -> None:
+        from app.repositories.health_score_repository import _first_component_value
+
+        components = {
+            "resting_heart_rate": {"value": 52},
+            "heart_rate_avg": {"value": 61},
+        }
+        assert _first_component_value(components, "resting_heart_rate", "heart_rate_avg") == 52
+
+    def test_falls_back_to_polar_alias(self) -> None:
+        from app.repositories.health_score_repository import _first_component_value
+
+        # Polar nightly recharge stores overnight HR / RMSSD under different keys.
+        components = {
+            "heart_rate_avg": {"value": 58},
+            "heart_rate_variability_avg": {"value": 44},
+        }
+        assert _first_component_value(components, "resting_heart_rate", "heart_rate_avg") == 58
+        assert _first_component_value(components, "hrv_rmssd_milli", "heart_rate_variability_avg") == 44
+
+    def test_returns_none_when_absent_or_null(self) -> None:
+        from app.repositories.health_score_repository import _first_component_value
+
+        assert _first_component_value({}, "resting_heart_rate", "heart_rate_avg") is None
+        assert _first_component_value({"resting_heart_rate": {"value": None}}, "resting_heart_rate") is None
+        # A malformed (non-dict) component entry is ignored, not raised on.
+        assert _first_component_value({"resting_heart_rate": 52}, "resting_heart_rate") is None
