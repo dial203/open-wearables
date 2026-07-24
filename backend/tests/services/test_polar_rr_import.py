@@ -64,3 +64,12 @@ def test_build_creators_all_offline_yields_none() -> None:
         zone_offset=None,
     )
     assert creators == []
+
+
+def test_zone_offset_from() -> None:
+    f = PolarRrImportService._zone_offset_from
+    assert f(datetime(2026, 7, 22, tzinfo=timezone.utc)) == "+00:00"
+    assert f(datetime(2026, 7, 22, tzinfo=timezone(timedelta(hours=-5)))) == "-05:00"
+    assert f(datetime(2026, 7, 22, tzinfo=timezone(timedelta(hours=5, minutes=30)))) == "+05:30"
+    # naive datetime → no offset
+    assert f(datetime(2026, 7, 22)) is None

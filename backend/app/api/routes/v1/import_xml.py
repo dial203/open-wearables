@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from json import JSONDecodeError
 from typing import Annotated
 from uuid import UUID
@@ -54,28 +55,49 @@ def import_xml_file(
 @router.post("/users/{user_id}/import/polar/rr")
 def import_polar_rr(
     user_id: UUID,
-    workout_id: Annotated[UUID, Query(description="OW workout id this RR recording belongs to")],
     file: UploadFile,
     db: DbSession,
     _api_key: ApiKeyDep,
+    workout_id: Annotated[UUID | None, Query(description="OW workout id this RR recording belongs to")] = None,
+    start_time: Annotated[
+        datetime | None,
+        Query(
+            description="Session start time (ISO 8601, ideally with offset) to attribute the RR by, "
+            "when the OW workout id isn't known — e.g. Polar Flow exposes only its own session id."
+        ),
+    ] = None,
+    device: Annotated[
+        str | None, Query(description="Device model for the RR source (e.g. 'Polar Grit X2 Pro'); used with start_time")
+    ] = None,
 ) -> dict[str, int | str]:
-    """Import a Polar Flow RR-interval CSV for a workout.
+    """Import a Polar Flow RR-interval CSV.
 
     The CSV is Polar Flow's per-exercise RR export (`duration,offline` header, one
-    beat-to-beat interval in ms per row). Per-beat timestamps are reconstructed from
-    the workout's start time; the data is stored as an `rr_interval` time series on the
-    workout's source and is then queryable via `/timeseries?types=rr_interval`.
+    beat-to-beat interval in ms per row). Per-beat timestamps are reconstructed from the
+    session start; the data is stored as an `rr_interval` time series on the Polar source
+    and is then queryable via `/timeseries?types=rr_interval`.
 
-    404 if the workout doesn't exist for this user; 400 if the CSV is malformed.
+    Provide exactly one of `workout_id` (ties to a known OW workout) or `start_time`
+    (attributes by session start when the OW workout id isn't known). 404 if the workout
+    doesn't exist for this user; 400 if the CSV is malformed or the params are invalid.
     """
+    if (workout_id is None) == (start_time is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide exactly one of workout_id or start_time",
+        )
+
     contents = file.file.read()
     try:
-        result = polar_rr_import_service.import_rr_csv(db, user_id, workout_id, contents)
+        if workout_id is not None:
+            result = polar_rr_import_service.import_rr_csv(db, user_id, workout_id, contents)
+            if result is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workout not found for this user")
+            return result
+        assert start_time is not None
+        return polar_rr_import_service.import_rr_csv_by_start_time(db, user_id, start_time, contents, device=device)
     except PolarRrImportError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workout not found for this user")
-    return result
 
 
 @router.post("/sns/notification", status_code=status.HTTP_202_ACCEPTED)
