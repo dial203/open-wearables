@@ -132,9 +132,51 @@ GET /users/{user_id}/events/workouts?start_date=…&end_date=…
 GET /users/{user_id}/data-sources
 ```
 
-- Lists the distinct `DataSource` rows for the user (provider, device_model,
-  device_type, original_source_name, source). Use it to see *what paths/brands/devices
-  exist* before deciding how to reconcile.
+Returns `{ "items": [...], "total": N }`. Each item:
+
+| Field | Notes |
+|---|---|
+| `id` | **Stable DataSource id — key on this.** Survives re-ingestion; immune to brand/casing noise. |
+| `provider` | Ingestion path (`apple`, `google`, `garmin`, …) |
+| `device_model` | Raw hardware string, may be null |
+| `device_type` | `chest_strap` \| `watch` \| `band` \| `ring` \| `phone` \| `scale` \| `other` \| `unknown` — always set |
+| `source` | Sub-source tag (Apple HealthKit / Health Connect bundle id) |
+| `original_source_name` | Canonical brand |
+| `display_name` | Pre-formatted "Provider · Model" for operator UIs |
+| `user_id`, `user_connection_id`, `software_version` | |
+
+**Prefer `id` over a composite key.** The DataSource uniqueness key is
+`(user_id, provider, COALESCE(device_model,''), COALESCE(source,''))` —
+`original_source_name` is *not* part of it, so brand casing (`FITBIT` vs `Fitbit`)
+never splits a source, and two rows showing the same brand are genuinely distinct
+sources differing by `device_model` and/or `source`.
+
+**Use `device_type` to separate real wearables from phone/app relays** rather than
+pattern-matching model strings. It is always populated (`unknown` rather than null when
+it can't be inferred). Note that a wearable relayed through Apple/Google Health carries
+the *conduit phone* in `device_model`, so such a source types as `phone` — the brand is
+still in `original_source_name`.
+
+### Joining time-series samples back to a source
+
+Every `source` object (on `/timeseries`, workouts, and sleep sessions) carries the
+identity needed to join back to `/data-sources`:
+
+```jsonc
+"source": {
+  "provider": "com.oura.oura",        // legacy field: the sub-source tag, NOT the provider
+  "device": "iPhone18,1",
+  "data_source_id": "…",              // == items[].id from /data-sources
+  "ingestion_provider": "apple",      // the real DataSource.provider
+  "source_tag": "com.oura.oura",      // explicit sub-source tag
+  "original_source_name": "Oura",
+  "device_type": "phone"
+}
+```
+
+⚠️ The original `provider` field carries the **sub-source tag**, not the ingestion
+provider — kept as-is for backwards compatibility. Read `ingestion_provider` and
+`source_tag` instead, and use **`data_source_id`** as the join key.
 
 ### Data inventory / counts
 
