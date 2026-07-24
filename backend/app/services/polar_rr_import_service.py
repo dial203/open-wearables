@@ -98,6 +98,55 @@ class PolarRrImportService:
             )
         return creators
 
+    @staticmethod
+    def _zone_offset_from(start_datetime: datetime) -> str | None:
+        """Format a tz-aware datetime's UTC offset as ``+HH:MM`` (None if naive)."""
+        offset = start_datetime.utcoffset()
+        if offset is None:
+            return None
+        total = int(offset.total_seconds())
+        sign = "+" if total >= 0 else "-"
+        total = abs(total)
+        return f"{sign}{total // 3600:02d}:{(total % 3600) // 60:02d}"
+
+    def _ingest(
+        self,
+        db_session: DbSession,
+        *,
+        user_id: UUID,
+        start_datetime: datetime,
+        source: str | None,
+        device_model: str | None,
+        zone_offset: str | None,
+        contents: bytes,
+        label: str,
+    ) -> dict[str, int | str]:
+        """Parse, timestamp, and persist an RR CSV. Shared by both import paths."""
+        rows = self.parse_rr_csv(contents)
+        creators = self.build_creators(
+            rows,
+            user_id=user_id,
+            start_datetime=start_datetime,
+            source=source,
+            device_model=device_model,
+            zone_offset=zone_offset,
+        )
+        written = self.data_point_series_repo.bulk_create(db_session, creators)
+        db_session.commit()
+
+        offline_skipped = len(rows) - len(creators)
+        self.logger.info(
+            "Imported Polar RR (%s): %d beats stored (%d offline skipped)",
+            label,
+            len(creators),
+            offline_skipped,
+        )
+        return {
+            "beats_stored": int(written),
+            "beats_offline_skipped": offline_skipped,
+            "beats_total": len(rows),
+        }
+
     def import_rr_csv(
         self,
         db_session: DbSession,
@@ -105,7 +154,7 @@ class PolarRrImportService:
         workout_id: UUID,
         contents: bytes,
     ) -> dict[str, int | str] | None:
-        """Import an RR CSV for a workout. Returns a summary, or None if the workout
+        """Import an RR CSV for a known workout. Returns a summary, or None if the workout
         doesn't exist for this user (caller maps None to 404).
 
         Raises PolarRrImportError on a malformed CSV (caller maps to 400).
@@ -117,32 +166,45 @@ class PolarRrImportService:
         if not data_source or data_source.user_id != user_id:
             return None
 
-        rows = self.parse_rr_csv(contents)
-        creators = self.build_creators(
-            rows,
+        result = self._ingest(
+            db_session,
             user_id=user_id,
             start_datetime=record.start_datetime,
             source=data_source.source,
             device_model=data_source.device_model,
             zone_offset=record.zone_offset,
+            contents=contents,
+            label=f"workout {workout_id}",
         )
+        return {"workout_id": str(workout_id), **result}
 
-        written = self.data_point_series_repo.bulk_create(db_session, creators)
-        db_session.commit()
+    def import_rr_csv_by_start_time(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        start_datetime: datetime,
+        contents: bytes,
+        device: str | None = None,
+    ) -> dict[str, int | str]:
+        """Import an RR CSV attributed by session start time, without a pre-matched workout.
 
-        offline_skipped = len(rows) - len(creators)
-        self.logger.info(
-            "Imported Polar RR for workout %s: %d beats stored (%d offline skipped)",
-            workout_id,
-            len(creators),
-            offline_skipped,
+        Used when the source (e.g. Polar Flow) exposes only its own session id, not OW's
+        workout id. The beats are attributed to the user's Polar data source (matching an
+        existing Polar workout's source when ``device`` matches); the RR series is then
+        queryable via ``/timeseries?types=rr_interval`` over the session window.
+
+        Raises PolarRrImportError on a malformed CSV (caller maps to 400).
+        """
+        return self._ingest(
+            db_session,
+            user_id=user_id,
+            start_datetime=start_datetime,
+            source="polar",
+            device_model=device,
+            zone_offset=self._zone_offset_from(start_datetime),
+            contents=contents,
+            label=f"start_time {start_datetime.isoformat()}",
         )
-        return {
-            "workout_id": str(workout_id),
-            "beats_stored": int(written),
-            "beats_offline_skipped": offline_skipped,
-            "beats_total": len(rows),
-        }
 
 
 polar_rr_import_service = PolarRrImportService(log=getLogger(__name__))
