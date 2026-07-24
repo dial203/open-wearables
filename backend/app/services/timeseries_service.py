@@ -188,10 +188,7 @@ class TimeSeriesService(
             # Build source from data source info if available
             source = None
             if data_source:
-                source = SourceMetadata(
-                    provider=data_source.source or "unknown",
-                    device=data_source.device_model,
-                )
+                source = SourceMetadata.from_data_source(data_source)
 
             item = TimeSeriesSample(
                 timestamp=sample.recorded_at,

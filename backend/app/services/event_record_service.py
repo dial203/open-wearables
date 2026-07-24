@@ -666,10 +666,7 @@ class EventRecordService(
         return self.crud.get_count_by_workout_type(db_session)
 
     def _map_source(self, data_source: DataSource) -> DataSourceSchema:
-        return DataSourceSchema(
-            provider=data_source.source or "unknown",
-            device=data_source.device_model,
-        )
+        return DataSourceSchema.from_data_source(data_source)
 
     @handle_exceptions
     def get_workouts(
