@@ -197,7 +197,10 @@ function SleepSessionRow({
   // Overnight recovery metrics (RHR / HRV) for this night from ALL sources.
   // filter_by_priority=false returns one row per source instead of only the
   // prioritized winner. Fetched only when the row is expanded.
-  const nightEnd = useMemo(() => new Date(session.end_time), [session.end_time]);
+  const nightEnd = useMemo(
+    () => new Date(session.end_time),
+    [session.end_time]
+  );
   const nightDate = format(nightEnd, 'yyyy-MM-dd');
   const { data: recoveryData, isLoading: recoveryLoading } =
     useRecoverySummaries(
