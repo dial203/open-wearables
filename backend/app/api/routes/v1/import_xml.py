@@ -58,9 +58,7 @@ def import_polar_rr(
     file: UploadFile,
     db: DbSession,
     _api_key: ApiKeyDep,
-    workout_id: Annotated[
-        UUID | None, Query(description="OW workout id this RR recording belongs to")
-    ] = None,
+    workout_id: Annotated[UUID | None, Query(description="OW workout id this RR recording belongs to")] = None,
     start_time: Annotated[
         datetime | None,
         Query(
