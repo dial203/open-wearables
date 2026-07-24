@@ -118,6 +118,26 @@ export function useSleepSummaries(userId: string, params: SummaryParams) {
 }
 
 /**
+ * Get recovery summaries (overnight resting HR, HRV, SpO2, recovery score) for a user.
+ * Uses GET /api/v1/users/{user_id}/summaries/recovery
+ *
+ * Pass `filter_by_priority: false` in params to get every source per night instead
+ * of only the highest-priority one. `enabled` lets callers defer the fetch (e.g. only
+ * when a night row is expanded).
+ */
+export function useRecoverySummaries(
+  userId: string,
+  params: SummaryParams,
+  enabled: boolean = true
+) {
+  return useQuery({
+    queryKey: queryKeys.health.recoverySummaries(userId, params),
+    queryFn: () => healthService.getRecoverySummaries(userId, params),
+    enabled: enabled && !!userId && !!params.start_date && !!params.end_date,
+  });
+}
+
+/**
  * Delete a workout event
  */
 export function useDeleteWorkout(userId: string) {
