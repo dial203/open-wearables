@@ -1,8 +1,8 @@
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.schemas.enums import ProviderName
+from app.schemas.enums import IngestionRoute, ProviderName
 
 
 class DataSourceBase(BaseModel):
@@ -41,6 +41,15 @@ class DataSourceResponse(BaseModel):
     device_type: str | None = None
     original_source_name: str | None = None
     display_name: str | None = None
+    ingestion_route: IngestionRoute = Field(
+        IngestionRoute.DIRECT,
+        description=(
+            "Whether this source came straight from the maker's API (`direct`) or was "
+            "relayed through an aggregator platform such as Apple Health or Google Health "
+            "(`aggregator`). When `aggregator`, `provider` names the platform and "
+            "`original_source_name` names the brand that actually recorded the data."
+        ),
+    )
 
     model_config = {"from_attributes": True}
 

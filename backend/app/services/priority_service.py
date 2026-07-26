@@ -16,7 +16,7 @@ from app.schemas.model_crud.data_priority import (
     ProviderPriorityListResponse,
     ProviderPriorityResponse,
 )
-from app.utils.device_registry import humanize_device_model
+from app.utils.device_registry import humanize_device_model, resolve_ingestion_route
 from app.utils.exceptions import handle_exceptions
 
 
@@ -76,6 +76,7 @@ class PriorityService:
                 device_type=ds.device_type,
                 original_source_name=ds.original_source_name,
                 display_name=self._build_display_name(ds),
+                ingestion_route=resolve_ingestion_route(ds.provider, ds.original_source_name),
             )
             for ds in sources
         ]
