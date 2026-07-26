@@ -664,6 +664,10 @@ class EventRecordRepository(
 
         # Lateral subquery: for each sleep row, average physio data within
         # [min_start_time, max_end_time) — exact window, no date-grouping mismatch.
+        # Scoped to the *same* data source as the sleep row (provider/source/device,
+        # the grouping identity above): averaging over every source the user owns made
+        # each source's row report the same pooled vitals, so an Oura night could show
+        # a Whoop HRV. COALESCE mirrors the data_source identity semantics for NULLs.
         physio_lateral = lateral(
             select(
                 func.avg(case((DataPointSeries.series_type_definition_id == hr_id, DataPointSeries.value))).label(
@@ -685,6 +689,9 @@ class EventRecordRepository(
             .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
             .where(
                 DataSource.user_id == user_id,
+                DataSource.provider == subquery.c.provider,
+                func.coalesce(DataSource.source, "") == func.coalesce(subquery.c.source, ""),
+                func.coalesce(DataSource.device_model, "") == func.coalesce(subquery.c.device_model, ""),
                 DataPointSeries.series_type_definition_id.in_([hr_id, sdnn_id, rmssd_id, resp_id, spo2_id]),
                 DataPointSeries.recorded_at >= subquery.c.min_start_time,
                 DataPointSeries.recorded_at < subquery.c.max_end_time,
