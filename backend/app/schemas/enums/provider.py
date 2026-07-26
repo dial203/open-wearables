@@ -1,4 +1,16 @@
-from enum import Enum
+from enum import Enum, StrEnum
+
+
+class IngestionRoute(StrEnum):
+    """How data reached Open Wearables — straight from the maker, or relayed.
+
+    Consumers use this to tell "Oura read from Oura's own API" apart from "Oura
+    data relayed through Apple Health", which are different in freshness,
+    completeness and rounding even though both carry the same brand.
+    """
+
+    DIRECT = "direct"
+    AGGREGATOR = "aggregator"
 
 
 class ProviderName(str, Enum):

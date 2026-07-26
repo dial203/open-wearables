@@ -18,7 +18,7 @@ Two helpers:
   code over guessing wrong.
 """
 
-from app.schemas.enums import ProviderName
+from app.schemas.enums import IngestionRoute, ProviderName
 
 # --- Android package name -> brand (google/health-connect `source` values) -------
 # Matched by exact value or prefix (Health Connect appends a per-record hash).
@@ -95,6 +95,20 @@ PROVIDER_BRANDS: dict[ProviderName, str] = {
     ProviderName.ULTRAHUMAN: "Ultrahuman",
 }
 
+# --- Aggregator platforms --------------------------------------------------------
+# Providers that re-expose data recorded by *other* makers' devices, rather than
+# serving only their own hardware. Data arriving through one of these has taken an
+# extra hop, so it can differ from the maker's own API in freshness, completeness
+# and rounding even though the brand is identical.
+AGGREGATOR_PROVIDERS: frozenset[ProviderName] = frozenset(
+    {
+        ProviderName.APPLE,  # Apple Health / HealthKit
+        ProviderName.GOOGLE,  # Google Health / Health Connect
+        ProviderName.SAMSUNG,  # Samsung Health
+        ProviderName.STRAVA,  # activity platform fed by other devices
+    }
+)
+
 # --- Apple productType -> marketing name (display only) --------------------------
 APPLE_MODEL_NAMES: dict[str, str] = {
     "iPhone7,1": "iPhone 6 Plus",
@@ -152,6 +166,40 @@ def resolve_brand(
                 return brand
 
     return PROVIDER_BRANDS.get(provider)
+
+
+def resolve_ingestion_route(
+    provider: ProviderName | str,
+    original_source_name: str | None = None,
+) -> IngestionRoute:
+    """Whether a source reached us from its maker or via an aggregator platform.
+
+    ``DIRECT`` when the provider is the maker's own API (Oura -> Oura), and also
+    when an aggregator is carrying its *own* brand's data (an Apple Watch inside
+    Apple Health is still first-party). ``AGGREGATOR`` when a platform is carrying
+    another maker's data - the Oura/Garmin/Whoop rows that arrive via Apple or
+    Google Health.
+
+    Deliberately conservative: a source is only called an aggregator when a brand
+    other than the platform's own can actually be named, so an unrecognised brand
+    is never mislabelled as relayed.
+    """
+    try:
+        provider_enum = ProviderName(provider)
+    except ValueError:
+        return IngestionRoute.DIRECT
+
+    if provider_enum not in AGGREGATOR_PROVIDERS:
+        return IngestionRoute.DIRECT
+
+    platform_brand = PROVIDER_BRANDS.get(provider_enum)
+    if not original_source_name or not platform_brand:
+        return IngestionRoute.DIRECT
+
+    if original_source_name.strip().casefold() == platform_brand.casefold():
+        return IngestionRoute.DIRECT
+
+    return IngestionRoute.AGGREGATOR
 
 
 def humanize_device_model(device_model: str | None) -> str | None:

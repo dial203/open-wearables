@@ -37,6 +37,16 @@ class SourceMetadata(BaseModel):
     device_type: str | None = Field(
         None, description="chest_strap | watch | band | ring | phone | scale | other | unknown.", example="chest_strap"
     )
+    ingestion_route: str | None = Field(
+        None,
+        description=(
+            "`direct` if the data came straight from the maker's API, `aggregator` if it was "
+            "relayed through a platform such as Apple Health or Google Health. When "
+            "`aggregator`, `ingestion_provider` names the platform and `original_source_name` "
+            "names the brand that recorded it."
+        ),
+        example="aggregator",
+    )
 
     @classmethod
     def from_data_source(cls, data_source: Any) -> "SourceMetadata":
@@ -45,6 +55,10 @@ class SourceMetadata(BaseModel):
         `provider` keeps its historical value (the sub-source tag, falling back to
         "unknown") so existing consumers and the frontend are unaffected.
         """
+        # Imported here rather than at module scope: app.utils.device_registry imports
+        # from app.schemas.enums, so a top-level import would close an import cycle.
+        from app.utils.device_registry import resolve_ingestion_route
+
         return cls(
             provider=data_source.source or "unknown",
             device=data_source.device_model,
@@ -53,6 +67,11 @@ class SourceMetadata(BaseModel):
             source_tag=data_source.source,
             original_source_name=data_source.original_source_name,
             device_type=data_source.device_type,
+            ingestion_route=(
+                resolve_ingestion_route(data_source.provider, data_source.original_source_name).value
+                if data_source.provider
+                else None
+            ),
         )
 
 

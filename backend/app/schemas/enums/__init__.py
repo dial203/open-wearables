@@ -16,6 +16,7 @@ from .device_type import (
 from .health_score_category import HealthScoreCategory
 from .provider import (
     DEFAULT_PROVIDER_PRIORITY,
+    IngestionRoute,
     ProviderName,
 )
 from .series_types import (
@@ -49,6 +50,7 @@ __all__ = [
     "get_series_type_unit",
     "WorkoutType",
     "WORKOUTS_WITH_PACE",
+    "IngestionRoute",
     "ProviderName",
     "DEFAULT_PROVIDER_PRIORITY",
     "HealthScoreCategory",

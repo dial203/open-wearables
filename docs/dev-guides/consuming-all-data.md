@@ -151,6 +151,29 @@ Returns `{ "items": [...], "total": N }`. Each item:
 never splits a source, and two rows showing the same brand are genuinely distinct
 sources differing by `device_model` and/or `source`.
 
+### Direct from the maker, or relayed?
+
+`ingestion_route` says whether a source came straight from the manufacturer's API or
+was relayed through an aggregator platform — the distinction that `provider` alone
+forces you to hardcode:
+
+| `ingestion_route` | Meaning | Example |
+|---|---|---|
+| `direct` | Straight from the maker's own API | `provider=oura`, brand `Oura` |
+| `aggregator` | Relayed through a platform | `provider=apple`, brand `Oura` — Oura data via Apple Health |
+
+Aggregator platforms are Apple Health, Google Health / Health Connect, Samsung Health
+and Strava. When `ingestion_route` is `aggregator`, **`provider` names the platform**
+and **`original_source_name` names the brand that actually recorded the data**.
+
+A platform carrying its *own* brand stays `direct` — an Apple Watch inside Apple
+Health is still first-party. The classification is deliberately conservative: a source
+is only called `aggregator` when a brand other than the platform's own can be named,
+so an unrecognised brand is never mislabelled as relayed.
+
+The same field is on every sample's `source` object, so you can filter a time series
+to maker-direct data without a second call.
+
 **Use `device_type` to separate real wearables from phone/app relays** rather than
 pattern-matching model strings. It is always populated (`unknown` rather than null when
 it can't be inferred). Note that a wearable relayed through Apple/Google Health carries
@@ -170,7 +193,8 @@ identity needed to join back to `/data-sources`:
   "ingestion_provider": "apple",      // the real DataSource.provider
   "source_tag": "com.oura.oura",      // explicit sub-source tag
   "original_source_name": "Oura",
-  "device_type": "phone"
+  "device_type": "phone",
+  "ingestion_route": "aggregator"     // Oura data relayed via Apple Health
 }
 ```
 
