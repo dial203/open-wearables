@@ -13,9 +13,14 @@ uv run alembic upgrade head
 echo 'Initializing provider settings...'
 uv run python scripts/init_provider_settings.py
 
-# Initialize device priority table
+# Initialize device priority table.
+# Non-fatal: priority seeding is a convenience (unseeded types fall back to the
+# lowest rank), so it must never stop the API from starting — and must never
+# block the admin seeding that runs after it. Under `set -e` a failure here
+# previously aborted startup entirely.
 echo 'Initializing priorities...'
-uv run python scripts/init_device_priorities.py
+uv run python scripts/init_device_priorities.py \
+    || echo "Warning: device priority init failed — will retry on next startup."
 
 # Seed admin account (uses ADMIN_EMAIL/ADMIN_PASSWORD env vars, or defaults)
 echo 'Seeding admin account...'
