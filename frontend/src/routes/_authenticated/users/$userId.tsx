@@ -17,6 +17,7 @@ import {
   Copy,
   Ellipsis,
   Heart,
+  Layers,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -37,6 +38,7 @@ import { BodySection } from '@/components/user/body-section';
 import { WorkoutSection } from '@/components/user/workout-section';
 import { ScoresSection } from '@/components/user/scores-section';
 import { WomensHealthSection } from '@/components/user/womens-health-section';
+import { CompareSection } from '@/components/user/compare-section';
 import type { DateRangeValue } from '@/components/ui/date-range-selector';
 import {
   AlertDialog,
@@ -160,6 +162,12 @@ function UserDetailPage() {
             onDateRangeChange={setSleepDateRange}
           />
         ),
+      },
+      {
+        id: 'compare',
+        label: 'Compare',
+        icon: Layers,
+        content: <CompareSection userId={userId} />,
       },
       {
         id: 'body',

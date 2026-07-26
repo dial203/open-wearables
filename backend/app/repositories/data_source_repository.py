@@ -134,10 +134,12 @@ class DataSourceRepository(
                 object.__setattr__(existing, "original_source_name", original_source_name)
                 updated = True
             if existing.device_type is None:
+                # Always store a value (including "unknown"): consumers key off
+                # device_type to separate real wearables from phone/app relays, and a
+                # NULL forces them back to guessing from model strings.
                 device_type = self._infer_device_type(device_model, original_source_name)
-                if device_type != DeviceType.UNKNOWN:
-                    object.__setattr__(existing, "device_type", device_type.value)
-                    updated = True
+                object.__setattr__(existing, "device_type", device_type.value)
+                updated = True
             if updated:
                 db_session.flush()
             return existing
@@ -155,7 +157,7 @@ class DataSourceRepository(
             device_model=device_model,
             software_version=software_version,
             source=source,
-            device_type=device_type.value if device_type != DeviceType.UNKNOWN else None,
+            device_type=device_type.value,
             original_source_name=original_source_name,
         )
         result = self.create(db_session, create_payload)
@@ -201,7 +203,11 @@ class DataSourceRepository(
         if missing:
             values = []
             for user_id, device_model, source in missing:
-                device_type = self._infer_device_type(device_model, None)
+                # Mirror ensure_data_source: derive the canonical brand here too, so rows
+                # first created by the bulk path aren't left with a NULL brand, and always
+                # store a device_type rather than NULL.
+                original_source_name = resolve_brand(provider, device_model, source)
+                device_type = self._infer_device_type(device_model, original_source_name)
                 values.append(
                     {
                         "id": uuid4(),
@@ -210,7 +216,8 @@ class DataSourceRepository(
                         "user_connection_id": user_connection_id,
                         "device_model": device_model,
                         "source": source,
-                        "device_type": device_type.value if device_type != DeviceType.UNKNOWN else None,
+                        "device_type": device_type.value,
+                        "original_source_name": original_source_name,
                     }
                 )
             stmt = insert(self.model).values(values).on_conflict_do_nothing()

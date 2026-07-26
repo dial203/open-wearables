@@ -55,8 +55,15 @@ class DeviceTypePriorityRepository:
         return self.get_all_ordered(db)
 
     def initialize_defaults(self, db: DbSession) -> list[DeviceTypePriority]:
+        """Seed default priorities, adding any device types missing from the table.
+
+        Additive on purpose: a device type introduced after a deployment was first
+        seeded (e.g. chest_strap) must still reach an existing database, but rows an
+        operator has already customised are left untouched.
+        """
         existing = self.get_all_ordered(db)
-        if existing:
+        existing_types = {p.device_type for p in existing}
+        missing = [(dt, pr) for dt, pr in DEFAULT_DEVICE_TYPE_PRIORITY.items() if dt not in existing_types]
+        if not missing:
             return existing
-        priorities = list(DEFAULT_DEVICE_TYPE_PRIORITY.items())
-        return self.bulk_update(db, priorities)
+        return self.bulk_update(db, missing)
