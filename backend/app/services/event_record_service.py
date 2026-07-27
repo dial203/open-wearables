@@ -393,6 +393,13 @@ class EventRecordService(
                 record.end_datetime,
             )
 
+            # Time in bed cannot exceed the merged window. Summing is right for two
+            # genuinely distinct sessions, but a provider that re-sends the same night
+            # without a stable external_id lands here repeatedly and would otherwise
+            # accumulate without bound (a 7 h night reported as 99 h after 14 syncs).
+            merged_span_minutes = int((merged_end - merged_start).total_seconds() // 60)
+            merged_in_bed = min(merged_in_bed, merged_span_minutes)
+
             merged_detail_fields = {
                 "sleep_deep_minutes": merged_deep,
                 "sleep_light_minutes": merged_light,
