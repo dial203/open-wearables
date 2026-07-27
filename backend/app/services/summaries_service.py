@@ -47,6 +47,7 @@ from app.schemas.utils import (
     TimeseriesMetadata,
 )
 from app.utils.exceptions import handle_exceptions
+from app.utils.intervals import merged_span_minutes
 from app.utils.pagination import (
     decode_activity_cursor,
     encode_activity_cursor,
@@ -334,6 +335,18 @@ class SummariesService:
                 total_duration_minutes = (main_minutes or 0) + (nap_minutes or 0)
 
             main_sessions = [s for s in sessions if not s.is_nap]
+
+            # time_in_bed is summed across the night's sessions, which double-counts
+            # when a provider re-issues a night under a new id (a revised Whoop sleep,
+            # the same Oura night under two ring models). Cap it at the union of the
+            # session windows — the most time that could physically have been spent in
+            # bed. Non-overlapping sessions are unaffected, since each one's time in
+            # bed already fits inside its own window.
+            time_in_bed_minutes = result.get("time_in_bed_minutes")
+            if time_in_bed_minutes is not None and main_sessions:
+                covered = merged_span_minutes([(s.start_time, s.end_time) for s in main_sessions])
+                if covered:
+                    time_in_bed_minutes = min(time_in_bed_minutes, covered)
             longest_main = max(main_sessions, key=lambda s: s.duration_minutes or 0, default=None)
             start_time = longest_main.start_time if longest_main else result["min_start_time"]
             end_time = longest_main.end_time if longest_main else result["max_end_time"]
@@ -348,7 +361,7 @@ class SummariesService:
                 duration_minutes=result["total_duration_minutes"],
                 total_duration_minutes=total_duration_minutes,
                 sessions=sessions or None,
-                time_in_bed_minutes=result.get("time_in_bed_minutes"),
+                time_in_bed_minutes=time_in_bed_minutes,
                 efficiency_percent=result.get("efficiency_percent"),
                 stages=stages,
                 nap_count=result.get("nap_count"),
