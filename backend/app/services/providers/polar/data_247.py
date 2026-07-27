@@ -256,6 +256,10 @@ class Polar247Data(Base247DataTemplate):
                 category="sleep",
                 type="sleep_session",
                 source_name="Polar",
+                # Stable per-night key. Without it, re-syncing the same night can't be
+                # recognised as a re-ingestion, so it takes the merge path and sums
+                # sleep_time_in_bed_minutes into the existing row on every sync.
+                external_id=parsed.date or start_dt.date().isoformat(),
                 duration_seconds=duration_seconds,
                 start_datetime=start_dt,
                 end_datetime=end_dt,
