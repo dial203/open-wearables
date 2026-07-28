@@ -188,17 +188,43 @@ class DataSourceRepository(
 
         from sqlalchemy import or_
 
-        conditions = []
-        for user_id, device_model, source in identities_list:
-            conditions.append(self._build_identity_filter(user_id, provider, device_model, source))
+        # Fill device_model from the connection's device_label when the provider didn't
+        # report one, mirroring ensure_data_source. Without it, time series (which arrive
+        # through this bulk path) land on a device-less source while events land on the
+        # labelled one, splitting a single device across two data sources.
+        label_cache: dict[UUID, str | None] = {}
+
+        def _stored_device_model(user_id: UUID, device_model: str | None) -> str | None:
+            if device_model is not None:
+                return device_model
+            if user_id not in label_cache:
+                label_cache[user_id] = self._connection_device_label(db_session, user_id, provider)
+            return label_cache[user_id]
+
+        # Callers look rows up by the identity they passed in, which may carry a null
+        # device_model, so keep both: what was asked for, and what is actually stored.
+        stored_by_requested: dict[tuple[UUID, str | None, str | None], tuple[UUID, str | None, str | None]] = {
+            (user_id, device_model, source): (user_id, _stored_device_model(user_id, device_model), source)
+            for user_id, device_model, source in identities_list
+        }
+
+        conditions = [
+            self._build_identity_filter(user_id, provider, device_model, source)
+            for user_id, device_model, source in stored_by_requested.values()
+        ]
 
         existing = db_session.query(self.model).filter(or_(*conditions)).all()
+        ids_by_stored: dict[tuple[UUID, str | None, str | None], UUID] = {
+            (ds.user_id, ds.device_model, ds.source): ds.id for ds in existing
+        }
 
-        result: dict[tuple[UUID, str | None, str | None], UUID] = {}
-        for ds in existing:
-            result[(ds.user_id, ds.device_model, ds.source)] = ds.id
+        result: dict[tuple[UUID, str | None, str | None], UUID] = {
+            requested: ids_by_stored[stored]
+            for requested, stored in stored_by_requested.items()
+            if stored in ids_by_stored
+        }
 
-        missing = [i for i in identities_list if i not in result]
+        missing = [stored for requested, stored in stored_by_requested.items() if requested not in result]
 
         if missing:
             values = []
@@ -224,13 +250,21 @@ class DataSourceRepository(
             db_session.execute(stmt)
             db_session.flush()
 
-            conditions = []
-            for user_id, device_model, source in missing:
-                conditions.append(self._build_identity_filter(user_id, provider, device_model, source))
+            conditions = [
+                self._build_identity_filter(user_id, provider, device_model, source)
+                for user_id, device_model, source in missing
+            ]
 
             newly_inserted = db_session.query(self.model).filter(or_(*conditions)).all()
-            for ds in newly_inserted:
-                result[(ds.user_id, ds.device_model, ds.source)] = ds.id
+            ids_by_stored.update({(ds.user_id, ds.device_model, ds.source): ds.id for ds in newly_inserted})
+
+            result.update(
+                {
+                    requested: ids_by_stored[stored]
+                    for requested, stored in stored_by_requested.items()
+                    if requested not in result and stored in ids_by_stored
+                }
+            )
 
         return result
 
