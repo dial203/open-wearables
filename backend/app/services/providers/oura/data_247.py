@@ -15,7 +15,6 @@ from app.database import DbSession
 from app.models import EventRecord
 from app.repositories import EventRecordRepository, UserConnectionRepository
 from app.repositories.data_point_series_repository import WriteCounts
-from app.repositories.data_source_repository import DataSourceRepository
 from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
@@ -1266,6 +1265,14 @@ class Oura247Data(Base247DataTemplate):
         """Auto-detect the ring model and store it as the connection's device
         label so data_source.device_model gets populated (Oura's data endpoints
         don't carry a device). A manually-set label is never overwritten.
+
+        Deliberately does *not* relabel existing device-less data sources. The
+        detected ring is whichever one is set up *now*, and a user who has changed
+        rings still has history from the previous one — stamping today's model
+        across it would silently attribute years-old data to hardware they did not
+        own yet. An unlabelled source is recoverable; a confidently wrong label is
+        not. Operators can still assert a label for older data explicitly via
+        PUT /users/{user_id}/connections/{provider}/device-label.
         """
         model = self._derive_ring_model(self.get_ring_configuration(db, user_id))
         if not model:
@@ -1276,7 +1283,6 @@ class Oura247Data(Base247DataTemplate):
         connection.device_label = model
         connection.updated_at = datetime.now(timezone.utc)
         db.add(connection)
-        DataSourceRepository().set_connection_device_label(db, user_id, ProviderName.OURA, model)
         db.commit()
         return 1
 
