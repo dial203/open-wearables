@@ -707,33 +707,62 @@ class EventRecordRepository(
             )
         )
 
+        # Some providers file a *daily* SpO2 average rather than intra-night samples,
+        # timestamped at the day boundary (Oura stamps its daily_spo2 average at
+        # 00:00Z of the wake-up day).  For anyone west of UTC that instant lands
+        # before the sleep window starts, so the window lateral above never sees it
+        # and the night shows no SpO2 at all.  Match those by calendar day instead —
+        # sleep_date is the local wake-up date, the same day the provider files under.
+        # Used only as a fallback, so a source with real intra-night samples still
+        # reports the windowed average.
+        daily_spo2_lateral = lateral(
+            select(
+                func.avg(DataPointSeries.value).label("daily_spo2"),
+            )
+            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+            .where(
+                DataSource.user_id == user_id,
+                DataSource.provider == subquery.c.provider,
+                func.coalesce(DataSource.source, "") == func.coalesce(subquery.c.source, ""),
+                func.coalesce(DataSource.device_model, "") == func.coalesce(subquery.c.device_model, ""),
+                DataPointSeries.series_type_definition_id == spo2_id,
+                # Compare in UTC explicitly — a bare ::date would follow the session
+                # TimeZone and could land the day-boundary stamp on the wrong date.
+                cast(func.timezone("UTC", DataPointSeries.recorded_at), Date) == subquery.c.sleep_date,
+            )
+        )
+
         # Build main query from subquery, casting record_id back to UUID
         record_id_col = cast(subquery.c.record_id_text, SQL_UUID).label("record_id")
-        query = db_session.query(
-            subquery.c.sleep_date,
-            subquery.c.min_start_time,
-            subquery.c.max_end_time,
-            subquery.c.total_duration,
-            subquery.c.provider,
-            subquery.c.source,
-            subquery.c.device_model,
-            record_id_col,
-            subquery.c.time_in_bed_minutes,
-            subquery.c.deep_minutes,
-            subquery.c.light_minutes,
-            subquery.c.rem_minutes,
-            subquery.c.awake_minutes,
-            subquery.c.efficiency_weighted_sum,
-            subquery.c.efficiency_duration_sum,
-            subquery.c.nap_count,
-            subquery.c.nap_duration,
-            physio_lateral.c.avg_hr,
-            physio_lateral.c.avg_resting_hr,
-            physio_lateral.c.avg_hrv_sdnn,
-            physio_lateral.c.avg_hrv_rmssd,
-            physio_lateral.c.avg_resp,
-            physio_lateral.c.avg_spo2,
-        ).outerjoin(physio_lateral, true())
+        query = (
+            db_session.query(
+                subquery.c.sleep_date,
+                subquery.c.min_start_time,
+                subquery.c.max_end_time,
+                subquery.c.total_duration,
+                subquery.c.provider,
+                subquery.c.source,
+                subquery.c.device_model,
+                record_id_col,
+                subquery.c.time_in_bed_minutes,
+                subquery.c.deep_minutes,
+                subquery.c.light_minutes,
+                subquery.c.rem_minutes,
+                subquery.c.awake_minutes,
+                subquery.c.efficiency_weighted_sum,
+                subquery.c.efficiency_duration_sum,
+                subquery.c.nap_count,
+                subquery.c.nap_duration,
+                physio_lateral.c.avg_hr,
+                physio_lateral.c.avg_resting_hr,
+                physio_lateral.c.avg_hrv_sdnn,
+                physio_lateral.c.avg_hrv_rmssd,
+                physio_lateral.c.avg_resp,
+                func.coalesce(physio_lateral.c.avg_spo2, daily_spo2_lateral.c.daily_spo2).label("avg_spo2"),
+            )
+            .outerjoin(physio_lateral, true())
+            .outerjoin(daily_spo2_lateral, true())
+        )
 
         # Handle cursor pagination
         if cursor:

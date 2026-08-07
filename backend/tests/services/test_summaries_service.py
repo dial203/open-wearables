@@ -214,6 +214,87 @@ class TestGetSleepSummaries:
         assert summary.avg_heart_rate_bpm == 60
         assert summary.avg_hrv_sdnn_ms == 45
 
+    def test_daily_spo2_stamped_at_day_boundary_is_picked_up(self, db: Session, service: SummariesService) -> None:
+        """Providers that file one daily SpO2 average stamp it at 00:00 UTC of the
+        wake-up day, which falls before the sleep window for anyone west of UTC.
+        It is matched by calendar day instead so the night still reports SpO2."""
+        user = UserFactory()
+        ds = DataSourceFactory(user=user, provider=ProviderName.OURA, source="oura")
+        record = EventRecordFactory(
+            data_source=ds,
+            category="sleep",
+            type="sleep",
+            # US-eastern night: 23:00 local on Jan 1 -> 07:00 local on Jan 2
+            start_datetime=_dt("2026-01-02T04:00:00+00:00"),
+            end_datetime=_dt("2026-01-02T12:00:00+00:00"),
+            duration_seconds=8 * 3600,
+            zone_offset="-05:00",
+        )
+        SleepDetailsFactory(event_record=record)
+
+        spo2_type = SeriesTypeDefinitionFactory.get_or_create_oxygen_saturation()
+        DataPointSeriesFactory(
+            data_source=ds,
+            series_type=spo2_type,
+            value=96,
+            # Before min_start_time, so the windowed lateral never sees it
+            recorded_at=_dt("2026-01-02T00:00:00+00:00"),
+        )
+
+        result = service.get_sleep_summaries(
+            db,
+            user.id,
+            _dt("2026-01-01T00:00:00+00:00"),
+            _dt("2026-01-03T00:00:00+00:00"),
+            cursor=None,
+            limit=10,
+        )
+        assert len(result.data) == 1
+        assert result.data[0].avg_spo2_percent == 96
+
+    def test_in_window_spo2_wins_over_daily_value(self, db: Session, service: SummariesService) -> None:
+        """The day-boundary fallback is only a fallback — a source with real
+        intra-night samples still reports the windowed average."""
+        user = UserFactory()
+        ds = DataSourceFactory(user=user, provider=ProviderName.GARMIN, source="garmin")
+        record = EventRecordFactory(
+            data_source=ds,
+            category="sleep",
+            type="sleep",
+            start_datetime=_dt("2026-01-02T04:00:00+00:00"),
+            end_datetime=_dt("2026-01-02T12:00:00+00:00"),
+            duration_seconds=8 * 3600,
+            zone_offset="-05:00",
+        )
+        SleepDetailsFactory(event_record=record)
+
+        spo2_type = SeriesTypeDefinitionFactory.get_or_create_oxygen_saturation()
+        for hour, val in ((5, 94), (6, 96)):
+            DataPointSeriesFactory(
+                data_source=ds,
+                series_type=spo2_type,
+                value=val,
+                recorded_at=_dt(f"2026-01-02T0{hour}:00:00+00:00"),
+            )
+        # Day-boundary value that must not drag the average
+        DataPointSeriesFactory(
+            data_source=ds,
+            series_type=spo2_type,
+            value=80,
+            recorded_at=_dt("2026-01-02T00:00:00+00:00"),
+        )
+
+        result = service.get_sleep_summaries(
+            db,
+            user.id,
+            _dt("2026-01-01T00:00:00+00:00"),
+            _dt("2026-01-03T00:00:00+00:00"),
+            cursor=None,
+            limit=10,
+        )
+        assert len(result.data) == 1
+        assert result.data[0].avg_spo2_percent == 95
+
     def test_physio_averages_none_without_physio_data(self, db: Session, service: SummariesService) -> None:
         user = UserFactory()
         record = self._make_sleep_record(user, "2026-01-01T23:00:00+00:00", "2026-01-02T07:00:00+00:00")

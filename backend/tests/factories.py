@@ -233,6 +233,16 @@ class SeriesTypeDefinitionFactory(BaseFactory):
                 return existing
         return cls(id=45, code="body_temperature", unit="celsius")
 
+    @classmethod
+    def get_or_create_oxygen_saturation(cls) -> SeriesTypeDefinition:
+        """Get the pre-seeded oxygen_saturation series type (ID=20)."""
+        session = cls._meta.sqlalchemy_session
+        if session:
+            existing = session.query(SeriesTypeDefinition).filter(SeriesTypeDefinition.id == 20).first()
+            if existing:
+                return existing
+        return cls(id=20, code="oxygen_saturation", unit="percent")
+
 
 class UserFactory(BaseFactory):
     """Factory for User model."""
