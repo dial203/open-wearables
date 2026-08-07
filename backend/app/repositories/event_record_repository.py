@@ -657,6 +657,7 @@ class EventRecordRepository(
         ).subquery()
 
         hr_id = get_series_type_id(SeriesType.heart_rate)
+        resting_hr_id = get_series_type_id(SeriesType.resting_heart_rate)
         sdnn_id = get_series_type_id(SeriesType.heart_rate_variability_sdnn)
         rmssd_id = get_series_type_id(SeriesType.heart_rate_variability_rmssd)
         resp_id = get_series_type_id(SeriesType.respiratory_rate)
@@ -673,6 +674,12 @@ class EventRecordRepository(
                 func.avg(case((DataPointSeries.series_type_definition_id == hr_id, DataPointSeries.value))).label(
                     "avg_hr"
                 ),
+                # Providers that report a resting HR do so as its own series rather than
+                # a RECOVERY health score (Oura files a READINESS score, Garmin neither),
+                # so read it here to surface it for every provider that records one.
+                func.avg(
+                    case((DataPointSeries.series_type_definition_id == resting_hr_id, DataPointSeries.value))
+                ).label("avg_resting_hr"),
                 func.avg(case((DataPointSeries.series_type_definition_id == sdnn_id, DataPointSeries.value))).label(
                     "avg_hrv_sdnn"
                 ),
@@ -692,7 +699,9 @@ class EventRecordRepository(
                 DataSource.provider == subquery.c.provider,
                 func.coalesce(DataSource.source, "") == func.coalesce(subquery.c.source, ""),
                 func.coalesce(DataSource.device_model, "") == func.coalesce(subquery.c.device_model, ""),
-                DataPointSeries.series_type_definition_id.in_([hr_id, sdnn_id, rmssd_id, resp_id, spo2_id]),
+                DataPointSeries.series_type_definition_id.in_(
+                    [hr_id, resting_hr_id, sdnn_id, rmssd_id, resp_id, spo2_id]
+                ),
                 DataPointSeries.recorded_at >= subquery.c.min_start_time,
                 DataPointSeries.recorded_at < subquery.c.max_end_time,
             )
@@ -719,6 +728,7 @@ class EventRecordRepository(
             subquery.c.nap_count,
             subquery.c.nap_duration,
             physio_lateral.c.avg_hr,
+            physio_lateral.c.avg_resting_hr,
             physio_lateral.c.avg_hrv_sdnn,
             physio_lateral.c.avg_hrv_rmssd,
             physio_lateral.c.avg_resp,

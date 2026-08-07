@@ -115,16 +115,24 @@ const METRIC_ROWS: MetricRow[] = [
   {
     group: 'Overnight vitals',
     label: 'Resting HR',
-    getValue: (c) => num(c.recovery?.resting_heart_rate_bpm),
+    // Only some providers file a recovery score (Oura reports readiness, Garmin
+    // neither), so fall back to the resting_heart_rate series on the sleep summary.
+    getValue: (c) =>
+      num(c.recovery?.resting_heart_rate_bpm) ??
+      num(c.sleep?.resting_heart_rate_bpm),
     format: (v) => (v === null ? '-' : `${Math.round(v)} bpm`),
     formatSpread: (s) => `${Math.round(s)} bpm`,
   },
   {
     group: 'Overnight vitals',
     label: 'HRV',
-    // Backend maps RMSSD into avg_hrv_sdnn_ms; recovery wins, sleep summary is the fallback.
+    // Oura, Garmin and Whoop all report RMSSD. Recovery stores it in the field named
+    // avg_hrv_sdnn_ms (a backend naming quirk), while the sleep summary keeps SDNN and
+    // RMSSD apart — so prefer RMSSD there and keep SDNN as the last resort.
     getValue: (c) =>
-      num(c.recovery?.avg_hrv_sdnn_ms) ?? num(c.sleep?.avg_hrv_sdnn_ms),
+      num(c.recovery?.avg_hrv_sdnn_ms) ??
+      num(c.sleep?.avg_hrv_rmssd_ms) ??
+      num(c.sleep?.avg_hrv_sdnn_ms),
     format: (v) => (v === null ? '-' : `${Math.round(v)} ms`),
     formatSpread: (s) => `${Math.round(s)} ms`,
   },
