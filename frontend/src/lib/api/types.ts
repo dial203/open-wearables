@@ -348,7 +348,11 @@ export interface SleepSummary {
   nap_count: number | null;
   nap_duration_minutes: number | null;
   avg_heart_rate_bpm: number | null;
+  /** Resting HR from the provider's own series — populated even when the provider files no recovery score. */
+  resting_heart_rate_bpm: number | null;
   avg_hrv_sdnn_ms: number | null;
+  /** Oura, Garmin and Whoop report HRV as RMSSD; prefer this over SDNN. */
+  avg_hrv_rmssd_ms: number | null;
   avg_respiratory_rate: number | null;
   avg_spo2_percent: number | null;
 }

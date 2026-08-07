@@ -80,6 +80,14 @@ class SleepSummary(BaseModel):
         None, description="Per-session breakdown of all sleep and nap sessions for the day"
     )
     avg_heart_rate_bpm: int | None = None
+    resting_heart_rate_bpm: int | None = Field(
+        None,
+        description=(
+            "Resting heart rate recorded during this sleep. Read from the provider's "
+            "resting_heart_rate series, so it is populated for providers that record one "
+            "without filing a recovery score (e.g. Oura, Garmin)."
+        ),
+    )
     avg_hrv_sdnn_ms: float | None = Field(None, description="Average HRV (SDNN) during sleep")
     avg_hrv_rmssd_ms: float | None = Field(None, description="Average HRV (RMSSD) during sleep")
     avg_respiratory_rate: float | None = None
