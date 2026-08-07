@@ -17,6 +17,14 @@ from each ring's own ``set_up_at``, so no changeover date is assumed:
     ring[i] owns [set_up_at[i], set_up_at[i+1])   the newest owns [set_up_at[-1], inf)
     anything older than the earliest ring is unattributable -> device_model NULL
 
+Device-less sources are processed too, not just mislabelled ones. Time series used
+to resolve their data source through a path that did not apply the connection's
+device label, so a ring's HR/HRV could land on a device-less source while its sleep
+events landed on the labelled one (fixed separately). The same windows re-attribute
+those points, and because a window that already matches the source is skipped, data
+genuinely predating every known ring stays device-less instead of being swept onto
+the current ring.
+
 Rows are moved, never deleted. A row that would collide with the target's unique
 constraint is left where it is and counted as skipped, so the script is safe to
 re-run: once moved, rows no longer match their source filter.
@@ -154,7 +162,7 @@ def run(apply: bool) -> None:
             text("""
                 SELECT id, user_id, device_model, source
                 FROM data_source
-                WHERE provider = :provider AND device_model IS NOT NULL
+                WHERE provider = :provider
                 ORDER BY user_id
             """),
             {"provider": PROVIDER},
@@ -178,10 +186,6 @@ def run(apply: bool) -> None:
 
             if not rings:
                 continue
-            if len(rings) == 1 and rings[0][0] == device_model:
-                # Only ever one ring, and it matches: any older data still predates
-                # its set_up_at, so fall through and let that window be cleared.
-                pass
 
             print(f"\n{user_id}  source={device_model!r} tag={source_tag!r}")
             for model, lo, hi in _ownership(rings):
