@@ -154,26 +154,20 @@ export interface ChangePasswordRequest {
   confirm_password: string;
 }
 
-export interface CountWithGrowth {
-  count: number;
-  weekly_growth: number;
-}
-
-export interface SeriesTypeMetric {
-  series_type: string;
-  count: number;
-}
-
-export interface WorkoutTypeMetric {
-  workout_type: string | null;
+export interface MetricCount {
   count: number;
 }
 
 export interface DataPointsInfo {
   count: number;
-  weekly_growth: number;
-  top_series_types: SeriesTypeMetric[];
-  top_workout_types: WorkoutTypeMetric[];
+  archived: number;
+}
+
+export interface EventRecordsInfo {
+  count: number;
+  workouts: number;
+  sleep: number;
+  menstrual_cycles: number;
 }
 
 export interface ProviderConnectionCount {
@@ -188,9 +182,10 @@ export interface ConnectionsCoverage {
 }
 
 export interface DashboardStats {
-  total_users: CountWithGrowth;
-  active_conn: CountWithGrowth;
+  total_users: MetricCount;
+  active_conn: MetricCount;
   data_points: DataPointsInfo;
+  event_records: EventRecordsInfo;
   connections_coverage: ConnectionsCoverage;
 }
 
@@ -277,6 +272,7 @@ export interface UserConnection {
   last_synced_at?: string;
   created_at: string;
   updated_at: string;
+  icon_url?: string | null;
   max_historical_days?: number | null;
   rest_pull?: boolean;
   webhook_stream?: boolean;
@@ -304,9 +300,15 @@ export interface SleepStage {
   duration_seconds?: number;
 }
 
+export type DeviceType =
+  'watch' | 'band' | 'ring' | 'phone' | 'scale' | 'other' | 'unknown';
+
 export interface SourceMetadata {
   provider: string;
+  source: string | null;
   device: string | null;
+  device_name: string | null;
+  device_type: DeviceType | null;
 }
 
 export interface SleepSession {
@@ -337,7 +339,7 @@ export interface SleepSessionsParams {
 
 export interface SleepSummary {
   date: string;
-  source: DataSource;
+  source: SourceMetadata;
   start_time: string | null;
   end_time: string | null;
   duration_minutes: number | null;
@@ -409,7 +411,7 @@ export interface BodyLatest {
  * Returns null from API if no body data exists.
  */
 export interface BodySummary {
-  source: DataSource;
+  source: SourceMetadata;
   slow_changing: BodySlowChanging;
   averaged: BodyAveraged;
   latest: BodyLatest;
@@ -426,18 +428,13 @@ export interface BodySummaryParams {
 
 export interface RecoverySummary {
   date: string;
-  source: DataSource;
+  source: SourceMetadata;
   sleep_duration_seconds: number | null;
   sleep_efficiency_percent: number | null;
   resting_heart_rate_bpm: number | null;
   avg_hrv_sdnn_ms: number | null;
   avg_spo2_percent: number | null;
   recovery_score: number | null;
-}
-
-export interface DataSource {
-  provider: string;
-  device: string | null;
 }
 
 export interface HeartRateStats {
@@ -454,7 +451,7 @@ export interface IntensityMinutes {
 
 export interface ActivitySummary {
   date: string;
-  source: DataSource;
+  source: SourceMetadata;
   // Step and movement metrics
   steps: number | null;
   distance_meters: number | null;
@@ -486,6 +483,23 @@ export interface ApiKeyCreate {
 
 export interface ApiKeyUpdate {
   name?: string | null;
+}
+
+/** SDK application credentials for mobile app authentication. */
+export interface Application {
+  id: string;
+  app_id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface ApplicationCreate {
+  name: string;
+}
+
+/** Returned only on create / rotate-secret — secret cannot be retrieved again. */
+export interface ApplicationWithSecret extends Application {
+  app_secret: string;
 }
 
 export interface Automation {
@@ -597,10 +611,7 @@ export interface EventRecordResponse {
   start_time: string;
   end_time: string;
   duration_seconds?: number | null;
-  source?: {
-    provider: string;
-    device?: string | null;
-  };
+  source?: SourceMetadata;
   calories_kcal?: number | null;
   distance_meters?: number | null;
   // Heart rate fields (matching backend Workout schema)

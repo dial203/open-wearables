@@ -47,6 +47,10 @@ class Settings(BaseSettings):
 
     # None → derived in derive_access_log_level (prod: errors only, else: all)
     access_log_level: AccessLogLevel | None = None
+    # Include the 4xx response body the client received in the access log.
+    log_error_response_body: bool = False
+    log_error_response_body_max_bytes: int = 8192  # truncate a logged body
+    log_error_response_body_max_per_minute: int = 60  # cap logged bodies/min
 
     # DATABASE SETTINGS
     db_host: str = "db"
@@ -157,6 +161,13 @@ class Settings(BaseSettings):
     whoop_client_secret: SecretStr | None = None
     whoop_redirect_uri: str | None = None  # Deprecated: use API_BASE_URL
     whoop_default_scope: str = "offline read:cycles read:sleep read:recovery read:workout"
+
+    # SENSORBIO OAUTH SETTINGS
+    sensorbio_client_id: str | None = None
+    sensorbio_client_secret: SecretStr | None = None
+    # Sensor Bio OAuth currently has no granular scopes defined in the developer portal.
+    # Leave empty so the authorize URL omits scope= (mirrors Garmin/Suunto).
+    sensorbio_default_scope: str = ""
 
     # FITBIT OAUTH SETTINGS
     fitbit_client_id: str | None = None

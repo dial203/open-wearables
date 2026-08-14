@@ -98,6 +98,7 @@ def emit(event: SyncStatusEvent) -> None:
             "items_total": event.items_total,
             "inserted": event.metadata.get("inserted"),
             "updated": event.metadata.get("updated"),
+            "types": event.metadata.get("types"),
             "detail": event.message,
             "error": event.error,
         }.items()
@@ -500,6 +501,7 @@ def failed(
     run_id: str,
     error: str,
     message: str | None = None,
+    primary_user_id: UUID | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> SyncStatusEvent:
     """Emit a FAILED terminal event."""
@@ -512,6 +514,7 @@ def failed(
         run_id=run_id,
         error=error,
         message=message,
+        primary_user_id=primary_user_id,
         metadata=metadata,
         ended_at=datetime.now(timezone.utc),
     )
