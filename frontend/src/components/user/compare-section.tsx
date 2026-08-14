@@ -5,21 +5,24 @@ import {
   useSleepSummaries,
   useRecoverySummaries,
 } from '@/hooks/api/use-health';
-import { SourceBadge } from '@/components/common/source-badge';
-import { DeviceBadge } from '@/components/common/device-badge';
+import { DataSourceInfo } from '@/components/common/data-source-info';
 import { SectionHeader } from '@/components/common/section-header';
 import { formatMinutes, parseApiDate } from '@/lib/utils/format';
-import type { RecoverySummary, SleepSummary } from '@/lib/api/types';
+import type {
+  RecoverySummary,
+  SleepSummary,
+  SourceMetadata,
+} from '@/lib/api/types';
 
 interface CompareSectionProps {
   userId: string;
 }
 
-/** A source column: one distinct provider/device that reported for the day. */
+/** A source column: one distinct provider/source/device that reported for the day. */
 interface SourceColumn {
   key: string;
+  source: SourceMetadata | null;
   provider: string;
-  device: string | null;
   sleep?: SleepSummary;
   recovery?: RecoverySummary;
 }
@@ -36,10 +39,11 @@ interface MetricRow {
   formatSpread?: (spread: number) => string;
 }
 
-const sourceKey = (
-  provider: string | undefined,
-  device: string | null | undefined
-) => `${provider ?? 'unknown'}|${device ?? ''}`;
+// `source` (the HealthKit / Health Connect writer) is part of the key: without it
+// every brand relayed through Apple Health collapses into a single "apple" column,
+// which is exactly the distinction this view exists to show.
+const sourceKey = (source: SourceMetadata | null | undefined) =>
+  `${source?.provider ?? 'unknown'}|${source?.source ?? ''}|${source?.device ?? ''}`;
 
 const num = (v: number | null | undefined): number | null =>
   v === null || v === undefined ? null : v;
@@ -188,14 +192,15 @@ export function CompareSection({ userId }: CompareSectionProps) {
   const columns = useMemo<SourceColumn[]>(() => {
     const byKey = new Map<string, SourceColumn>();
 
-    const upsert = (
-      provider: string | undefined,
-      device: string | null | undefined
-    ) => {
-      const key = sourceKey(provider, device);
+    const upsert = (source: SourceMetadata | null | undefined) => {
+      const key = sourceKey(source);
       let col = byKey.get(key);
       if (!col) {
-        col = { key, provider: provider ?? 'unknown', device: device ?? null };
+        col = {
+          key,
+          source: source ?? null,
+          provider: source?.provider ?? 'unknown',
+        };
         byKey.set(key, col);
       }
       return col;
@@ -203,7 +208,7 @@ export function CompareSection({ userId }: CompareSectionProps) {
 
     for (const s of sleepData?.data ?? []) {
       if (format(parseApiDate(s.date), 'yyyy-MM-dd') !== dayKey) continue;
-      const col = upsert(s.source?.provider, s.source?.device);
+      const col = upsert(s.source);
       // Keep the longest session when a source reports several (naps + main sleep).
       if (
         !col.sleep ||
@@ -214,7 +219,7 @@ export function CompareSection({ userId }: CompareSectionProps) {
     }
     for (const r of recoveryData?.data ?? []) {
       if (format(parseApiDate(r.date), 'yyyy-MM-dd') !== dayKey) continue;
-      upsert(r.source?.provider, r.source?.device).recovery = r;
+      upsert(r.source).recovery = r;
     }
 
     return [...byKey.values()].sort((a, b) =>
@@ -315,8 +320,7 @@ export function CompareSection({ userId }: CompareSectionProps) {
                       className="text-right font-medium py-2 px-3 min-w-[120px]"
                     >
                       <div className="flex flex-col items-end gap-1">
-                        <SourceBadge provider={col.provider} />
-                        {col.device && <DeviceBadge device={col.device} />}
+                        <DataSourceInfo source={col.source} />
                       </div>
                     </th>
                   ))}

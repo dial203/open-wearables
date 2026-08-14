@@ -88,7 +88,7 @@ class EventRecordService(
         missing = []
 
         for r in records:
-            details = r.detail if isinstance(r.detail, WorkoutDetails) else None
+            details = r.workout_detail
             if details and details.heart_rate_avg is not None:
                 result[r.id] = round(details.heart_rate_avg)
             else:
@@ -286,7 +286,7 @@ class EventRecordService(
                         setattr(adjacent, field, new_val)
                 adjacent.duration_seconds = int((adjacent.end_datetime - adjacent.start_datetime).total_seconds())
                 db_session.flush()
-                self.event_record_detail_repo.delete_by_record_id(db_session, adjacent.id)
+                self.event_record_detail_repo.delete_by_record_id(db_session, adjacent.id, "sleep")
                 self.event_record_detail_repo.create_and_flush(
                     db_session,
                     detail.model_copy(update={"record_id": adjacent.id}),
@@ -303,7 +303,7 @@ class EventRecordService(
                 db_session.commit()
                 return adjacent, False, detail
 
-            adj_detail: SleepDetails | None = adjacent.detail if isinstance(adjacent.detail, SleepDetails) else None
+            adj_detail: SleepDetails | None = adjacent.sleep_detail
 
             def _adj_int(attr: str) -> int:
                 return (getattr(adj_detail, attr) or 0) if adj_detail else 0
@@ -424,7 +424,7 @@ class EventRecordService(
             )
 
             if same_window:
-                self.event_record_detail_repo.delete_by_record_id(db_session, adjacent.id)
+                self.event_record_detail_repo.delete_by_record_id(db_session, adjacent.id, "sleep")
                 self.event_record_detail_repo.create_and_flush(
                     db_session,
                     detail.model_copy(update={"record_id": adjacent.id, **merged_detail_fields}),
@@ -451,7 +451,7 @@ class EventRecordService(
             if created_record.id == adjacent.id:
                 # data_source_id was None (resolved at insert time) and the
                 # constraint returned the existing row — treat as same_window.
-                self.event_record_detail_repo.delete_by_record_id(db_session, adjacent.id)
+                self.event_record_detail_repo.delete_by_record_id(db_session, adjacent.id, "sleep")
                 self.event_record_detail_repo.create_and_flush(
                     db_session,
                     detail.model_copy(update={"record_id": adjacent.id, **merged_detail_fields}),
@@ -668,9 +668,9 @@ class EventRecordService(
 
         return [self._build_response(record, data_source) for record, data_source in records]
 
-    def get_count_by_workout_type(self, db_session: DbSession) -> list[tuple[str | None, int]]:
-        """Get count of workouts grouped by workout type."""
-        return self.crud.get_count_by_workout_type(db_session)
+    def get_category_counts(self, db_session: DbSession) -> list[tuple[str, int]]:
+        """Count event records grouped by category (cheap aggregate on a small table)."""
+        return self.crud.get_category_counts(db_session)
 
     def _map_source(self, data_source: DataSource) -> DataSourceSchema:
         return DataSourceSchema.from_data_source(data_source)
@@ -725,7 +725,7 @@ class EventRecordService(
 
         data = []
         for record, data_source in records:
-            details: WorkoutDetails | None = record.detail if isinstance(record.detail, WorkoutDetails) else None
+            details: WorkoutDetails | None = record.workout_detail
 
             workout = Workout(
                 id=record.id,
@@ -781,7 +781,7 @@ class EventRecordService(
         if not data_source or data_source.user_id != user_id:
             return None
 
-        details: WorkoutDetails | None = record.detail if isinstance(record.detail, WorkoutDetails) else None
+        details: WorkoutDetails | None = record.workout_detail
 
         if details and record.type in WORKOUTS_WITH_PACE:
             # Seconds per kilometer - speed is in meters per second
@@ -832,7 +832,7 @@ class EventRecordService(
         data_source = self.data_source_repo.get(db_session, record.data_source_id)
         if not data_source or data_source.user_id != user_id:
             return None
-        details: WorkoutDetails | None = record.detail if isinstance(record.detail, WorkoutDetails) else None
+        details: WorkoutDetails | None = record.workout_detail
         key = details.fit_file_key if details else None
         if not key:
             return None
@@ -904,7 +904,7 @@ class EventRecordService(
 
         data = []
         for record, data_source in records:
-            details: SleepDetails | None = record.detail if isinstance(record.detail, SleepDetails) else None
+            details: SleepDetails | None = record.sleep_detail
 
             sleep_duration_seconds = (
                 details.sleep_total_duration_minutes * 60
@@ -989,9 +989,7 @@ class EventRecordService(
 
         data = []
         for record, data_source in records:
-            details: MenstrualCycleDetails | None = (
-                record.detail if isinstance(record.detail, MenstrualCycleDetails) else None
-            )
+            details: MenstrualCycleDetails | None = record.menstrual_cycle_detail
             data.append(
                 MenstrualCycleRecord(
                     id=record.id,

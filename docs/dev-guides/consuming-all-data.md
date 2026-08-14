@@ -187,20 +187,25 @@ identity needed to join back to `/data-sources`:
 
 ```jsonc
 "source": {
-  "provider": "com.oura.oura",        // legacy field: the sub-source tag, NOT the provider
+  "provider": "apple",                // the ingestion path (DataSource.provider)
+  "source": "com.oura.oura",          // the writer inside that path
   "device": "iPhone18,1",
-  "data_source_id": "…",              // == items[].id from /data-sources
-  "ingestion_provider": "apple",      // the real DataSource.provider
-  "source_tag": "com.oura.oura",      // explicit sub-source tag
-  "original_source_name": "Oura",
+  "device_name": "iPhone 17 Pro",     // marketing name, derived from `device`
   "device_type": "phone",
+  "data_source_id": "…",              // == items[].id from /data-sources
+  "ingestion_provider": "apple",      // alias of `provider`
+  "source_tag": "com.oura.oura",      // alias of `source`
+  "original_source_name": "Oura",
   "ingestion_route": "aggregator"     // Oura data relayed via Apple Health
 }
 ```
 
-⚠️ The original `provider` field carries the **sub-source tag**, not the ingestion
-provider — kept as-is for backwards compatibility. Read `ingestion_provider` and
-`source_tag` instead, and use **`data_source_id`** as the join key.
+Use **`data_source_id`** as the join key.
+
+ℹ️ Before 0.7.0 the `provider` field carried the sub-source tag rather than the
+ingestion provider, which is why `ingestion_provider` and `source_tag` exist. As of
+0.7.0 `provider` and `source` hold those values directly; the two explicit fields
+remain as stable aliases, so a consumer pinned to either name keeps working.
 
 ### Data inventory / counts
 

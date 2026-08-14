@@ -8,6 +8,7 @@ from app.integrations.celery.tasks.process_sdk_upload_task import process_sdk_up
 from app.schemas.providers.mobile_sdk import SyncRequest
 from app.schemas.responses.upload import UploadDataResponse
 from app.services.raw_payload_storage import store_raw_payload
+from app.utils.api_utils import inline_schema_defs
 from app.utils.auth import SDKAuthDep
 from app.utils.structured_logging import log_structured
 
@@ -22,7 +23,7 @@ logger = getLogger(__name__)
     openapi_extra={
         "requestBody": {
             "required": True,
-            "content": {"application/json": {"schema": SyncRequest.model_json_schema()}},
+            "content": {"application/json": {"schema": inline_schema_defs(SyncRequest.model_json_schema())}},
         }
     },
 )
