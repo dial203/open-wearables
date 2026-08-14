@@ -196,7 +196,11 @@ export function CompareSection({ userId }: CompareSectionProps) {
       const key = sourceKey(source);
       let col = byKey.get(key);
       if (!col) {
-        col = { key, source: source ?? null, provider: source?.provider ?? 'unknown' };
+        col = {
+          key,
+          source: source ?? null,
+          provider: source?.provider ?? 'unknown',
+        };
         byKey.set(key, col);
       }
       return col;
