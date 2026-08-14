@@ -27,6 +27,7 @@ def _with_capabilities(
     with contextlib.suppress(ValueError):
         strategy = factory.get_provider(enriched.provider)
         caps = strategy.capabilities
+        enriched.icon_url = strategy.icon_url
         enriched.max_historical_days = caps.max_historical_days
         enriched.rest_pull = caps.rest_pull
         enriched.webhook_stream = caps.webhook_stream
@@ -111,3 +112,16 @@ def set_connection_device_label_endpoint(
     if connection is None:
         raise HTTPException(status_code=404, detail=f"No {provider.value} connection found for user")
     return DeviceLabelResponse(provider=provider.value, device_label=connection.device_label)
+
+
+@router.delete("/users/{user_id}/connections/{provider}/data")
+def delete_provider_data_endpoint(
+    user_id: UUID,
+    provider: ProviderName,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> Response:
+    """Delete all of a user's data for a provider and revoke the connection."""
+    strategy = ProviderFactory().get_provider(provider.value)
+    user_connection_service.purge_provider_data(db, user_id, provider.value, oauth=strategy.oauth)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

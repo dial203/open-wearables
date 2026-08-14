@@ -27,7 +27,7 @@ class UserConnectionService(
             log=log,
             **kwargs,
         )
-        self._data_source_repo = DataSourceRepository()
+        self.data_source_crud = DataSourceRepository()
 
     @handle_exceptions
     def set_device_label(
@@ -48,7 +48,7 @@ class UserConnectionService(
         connection.device_label = device_label
         connection.updated_at = datetime.now(timezone.utc)
         db_session.add(connection)
-        self._data_source_repo.set_connection_device_label(db_session, user_id, provider, device_label)
+        self.data_source_crud.set_connection_device_label(db_session, user_id, provider, device_label)
         db_session.commit()
         db_session.refresh(connection)
         return connection
@@ -64,7 +64,7 @@ class UserConnectionService(
             users_with_multi_active=self.crud.get_users_with_multi_active_conn_count(db_session),
             top_providers=[
                 ProviderConnectionCount(provider=p, count=c)
-                for p, c in self.crud.get_top_providers_by_active_conn(db_session)
+                for p, c in self.crud.get_top_providers_by_active_conn(db_session, limit=6)
             ],
         )
 
@@ -112,6 +112,22 @@ class UserConnectionService(
         connection = self.crud.get_by_user_and_provider(db_session, user_id, provider)
         if not connection:
             raise ResourceNotFoundError("connection", user_id)
+
+    @handle_exceptions
+    def purge_provider_data(
+        self, db_session: DbSession, user_id: UUID, provider: str, oauth: BaseOAuthTemplate | None = None
+    ) -> int:
+        """Revoke the connection and delete all of the user's data for the provider.
+
+        Runs the standard disconnect (best-effort deregistration, revoke, webhook), then
+        deletes the user's data_source rows for the provider. ON DELETE CASCADE removes all
+        dependent event records, series, details and health scores. Returns the number of
+        data_source rows deleted. Safe to call on an already-revoked connection.
+        """
+        self.disconnect(db_session, user_id, provider, oauth=oauth)
+        deleted = self.data_source_crud.delete_user_provider_data(db_session, user_id, ProviderName(provider))
+        self.logger.info("Purged %s data sources for user %s from provider %s", deleted, user_id, provider)
+        return deleted
 
     @handle_exceptions
     def stamp_last_synced_at(self, db_session: DbSession, user_id: UUID, provider: str) -> None:
