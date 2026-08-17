@@ -84,13 +84,20 @@ This company requirement applies to the **Suunto Cloud API** used here (`cloudap
   </Step>
 
   <Step title="Configure OAuth settings">
-    In your Suunto **Profile**, fill in the OAuth configuration fields:
+    In your Suunto **Profile**, scroll to **OAuth application settings** and fill in the **Authorization** section:
 
-    - **App name**: The name shown to users on the consent screen (e.g. "Open Wearables")
-    - **Client secret**: A secret value you set for your app
-    - **Redirect URI**: Your OAuth callback URL. Open Wearables derives this from your `API_BASE_URL` as `{API_BASE_URL}/api/v1/oauth/suunto/callback`, so register that exact URL here. For local development, expose your backend with [ngrok](/dev-guides/ngrok-setup) and register e.g. `https://your-subdomain.ngrok-free.app/api/v1/oauth/suunto/callback`. In production use your public domain.
+    | Portal field | What to enter |
+    |--------------|---------------|
+    | **Client ID** | Read-only - Suunto generates it for you. Copy it into `SUUNTO_CLIENT_ID` |
+    | **Client name** | The name shown to users on the consent screen (e.g. "Open Wearables") |
+    | **Client secret** | A secret value you set for your app. Copy it into `SUUNTO_CLIENT_SECRET` - the portal never shows it again, and leaving the field empty on a later save keeps the current value |
+    | **Redirect URI(s)** | `{API_BASE_URL}/api/v1/oauth/suunto/callback`. The field takes one URI per line, so you can register a dev and a production callback side by side. For local development, expose your backend with [ngrok](/dev-guides/ngrok-setup) and register e.g. `https://your-subdomain.ngrok-free.app/api/v1/oauth/suunto/callback` |
 
-    Suunto automatically generates your **Client Id** from this configuration.
+    The redirect URI must match what Open Wearables sends on the authorize call exactly - it is derived from `API_BASE_URL`, so set that variable to the same public host you register here.
+
+    <Note>
+    The **Application / service description** section further down the same form (name, description, read more URL, connect URL, icon, image, tags) only controls how your integration is listed in Suunto's partner directory. It has no effect on the API or OAuth flow - leave **Publishing status** as `Unpublished` while you are testing; OAuth and webhooks work regardless.
+    </Note>
 
     <Warning>
     Keep your Client Secret and subscription key server-side only - never log or expose them in client code.
@@ -165,13 +172,25 @@ SUUNTO_SUBSCRIPTION_KEY=private-subscription-id
   <Step title="Enable webhooks (optional)">
     Suunto delivers events in **push** mode - each notification carries the data inline, so no extra fetch is needed (workouts are re-fetched via REST using their `workoutKey` to guarantee the canonical schema).
 
-    Webhooks are configured on Suunto's side: register your notification URL with Suunto and point it at:
+    Webhooks are configured on Suunto's side, in the **Notifications** section of the same **OAuth application settings** form. Suunto exposes a separate URL field per event type, but Open Wearables handles all of them on **one** endpoint - it routes on the payload's `type` field - so paste the same URL into each field you want to receive:
 
     ```
     {API_BASE_URL}/api/v1/providers/suunto/webhooks
     ```
 
-    Suunto signs each request body with HMAC-SHA256 and sends the result in the `X-HMAC-SHA256-Signature` header. Open Wearables verifies it against `SUUNTO_WEBHOOK_SECRET` (defaulting to `SECRET_KEY`), so make sure the notification secret configured with Suunto matches that value.
+    | Portal field | What to enter |
+    |--------------|---------------|
+    | **Workout notification URL (legacy form data)** | Leave empty. The legacy endpoint posts `application/x-www-form-urlencoded`; the handler parses JSON and would reject it |
+    | **Workout notification URL** | `{API_BASE_URL}/api/v1/providers/suunto/webhooks` |
+    | **Route notification URL** | Optional - routes are not stored. Leave empty unless you want the events; `ROUTE_CREATED` is acknowledged and skipped |
+    | **247 activity notification URL** | `{API_BASE_URL}/api/v1/providers/suunto/webhooks` |
+    | **247 sleep notification URL** | `{API_BASE_URL}/api/v1/providers/suunto/webhooks` |
+    | **247 recovery notification URL** | `{API_BASE_URL}/api/v1/providers/suunto/webhooks` |
+    | **Notification access token** | Leave empty. Open Wearables authenticates notifications by HMAC signature only |
+    | **Notification access secret** | The same value as `SUUNTO_WEBHOOK_SECRET` (which defaults to `SECRET_KEY`). This is the secret Suunto signs request bodies with |
+    | **Notification sending** | `Enabled` |
+
+    Suunto signs each request body with HMAC-SHA256 and sends the hex digest in the `X-HMAC-SHA256-Signature` header. Open Wearables verifies it against `SUUNTO_WEBHOOK_SECRET`, so the **Notification access secret** above must match that value exactly - a mismatch shows up as rejected webhooks, not as an error in the portal.
 
     <Note>
     The endpoint acknowledges within Suunto's 2-second timeout and enqueues processing in the background. If webhooks aren't configured, periodic REST polling still keeps data current.
