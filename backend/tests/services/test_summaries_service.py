@@ -56,6 +56,48 @@ class TestFilterByPriority:
         dates = {r["activity_date"] for r in result}
         assert dates == {date(2026, 1, 1), date(2026, 1, 2)}
 
+    def test_prefers_stored_device_type_over_the_model_string(self, db: Session, service: SummariesService) -> None:
+        """A watch without a hardware model must still outrank the phone.
+
+        HealthKit identifies some sources by name only, so the watch row carries
+        device_model=None and is rankable only through the device_type resolved at
+        ingest. Ignoring that column left the watch at the 99 sentinel and dropped
+        it from every day the phone also reported.
+        """
+        watch = {
+            "activity_date": date(2026, 1, 1),
+            "provider": "apple",
+            "source": "Ali's Apple Watch",
+            "device_model": None,
+            "device_type": "watch",
+        }
+        phone = {
+            "activity_date": date(2026, 1, 1),
+            "provider": "apple",
+            "source": "Ali's iPhone",
+            "device_model": "iPhone17,1",
+            "device_type": "phone",
+        }
+        result = service._filter_by_priority(db, uuid4(), [phone, watch])
+        assert result == [watch]
+
+    def test_falls_back_to_the_model_when_device_type_is_absent(self, db: Session, service: SummariesService) -> None:
+        """Legacy rows stored before device_type was populated still rank correctly."""
+        watch = {
+            "activity_date": date(2026, 1, 1),
+            "provider": "apple",
+            "source": "apple",
+            "device_model": "Watch7,5",
+        }
+        phone = {
+            "activity_date": date(2026, 1, 1),
+            "provider": "apple",
+            "source": "apple",
+            "device_model": "iPhone17,1",
+        }
+        result = service._filter_by_priority(db, uuid4(), [phone, watch])
+        assert result == [watch]
+
     def test_uses_sleep_date_key(self, db: Session, service: SummariesService) -> None:
         entries = [
             {"sleep_date": date(2026, 1, 1), "source": "garmin", "device_model": None},

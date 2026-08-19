@@ -21,6 +21,7 @@ from app.repositories.device_type_priority_repository import DeviceTypePriorityR
 from app.repositories.health_score_repository import HealthScoreRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.enums import (
+    DeviceType,
     ProviderName,
     SeriesType,
     get_series_type_id,
@@ -97,6 +98,28 @@ class SummariesService:
         self.archive_repo = DataPointSeriesArchiveRepository()
         self.health_score_repo = HealthScoreRepository(HealthScore)
 
+    @staticmethod
+    def _entry_device_type(entry: dict) -> DeviceType | None:
+        """The device type a summary row should be ranked by.
+
+        Prefers the ``device_type`` every summary query selects from ``data_source``:
+        it is resolved once at ingest from the hardware model *and* the source name,
+        so it is set even when the provider reported no model. Re-deriving it from
+        ``device_model`` alone leaves such a row at the 99 sentinel — which is how an
+        Apple Watch that HealthKit identified only by name ("Ali's Apple Watch", no
+        productType) lost every day to the iPhone that recorded the same date and
+        vanished from the summaries. Falls back to inference for legacy rows stored
+        before the column was populated.
+        """
+        stored = entry.get("device_type")
+        if stored:
+            try:
+                return DeviceType(stored)
+            except ValueError:
+                pass
+        inferred = infer_device_type_from_model(entry.get("device_model"))
+        return inferred if inferred != DeviceType.UNKNOWN else None
+
     def _filter_by_priority(
         self,
         db_session: DbSession,
@@ -144,10 +167,8 @@ class SummariesService:
 
                 # Parse device type
                 device_model = entry.get("device_model")
-                device_type_priority = 99
-                if device_model:
-                    device_type = infer_device_type_from_model(device_model)
-                    device_type_priority = device_type_order.get(device_type, 99)
+                device_type = self._entry_device_type(entry)
+                device_type_priority = device_type_order.get(device_type, 99) if device_type else 99
 
                 return (provider_priority, device_type_priority, device_model or "")
 

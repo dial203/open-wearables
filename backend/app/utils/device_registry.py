@@ -18,6 +18,7 @@ Two helpers:
   code over guessing wrong.
 """
 
+from app.constants.devices_map import DEVICE_NAMES
 from app.schemas.enums import IngestionRoute, ProviderName
 
 # --- Android package name -> brand (google/health-connect `source` values) -------
@@ -213,4 +214,7 @@ def humanize_device_model(device_model: str | None) -> str | None:
         return APPLE_MODEL_NAMES[device_model]
     if device_model in SAMSUNG_MODEL_NAMES:
         return SAMSUNG_MODEL_NAMES[device_model]
-    return None
+    # The curated maps above only cover the handful of codes we name explicitly;
+    # fall through to the full hardware registry so a current Apple Watch shows as
+    # "Apple Watch Series 10 46mm (GPS)" rather than the raw "Watch7,9".
+    return DEVICE_NAMES.get(device_model)
