@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from logging import Logger, getLogger
 from uuid import UUID
 
@@ -98,6 +99,40 @@ class SummariesService:
         self.archive_repo = DataPointSeriesArchiveRepository()
         self.health_score_repo = HealthScoreRepository(HealthScore)
 
+    # Keys that identify a summary row rather than measure anything on it.
+    _NON_METRIC_KEYS: frozenset[str] = frozenset(
+        {
+            "activity_date",
+            "sleep_date",
+            "recovery_date",
+            "workout_date",
+            "provider",
+            "source",
+            "device_model",
+            "device_type",
+            "record_id",
+            "recorded_at",
+        }
+    )
+
+    @classmethod
+    def _populated_metric_count(cls, entry: dict) -> int:
+        """How many metrics on this row actually carry a value.
+
+        Used only to break a tie between rows the configured priorities rank
+        equally. Zero counts as absent: a row reporting 0 steps measured nothing,
+        it just exists.
+        """
+        count = 0
+        for key, value in entry.items():
+            if key in cls._NON_METRIC_KEYS or value is None or isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float, Decimal)):
+                count += 1 if value else 0
+            elif isinstance(value, dict):
+                count += 1 if any(v for v in value.values()) else 0
+        return count
+
     @staticmethod
     def _entry_device_type(entry: dict) -> DeviceType | None:
         """The device type a summary row should be ranked by.
@@ -156,7 +191,7 @@ class SummariesService:
                 continue
 
             # Sort by priority
-            def sort_key(entry: dict) -> tuple[int, int, str]:
+            def sort_key(entry: dict) -> tuple[int, int, int, str, str]:
                 raw_provider = entry.get("provider") or entry.get("source")
                 try:
                     provider = ProviderName(raw_provider)
@@ -170,7 +205,20 @@ class SummariesService:
                 device_type = self._entry_device_type(entry)
                 device_type_priority = device_type_order.get(device_type, 99) if device_type else 99
 
-                return (provider_priority, device_type_priority, device_model or "")
+                # Below the configured priorities, prefer the row that actually
+                # measured something, then order deterministically. One device can
+                # produce several rows for a day - Apple splits a watch across a
+                # "Michael's Apple Watch" row and a "Michael's Apple Watch Ultra 3"
+                # row - and with an all-equal key the winner fell out of Postgres's
+                # arbitrary group order, so a row of zeroes could silently take the
+                # day and drop every other source with it.
+                return (
+                    provider_priority,
+                    device_type_priority,
+                    -self._populated_metric_count(entry),
+                    device_model or "",
+                    str(entry.get("source") or ""),
+                )
 
             entries_sorted = sorted(entries, key=sort_key)
             filtered.append(entries_sorted[0])

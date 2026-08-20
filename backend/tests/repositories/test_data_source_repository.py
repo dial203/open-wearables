@@ -9,11 +9,12 @@ HealthKit tags on-device data with a source bundle identifier of the form
 The column is now ``VARCHAR(100)``.
 """
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.models import DataSource
 from app.repositories.data_source_repository import DataSourceRepository
-from app.schemas.enums import ProviderName
+from app.schemas.enums import DeviceType, ProviderName
 from tests.factories import UserFactory
 
 # Realistic Apple HealthKit source bundle id: "com.apple.health." + a UUID.
@@ -58,3 +59,38 @@ class TestDataSourceRepository:
         assert stored is not None
         assert stored.source == APPLE_HEALTH_SOURCE
         assert len(stored.source) == len(APPLE_HEALTH_SOURCE)
+
+
+class TestInferDeviceTypeFromSourceLabel:
+    """HealthKit stamps the syncing iPhone's productType on watch-recorded samples."""
+
+    def _repo(self) -> DataSourceRepository:
+        return DataSourceRepository()
+
+    @pytest.mark.parametrize(
+        ("device_model", "source", "expected"),
+        [
+            # The label names the recorder; the model names the handset that relayed it.
+            ("iPhone18,1", "Michael's Apple Watch", DeviceType.WATCH),
+            ("iPhone18,1", "Michael's Apple Watch Ultra 3", DeviceType.WATCH),
+            ("iPhone18,1", "Oura", DeviceType.RING),
+            ("iPhone18,1", "WHOOP", DeviceType.BAND),
+            # A phone label under a phone model stays a phone.
+            ("iPhone18,1", "Michael's iPhone", DeviceType.PHONE),
+            ("iPhone18,1", "Fitness", DeviceType.PHONE),
+            ("iPhone18,1", "Health", DeviceType.PHONE),
+            # A real wearable model is never downgraded by its label.
+            ("Watch7,12", "Bluetooth Device", DeviceType.WATCH),
+            ("Watch7,12", "Michael's Apple Watch Ultra 3", DeviceType.WATCH),
+            # No model at all: the label carries it.
+            (None, "Michael's Apple Watch", DeviceType.WATCH),
+        ],
+    )
+    def test_label_overrides_a_relayed_phone_model(
+        self, device_model: str | None, source: str, expected: DeviceType
+    ) -> None:
+        assert self._repo()._infer_device_type(device_model, "Apple", source) == expected
+
+    def test_falls_back_to_the_brand_when_nothing_else_identifies_the_device(self) -> None:
+        assert self._repo()._infer_device_type(None, "Oura", None) == DeviceType.RING
+        assert self._repo()._infer_device_type(None, None, None) == DeviceType.UNKNOWN

@@ -138,7 +138,7 @@ class DataSourceRepository(
                 # Always store a value (including "unknown"): consumers key off
                 # device_type to separate real wearables from phone/app relays, and a
                 # NULL forces them back to guessing from model strings.
-                device_type = self._infer_device_type(device_model, original_source_name)
+                device_type = self._infer_device_type(device_model, original_source_name, source)
                 object.__setattr__(existing, "device_type", device_type.value)
                 updated = True
             if updated:
@@ -148,7 +148,7 @@ class DataSourceRepository(
         provider_priority_repo = ProviderPriorityRepository(ProviderPriority)
         provider_priority_repo.ensure_provider_exists(db_session, provider)
 
-        device_type = self._infer_device_type(device_model, original_source_name)
+        device_type = self._infer_device_type(device_model, original_source_name, source)
 
         create_payload = DataSourceCreate(
             id=uuid4(),
@@ -165,14 +165,41 @@ class DataSourceRepository(
         assert result is not None
         return result
 
+    # Types that name a body-worn recorder, as opposed to a handset or an app.
+    _WEARABLE_TYPES: frozenset[DeviceType] = frozenset(
+        {DeviceType.WATCH, DeviceType.BAND, DeviceType.RING, DeviceType.CHEST_STRAP}
+    )
+
     def _infer_device_type(
         self,
         device_model: str | None,
         original_source_name: str | None,
+        source: str | None = None,
     ) -> DeviceType:
-        dt = infer_device_type_from_model(device_model)
-        if dt != DeviceType.UNKNOWN:
-            return dt
+        """Classify a data source from the strongest device signal available.
+
+        ``source`` is the provider's own label for what recorded the sample - for
+        HealthKit, the device name ("Michael's Apple Watch Ultra 3"). ``device_model``
+        is the hardware code, which for Apple comes from ``productType`` and reports
+        the handset that *synced* the batch rather than the device that took the
+        reading: a watch's samples routinely arrive stamped "iPhone18,1". So when the
+        model says phone and the label names something worn, the label wins. A real
+        wearable model (Watch7,x) is never downgraded by this.
+        """
+        from_model = infer_device_type_from_model(device_model)
+
+        if from_model == DeviceType.PHONE:
+            from_source = infer_device_type_from_source_name(source)
+            if from_source in self._WEARABLE_TYPES:
+                return from_source
+
+        if from_model != DeviceType.UNKNOWN:
+            return from_model
+
+        # No usable model: the label first, then the canonical brand as a last resort.
+        from_source = infer_device_type_from_source_name(source)
+        if from_source != DeviceType.UNKNOWN:
+            return from_source
         return infer_device_type_from_source_name(original_source_name)
 
     def batch_ensure_data_sources(
@@ -234,7 +261,7 @@ class DataSourceRepository(
                 # first created by the bulk path aren't left with a NULL brand, and always
                 # store a device_type rather than NULL.
                 original_source_name = resolve_brand(provider, device_model, source)
-                device_type = self._infer_device_type(device_model, original_source_name)
+                device_type = self._infer_device_type(device_model, original_source_name, source)
                 values.append(
                     {
                         "id": uuid4(),

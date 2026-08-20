@@ -98,6 +98,62 @@ class TestFilterByPriority:
         result = service._filter_by_priority(db, uuid4(), [phone, watch])
         assert result == [watch]
 
+    def test_prefers_the_row_that_measured_something_when_priorities_tie(
+        self, db: Session, service: SummariesService
+    ) -> None:
+        """Two rows for one device on one day must not be resolved by luck.
+
+        Apple splits a watch across a "…Apple Watch" and a "…Apple Watch Ultra 3"
+        source. Both carry the same provider and device type, so the old key was
+        identical and the winner fell out of Postgres's arbitrary group order — a
+        row of zeroes could take the day and drop every other source with it.
+        """
+        empty = {
+            "activity_date": date(2026, 1, 10),
+            "provider": "apple",
+            "source": "Michael's Apple Watch",
+            "device_model": "iPhone18,1",
+            "device_type": "watch",
+            "steps_sum": 0,
+            "active_energy_sum": 0,
+            "hr_avg": None,
+        }
+        measured = {
+            "activity_date": date(2026, 1, 10),
+            "provider": "apple",
+            "source": "Michael's Apple Watch Ultra 3",
+            "device_model": "iPhone18,1",
+            "device_type": "watch",
+            "steps_sum": 7831,
+            "active_energy_sum": 571.275,
+            "hr_avg": 156,
+        }
+        # Winner must not depend on the order the rows arrive in.
+        assert service._filter_by_priority(db, uuid4(), [empty, measured]) == [measured]
+        assert service._filter_by_priority(db, uuid4(), [measured, empty]) == [measured]
+
+    def test_configured_priority_still_outranks_a_richer_row(self, db: Session, service: SummariesService) -> None:
+        """The tie-break is a tie-break — it never overrides a device-type priority."""
+        watch = {
+            "activity_date": date(2026, 1, 10),
+            "provider": "apple",
+            "source": "Michael's Apple Watch",
+            "device_model": "Watch7,12",
+            "device_type": "watch",
+            "steps_sum": 100,
+        }
+        phone = {
+            "activity_date": date(2026, 1, 10),
+            "provider": "apple",
+            "source": "Michael's iPhone",
+            "device_model": "iPhone18,1",
+            "device_type": "phone",
+            "steps_sum": 9999,
+            "active_energy_sum": 800,
+            "hr_avg": 60,
+        }
+        assert service._filter_by_priority(db, uuid4(), [phone, watch]) == [watch]
+
     def test_uses_sleep_date_key(self, db: Session, service: SummariesService) -> None:
         entries = [
             {"sleep_date": date(2026, 1, 1), "source": "garmin", "device_model": None},
