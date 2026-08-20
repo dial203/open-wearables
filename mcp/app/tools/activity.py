@@ -1,6 +1,7 @@
 """MCP tools for querying activity records."""
 
 import logging
+from typing import Any
 
 from fastmcp import FastMCP
 
@@ -12,12 +13,18 @@ logger = logging.getLogger(__name__)
 # Create router for activity-related tools
 activity_router = FastMCP(name="Activity Tools")
 
+# Hard ceiling on pages walked per tool call to protect the backend and keep
+# responses bounded. Daily summaries are one record per day, so this is decades
+# of data — it exists to stop a runaway loop, not to limit real queries.
+_MAX_PAGES = 100
+
 
 @activity_router.tool
 async def get_activity_summary(
     user_id: str,
     start_date: str,
     end_date: str,
+    sort_order: str = "asc",
 ) -> dict:
     """
     Get daily activity summaries for a user within a date range.
@@ -31,13 +38,15 @@ async def get_activity_summary(
                     Example: "2026-01-01"
         end_date: End date in YYYY-MM-DD format.
                   Example: "2026-01-07"
+        sort_order: "asc" for oldest day first (default), "desc" for newest first.
 
     Returns:
         A dictionary containing:
         - user: Information about the user (id, first_name, last_name)
         - period: The date range queried (start, end)
-        - records: List of daily activity records
+        - records: List of daily activity records, covering the whole range
         - summary: Aggregate statistics (avg_steps, total_calories, etc.)
+        - truncated: True if pagination hit the safety ceiling (rare)
 
     Example response:
         {
@@ -108,14 +117,27 @@ async def get_activity_summary(
         except NotFoundError as e:
             return {"error": f"User not found: {user_id}", "details": str(e)}
 
-        # Fetch activity data
-        activity_response = await client.get_activity_summaries(
-            user_id=user_id,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-        records_data = activity_response.get("data", [])
+        # Walk cursor pagination until exhausted or the safety ceiling is hit.
+        # One page is not the answer: the API returns days oldest-first, so a
+        # window longer than a page used to come back as its oldest slice with
+        # the rest silently dropped.
+        records_data: list[dict[str, Any]] = []
+        cursor: str | None = None
+        truncated = False
+        for _ in range(_MAX_PAGES):
+            activity_response = await client.get_activity_summaries(
+                user_id=user_id,
+                start_date=start_date,
+                end_date=end_date,
+                cursor=cursor,
+                sort_order=sort_order,
+            )
+            records_data.extend(activity_response.get("data", []))
+            cursor = (activity_response.get("pagination") or {}).get("next_cursor")
+            if not cursor:
+                break
+        else:
+            truncated = True
 
         # Transform records and collect aggregates
         records = []
@@ -201,6 +223,7 @@ async def get_activity_summary(
             "period": {"start": start_date, "end": end_date},
             "records": records,
             "summary": summary,
+            "truncated": truncated,
         }
 
     except OpenWearablesError as e:

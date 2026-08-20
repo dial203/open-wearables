@@ -1,6 +1,7 @@
 """MCP tools for querying sleep records."""
 
 import logging
+from typing import Any
 
 from fastmcp import FastMCP
 
@@ -12,6 +13,11 @@ logger = logging.getLogger(__name__)
 
 # Create router for sleep-related tools
 sleep_router = FastMCP(name="Sleep Tools")
+
+# Hard ceiling on pages walked per tool call to protect the backend and keep
+# responses bounded. Daily summaries are one record per day, so this is decades
+# of data — it exists to stop a runaway loop, not to limit real queries.
+_MAX_PAGES = 100
 
 
 @sleep_router.tool
@@ -37,8 +43,10 @@ async def get_sleep_summary(
         A dictionary containing:
         - user: Information about the user (id, first_name, last_name)
         - period: The date range queried (start, end)
-        - records: List of sleep records with date, start_datetime, end_datetime, duration
+        - records: List of sleep records with date, start_datetime, end_datetime, duration,
+          covering the whole range
         - summary: Aggregate statistics (avg_duration, total_nights, etc.)
+        - truncated: True if pagination hit the safety ceiling (rare)
 
     Example response:
         {
@@ -85,14 +93,26 @@ async def get_sleep_summary(
         except NotFoundError as e:
             return {"error": f"User not found: {user_id}", "details": str(e)}
 
-        # Fetch sleep data
-        sleep_response = await client.get_sleep_summaries(
-            user_id=user_id,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-        records_data = sleep_response.get("data", [])
+        # Walk cursor pagination until exhausted or the safety ceiling is hit.
+        # One page is not the answer: the API returns nights oldest-first, so a
+        # window longer than a page used to come back as its oldest slice with
+        # the rest silently dropped.
+        records_data: list[dict[str, Any]] = []
+        cursor: str | None = None
+        truncated = False
+        for _ in range(_MAX_PAGES):
+            sleep_response = await client.get_sleep_summaries(
+                user_id=user_id,
+                start_date=start_date,
+                end_date=end_date,
+                cursor=cursor,
+            )
+            records_data.extend(sleep_response.get("data", []))
+            cursor = (sleep_response.get("pagination") or {}).get("next_cursor")
+            if not cursor:
+                break
+        else:
+            truncated = True
 
         # Transform records
         records = []
@@ -138,6 +158,7 @@ async def get_sleep_summary(
             "period": {"start": start_date, "end": end_date},
             "records": records,
             "summary": summary,
+            "truncated": truncated,
         }
 
     except OpenWearablesError as e:
