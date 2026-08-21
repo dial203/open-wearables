@@ -65,3 +65,14 @@ def test_humanize_device_model_unknown_returns_none() -> None:
     # Unknown codes fall back to the raw identifier (caller keeps device_model).
     assert humanize_device_model("Watch99,9") is None
     assert humanize_device_model(None) is None
+
+
+def test_humanize_device_model_falls_back_to_the_full_registry() -> None:
+    # Not in the small curated map, but a real current productType — it must not
+    # reach the UI as the raw "Watch7,9".
+    assert humanize_device_model("Watch7,9") == "Apple Watch Series 10 46mm (GPS)"
+    assert humanize_device_model("iPhone17,1") == "iPhone 16 Pro"
+
+
+def test_humanize_device_model_prefers_the_curated_name() -> None:
+    assert humanize_device_model("Watch7,5") == "Apple Watch Series 8"

@@ -129,4 +129,13 @@ def infer_device_type_from_source_name(source_name: str | None) -> DeviceType:
     if "health" in name_lower and "apple" not in name_lower:
         return DeviceType.UNKNOWN  # Manual entry
 
+    # HealthKit / Health Connect source names are the *device* name the user gave the
+    # hardware ("Ali's Apple Watch", "Ali's iPhone"), so when the provider sent no
+    # hardware model the name is the only device signal there is. Reuse the model
+    # keyword table rather than duplicating it; OTHER means "matched nothing there",
+    # which for a source name is still UNKNOWN (an app name is not a device).
+    inferred = infer_device_type_from_model(source_name)
+    if inferred not in (DeviceType.OTHER, DeviceType.UNKNOWN):
+        return inferred
+
     return DeviceType.UNKNOWN

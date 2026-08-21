@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.schemas.enums import DeviceType, infer_device_type_from_model
+from app.schemas.enums import DeviceType, infer_device_type_from_model, infer_device_type_from_source_name
 
 
 @pytest.mark.parametrize(
@@ -45,3 +45,30 @@ def test_chest_strap_ranks_above_watch_by_default() -> None:
     assert DEFAULT_DEVICE_TYPE_PRIORITY[DeviceType.CHEST_STRAP] < DEFAULT_DEVICE_TYPE_PRIORITY[DeviceType.WATCH]
     # every type has a priority so nothing silently falls back to the 99 sentinel
     assert set(DEFAULT_DEVICE_TYPE_PRIORITY) == set(DeviceType)
+
+
+@pytest.mark.parametrize(
+    ("source_name", "expected"),
+    [
+        # HealthKit names the device, not the app: the watch is identifiable even
+        # when the payload carried no productType to infer a model from.
+        ("Ali's Apple Watch", DeviceType.WATCH),
+        ("Apple Watch", DeviceType.WATCH),
+        ("Galaxy Watch7", DeviceType.WATCH),
+        ("Ali's iPhone", DeviceType.PHONE),
+        ("Ultrahuman Ring Air", DeviceType.RING),
+        # Existing behaviour is unchanged.
+        ("AutoSleep", DeviceType.WATCH),
+        ("Mi Band 8", DeviceType.BAND),
+        ("Oura", DeviceType.RING),
+        ("Zepp Life", DeviceType.UNKNOWN),
+        ("Huawei Health", DeviceType.UNKNOWN),
+        # An app name is not a device — it must not be promoted out of UNKNOWN.
+        ("Strava", DeviceType.UNKNOWN),
+        ("Peloton", DeviceType.UNKNOWN),
+        (None, DeviceType.UNKNOWN),
+        ("", DeviceType.UNKNOWN),
+    ],
+)
+def test_infer_device_type_from_source_name(source_name: str | None, expected: DeviceType) -> None:
+    assert infer_device_type_from_source_name(source_name) == expected

@@ -1,6 +1,7 @@
 """MCP tools for querying workout records."""
 
 import logging
+from typing import Any
 
 from fastmcp import FastMCP
 
@@ -12,6 +13,11 @@ logger = logging.getLogger(__name__)
 
 # Create router for workout-related tools
 workouts_router = FastMCP(name="Workout Tools")
+
+# Hard ceiling on pages walked per tool call to protect the backend and keep
+# responses bounded. Daily summaries are one record per day, so this is decades
+# of data — it exists to stop a runaway loop, not to limit real queries.
+_MAX_PAGES = 100
 
 
 @workouts_router.tool
@@ -41,8 +47,9 @@ async def get_workout_events(
         A dictionary containing:
         - user: Information about the user (id, first_name, last_name)
         - period: The date range queried (start, end)
-        - records: List of workout events with details
+        - records: List of workout events with details, covering the whole range
         - summary: Aggregate statistics (total_workouts, total_duration, etc.)
+        - truncated: True if pagination hit the safety ceiling (rare)
 
     Example response:
         {
@@ -98,15 +105,27 @@ async def get_workout_events(
         except NotFoundError as e:
             return {"error": f"User not found: {user_id}", "details": str(e)}
 
-        # Fetch workout data
-        workouts_response = await client.get_workouts(
-            user_id=user_id,
-            start_date=start_date,
-            end_date=end_date,
-            record_type=workout_type,
-        )
-
-        records_data = workouts_response.get("data", [])
+        # Walk cursor pagination until exhausted or the safety ceiling is hit.
+        # One page is not the answer: the API returns workouts oldest-first, so
+        # a busy range used to come back as its oldest slice with the rest
+        # silently dropped.
+        records_data: list[dict[str, Any]] = []
+        cursor: str | None = None
+        truncated = False
+        for _ in range(_MAX_PAGES):
+            workouts_response = await client.get_workouts(
+                user_id=user_id,
+                start_date=start_date,
+                end_date=end_date,
+                record_type=workout_type,
+                cursor=cursor,
+            )
+            records_data.extend(workouts_response.get("data", []))
+            cursor = (workouts_response.get("pagination") or {}).get("next_cursor")
+            if not cursor:
+                break
+        else:
+            truncated = True
 
         # Transform records
         records = []
@@ -170,6 +189,7 @@ async def get_workout_events(
             "period": {"start": start_date, "end": end_date},
             "records": records,
             "summary": summary,
+            "truncated": truncated,
         }
 
     except OpenWearablesError as e:

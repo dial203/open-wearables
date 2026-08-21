@@ -92,24 +92,31 @@ class OpenWearablesClient:
         start_date: str,
         end_date: str,
         limit: int = 100,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
         """
-        Get sleep summaries for a user within a date range.
+        Get one page of sleep summaries for a user within a date range.
 
         Args:
             user_id: UUID of the user
             start_date: Start date (YYYY-MM-DD format)
             end_date: End date (YYYY-MM-DD format)
-            limit: Maximum number of records to return
+            limit: Page size
+            cursor: Opaque pagination cursor returned by a previous call
 
         Returns:
-            Paginated response with sleep summaries
+            Paginated response with sleep summaries. Callers must follow
+            ``pagination.next_cursor`` — a range longer than ``limit`` days is
+            split across pages, and reading only the first returns the oldest
+            slice of the window.
         """
-        params = {
+        params: dict[str, Any] = {
             "start_date": start_date,
             "end_date": end_date,
             "limit": limit,
         }
+        if cursor:
+            params["cursor"] = cursor
         return await self._request("GET", f"/api/v1/users/{user_id}/summaries/sleep", params=params)
 
     async def get_workouts(
@@ -119,19 +126,23 @@ class OpenWearablesClient:
         end_date: str,
         record_type: str | None = None,
         limit: int = 100,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
         """
-        Get workouts for a user within a date range.
+        Get one page of workouts for a user within a date range.
 
         Args:
             user_id: UUID of the user
             start_date: Start date (YYYY-MM-DD format)
             end_date: End date (YYYY-MM-DD format)
             record_type: Optional workout type filter (e.g., "running", "cycling")
-            limit: Maximum number of records to return
+            limit: Page size
+            cursor: Opaque pagination cursor returned by a previous call
 
         Returns:
-            Paginated response with workout records
+            Paginated response with workout records. Callers must follow
+            ``pagination.next_cursor`` — a busy range overflows one page, and
+            reading only the first returns the oldest slice of the window.
         """
         params: dict[str, Any] = {
             "start_date": start_date,
@@ -140,6 +151,8 @@ class OpenWearablesClient:
         }
         if record_type:
             params["record_type"] = record_type
+        if cursor:
+            params["cursor"] = cursor
         return await self._request("GET", f"/api/v1/users/{user_id}/events/workouts", params=params)
 
     async def get_activity_summaries(
@@ -148,24 +161,34 @@ class OpenWearablesClient:
         start_date: str,
         end_date: str,
         limit: int = 100,
+        cursor: str | None = None,
+        sort_order: str = "asc",
     ) -> dict[str, Any]:
         """
-        Get activity summaries for a user within a date range.
+        Get one page of activity summaries for a user within a date range.
 
         Args:
             user_id: UUID of the user
             start_date: Start date (YYYY-MM-DD format)
             end_date: End date (YYYY-MM-DD format)
-            limit: Maximum number of records to return
+            limit: Page size
+            cursor: Opaque pagination cursor returned by a previous call
+            sort_order: "asc" (oldest first) or "desc" (newest first)
 
         Returns:
-            Paginated response with activity summaries
+            Paginated response with activity summaries. Callers must follow
+            ``pagination.next_cursor`` — a range longer than ``limit`` days is
+            split across pages, and reading only the first returns the oldest
+            slice of the window.
         """
-        params = {
+        params: dict[str, Any] = {
             "start_date": start_date,
             "end_date": end_date,
             "limit": limit,
+            "sort_order": sort_order,
         }
+        if cursor:
+            params["cursor"] = cursor
         return await self._request("GET", f"/api/v1/users/{user_id}/summaries/activity", params=params)
 
     async def get_timeseries(
