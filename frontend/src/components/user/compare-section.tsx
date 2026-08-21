@@ -130,10 +130,12 @@ const METRIC_ROWS: MetricRow[] = [
   {
     group: 'Overnight vitals',
     label: 'HRV',
-    // Oura, Garmin and Whoop all report RMSSD. Recovery stores it in the field named
-    // avg_hrv_sdnn_ms (a backend naming quirk), while the sleep summary keeps SDNN and
-    // RMSSD apart — so prefer RMSSD there and keep SDNN as the last resort.
+    // Oura, Garmin and Whoop all report RMSSD. Recovery used to return it in the field
+    // named avg_hrv_sdnn_ms; upstream #1452 split the two, so recovery now carries a real
+    // avg_hrv_rmssd_ms and leaves SDNN null. Prefer RMSSD from either summary and keep
+    // SDNN as the last resort, so this reads correctly on both sides of that change.
     getValue: (c) =>
+      num(c.recovery?.avg_hrv_rmssd_ms) ??
       num(c.recovery?.avg_hrv_sdnn_ms) ??
       num(c.sleep?.avg_hrv_rmssd_ms) ??
       num(c.sleep?.avg_hrv_sdnn_ms),

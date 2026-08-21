@@ -433,7 +433,9 @@ export interface RecoverySummary {
   sleep_efficiency_percent: number | null;
   resting_heart_rate_bpm: number | null;
   avg_hrv_sdnn_ms: number | null;
+  avg_hrv_rmssd_ms: number | null;
   avg_spo2_percent: number | null;
+  /** @deprecated Upstream #1452: only WHOOP reports one. Use the health scores endpoint. */
   recovery_score: number | null;
 }
 

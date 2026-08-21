@@ -11,6 +11,7 @@ from app.database import DbSession
 from app.models import (
     DataPointSeries,
     DataSource,
+    DetailType,
     EventRecord,
     EventRecordDetail,
     HealthScore,
@@ -125,7 +126,7 @@ class EventRecordService(
         self,
         db_session: DbSession,
         detail: EventRecordDetailCreate,
-        detail_type: str = "workout",
+        detail_type: DetailType = "workout",
     ) -> EventRecordDetail:
         result = self.event_record_detail_repo.create(db_session, detail, detail_type=detail_type)
         # event_record_detail_repo.create commits internally, so data is already persisted.
@@ -138,7 +139,7 @@ class EventRecordService(
             if data_source is not None:
                 self._emit_event_record_webhook(record, data_source, detail)
 
-        return result  # ty:ignore[invalid-return-type]
+        return result
 
     @staticmethod
     def _local_sleep_date(start_datetime: datetime, zone_offset: str | None) -> date:

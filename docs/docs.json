@@ -12,6 +12,10 @@
     {
       "source": "/dev-guides/backend-e2e-integration",
       "destination": "/dev-guides/integration-guide"
+    },
+    {
+      "source": "/deployment/docker-images",
+      "destination": "/deployment/docker"
     }
   ],
   "navigation": {
@@ -135,7 +139,7 @@
           {
             "group": "Deployment",
             "pages": [
-              "deployment/docker-images",
+              "deployment/docker",
               "deployment/railway"
             ]
           },

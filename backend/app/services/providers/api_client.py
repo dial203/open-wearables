@@ -10,6 +10,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.database import DbSession
+from app.integrations.redis_client import get_redis_client
 from app.repositories import UserConnectionRepository
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.utils.structured_logging import log_structured
@@ -53,8 +54,42 @@ def _get_valid_token(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Token expired and no refresh token available for {provider_name}",
             )
-        token_response = oauth.refresh_access_token(db, user_id, connection.refresh_token)
-        return token_response.access_token
+        # Scope distributed lock per user/provider to avoid concurrent refresh race conditions.
+
+        redis_client = get_redis_client()
+        lock_key = f"token_refresh_lock:{provider_name}:{user_id}"
+
+        with redis_client.lock(lock_key, timeout=60, blocking_timeout=10, sleep=0.2):
+            # Fetch and refresh connection instance inside the lock
+            connection = connection_repo.get_by_user_and_provider(db, user_id, provider_name)
+            if not connection:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"User not connected to {provider_name}",
+                )
+            if not connection.access_token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"No access token available for {provider_name} (SDK-based provider?)",
+                )
+
+            db.refresh(connection)
+
+            # 1. If the token never expires, return it directly
+            # 2. If it expires in the future (> 5 min buffer), return existing token
+            now = datetime.now(timezone.utc)
+            if not connection.token_expires_at or connection.token_expires_at >= now + timedelta(minutes=5):
+                return connection.access_token
+
+            # Guard against missing refresh token before attempting OAuth refresh
+            if not connection.refresh_token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Token expired and no refresh token available for {provider_name}",
+                )
+
+            token_response = oauth.refresh_access_token(db, user_id, connection.refresh_token)
+            return token_response.access_token
 
     return connection.access_token
 

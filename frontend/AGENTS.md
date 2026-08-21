@@ -204,7 +204,7 @@ export const queryKeys = {
 
 ### Route Constants
 
-All frontend route paths are centralized in `src/lib/constants/routes.ts`. **Never hardcode route paths** - always import from this file.
+All frontend route paths are centralized in `src/lib/constants/routes.ts`. **Never hardcode route paths**—always import from this file.
 
 ```typescript
 // src/lib/constants/routes.ts
@@ -474,14 +474,18 @@ import { cn } from '@/lib/utils';
 
 ## Environment Variables
 
-Access via `import.meta.env`:
+The backend API URL comes from `VITE_API_URL`, resolved at runtime by `resolveApiUrl()` in `src/lib/api/runtime-config.ts` (injected into the SSR HTML as `window.__APP_CONFIG__`). Use `API_CONFIG.baseUrl` from `src/lib/api/config.ts`:
 
 ```typescript
 // src/lib/api/config.ts
+import { resolveApiUrl } from './runtime-config';
+
 export const API_CONFIG = {
-  baseUrl: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  baseUrl: resolveApiUrl(),
 };
 ```
+
+Never read `import.meta.env.VITE_API_URL` directly in application code—Vite inlines it at build time, which breaks runtime configuration of the published Docker image.
 
 ## Testing
 
