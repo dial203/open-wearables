@@ -151,14 +151,29 @@ class TestPriorityServiceGetUserDataSources:
         assert result.items[0].display_name == "Garmin - Forerunner 955"
 
     def test_get_user_data_sources_in_session_objects(self, db: Session, priority_service: PriorityService) -> None:
-        """Same call must also work on identity-mapped objects that still hold enum members."""
+        """Same call must also work on identity-mapped objects that still hold enum members.
+
+        A known Apple productType is humanized for display — an opaque "Watch7,1"
+        in the device list is what a user reads as "my watch isn't here".
+        """
         user = UserFactory()
         DataSourceFactory(user=user, provider=ProviderName.APPLE, device_model="Watch7,1")
 
         result = priority_service.get_user_data_sources(db, user.id)
 
         assert result.total == 1
-        assert result.items[0].display_name == "Apple - Watch7,1"
+        assert result.items[0].display_name == "Apple - Apple Watch Series 9 41mm (GPS)"
+
+    def test_get_user_data_sources_keeps_an_unrecognised_model_verbatim(
+        self, db: Session, priority_service: PriorityService
+    ) -> None:
+        """A hardware code we cannot name is shown as-is, never dropped or guessed at."""
+        user = UserFactory()
+        DataSourceFactory(user=user, provider=ProviderName.APPLE, device_model="Watch99,9")
+
+        result = priority_service.get_user_data_sources(db, user.id)
+
+        assert result.items[0].display_name == "Apple - Watch99,9"
 
 
 class TestPriorityServiceGetDeviceTypePriorities:
