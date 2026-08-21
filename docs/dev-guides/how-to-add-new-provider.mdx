@@ -595,15 +595,18 @@ Visit the authorization URL in your browser, authorize, and verify the callback 
 ### 2. Test Data Sync
 
 <CodeGroup>
-```bash Sync Workouts
-curl -X POST "http://localhost:8000/api/v1/sync/suunto/users/YOUR_USER_ID/sync" \
-  -H "X-API-Key: YOUR_API_KEY" \
+```bash Sync All Data
+curl -X POST "http://localhost:8000/api/v1/providers/suunto/users/YOUR_USER_ID/sync" \
+  -H "X-Open-Wearables-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json"
 ```
 
 ```json Response
 {
-  "success": true
+  "success": true,
+  "async": true,
+  "task_id": "58fd1f21-1768-49ea-bcb8-3876b76ed4f7",
+  "message": "Sync task queued for suunto. Check task status for results."
 }
 ```
 </CodeGroup>
@@ -625,12 +628,10 @@ LIMIT 10;
 Monitor logs for errors:
 
 ```bash
-# Backend logs
-docker-compose logs -f backend
-
-# Or if running locally
-tail -f logs/app.log
+docker compose logs -f app
 ```
+
+If you started the API outside Docker, follow the terminal where the local server is running.
 
 ---
 

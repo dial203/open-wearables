@@ -505,7 +505,7 @@ class SummariesService:
                 resting_heart_rate_bpm=int(r["resting_heart_rate"])
                 if r.get("resting_heart_rate") is not None
                 else None,
-                avg_hrv_sdnn_ms=float(r["hrv_rmssd_milli"]) if r.get("hrv_rmssd_milli") is not None else None,
+                avg_hrv_rmssd_ms=float(r["hrv_rmssd_milli"]) if r.get("hrv_rmssd_milli") is not None else None,
                 avg_spo2_percent=float(r["spo2_percentage"]) if r.get("spo2_percentage") is not None else None,
                 recovery_score=r.get("recovery_score"),
             )

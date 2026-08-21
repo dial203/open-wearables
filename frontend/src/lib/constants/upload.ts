@@ -1,6 +1,6 @@
 /**
  * File upload configuration constants
- * These match the backend limits defined in backend/app/schemas/apple/apple_xml/aws.py
+ * These match the backend limits defined in backend/app/schemas/providers/apple/apple_xml/aws.py
  */
 
 /**
@@ -14,4 +14,4 @@ export const S3_UPLOAD_THRESHOLD = 10 * 1024 * 1024; // 10MB
  * Maximum file size allowed for uploads
  * Matches backend MAX_FILE_SIZE limit
  */
-export const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB
+export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GiB (S3 presigned POST ceiling for a single upload)

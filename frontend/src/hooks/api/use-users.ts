@@ -152,8 +152,15 @@ export function useUploadAppleXml() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ userId, file }: { userId: string; file: File }) =>
-      usersService.uploadAppleXml(userId, file),
+    mutationFn: ({
+      userId,
+      file,
+      onProgress,
+    }: {
+      userId: string;
+      file: File;
+      onProgress?: (percent: number) => void;
+    }) => usersService.uploadAppleXml(userId, file, onProgress),
     onSuccess: (_data, { userId }) => {
       // Invalidate user data to show new imported data
       queryClient.invalidateQueries({
@@ -177,7 +184,15 @@ export function useUploadAppleXmlViaS3() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ userId, file }: { userId: string; file: File }) => {
+    mutationFn: async ({
+      userId,
+      file,
+      onProgress,
+    }: {
+      userId: string;
+      file: File;
+      onProgress?: (percent: number) => void;
+    }) => {
       // Step 1: Get presigned URL from backend
       const presignedData = await usersService.getAppleXmlPresignedUrl(userId, {
         filename: file.name,
@@ -188,7 +203,8 @@ export function useUploadAppleXmlViaS3() {
       await usersService.uploadToS3(
         presignedData.upload_url,
         presignedData.form_fields,
-        file
+        file,
+        onProgress
       );
 
       return presignedData;
@@ -221,16 +237,39 @@ interface UseAppleXmlUploadOptions {
   onError?: (error: Error) => void;
 }
 
+export type UploadPhase = 'idle' | 'uploading' | 'success' | 'error';
+
+export interface UploadProgressState {
+  phase: UploadPhase;
+  /** 0-100 during upload; 100 on success. */
+  percent: number;
+  fileName: string | null;
+  fileSize: number | null;
+  errorMessage: string | null;
+}
+
+const IDLE_PROGRESS: UploadProgressState = {
+  phase: 'idle',
+  percent: 0,
+  fileName: null,
+  fileSize: null,
+  errorMessage: null,
+};
+
 /**
  * Custom hook for handling Apple Health XML file uploads
  * Automatically selects between direct upload and S3 based on file size
- * Includes file type and size validation
+ * Includes file type and size validation, and exposes live upload progress
+ * for a progress dialog.
  */
 export function useAppleXmlUpload(options: UseAppleXmlUploadOptions = {}) {
   const [uploadingUserId, setUploadingUserId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<UploadProgressState>(IDLE_PROGRESS);
 
   const { mutate: uploadDirect } = useUploadAppleXml();
   const { mutate: uploadViaS3 } = useUploadAppleXmlViaS3();
+
+  const resetProgress = () => setProgress(IDLE_PROGRESS);
 
   const handleUpload = (
     userId: string,
@@ -269,20 +308,36 @@ export function useAppleXmlUpload(options: UseAppleXmlUploadOptions = {}) {
     }
 
     setUploadingUserId(userId);
+    setProgress({
+      phase: 'uploading',
+      percent: 0,
+      fileName: file.name,
+      fileSize: file.size,
+      errorMessage: null,
+    });
+
+    const onProgress = (percent: number) =>
+      setProgress((prev) => ({ ...prev, percent }));
 
     // Choose upload method based on file size
     const uploadMutation =
       file.size > S3_UPLOAD_THRESHOLD ? uploadViaS3 : uploadDirect;
 
     uploadMutation(
-      { userId, file },
+      { userId, file, onProgress },
       {
         onSuccess: () => {
+          setProgress((prev) => ({ ...prev, phase: 'success', percent: 100 }));
           if (options.onSuccess) {
             options.onSuccess(userId);
           }
         },
         onError: (error) => {
+          setProgress((prev) => ({
+            ...prev,
+            phase: 'error',
+            errorMessage: (error as Error).message,
+          }));
           if (options.onError) {
             options.onError(error as Error);
           }
@@ -298,5 +353,7 @@ export function useAppleXmlUpload(options: UseAppleXmlUploadOptions = {}) {
     handleUpload,
     uploadingUserId,
     isUploading: (userId: string) => uploadingUserId === userId,
+    progress,
+    resetProgress,
   };
 }

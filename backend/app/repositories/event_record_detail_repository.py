@@ -1,6 +1,7 @@
 from typing import Any, cast
 from uuid import UUID
 
+from psycopg.errors import UniqueViolation
 from sqlalchemy import Table, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
@@ -17,7 +18,6 @@ from app.schemas.model_crud.activities import (
     EventRecordDetailCreate,
     EventRecordDetailUpdate,
 )
-from app.utils.duplicates import handle_duplicates
 from app.utils.exceptions import handle_exceptions
 
 
@@ -40,19 +40,30 @@ class EventRecordDetailRepository(
         return model(**creation_data)
 
     @handle_exceptions
-    @handle_duplicates
     def create(
         self,
         db_session: DbSession,
         creator: EventRecordDetailCreate,
         detail_type: DetailType = "workout",
     ) -> EventRecordDetail:
-        """Create a detail record using the appropriate polymorphic model."""
+        """Create a detail record using the appropriate polymorphic model.
+
+        Idempotent on record_id: returns the existing row on duplicate insert.
+        """
         detail = self._build_detail(creator, detail_type)
-        db_session.add(detail)
-        db_session.commit()
-        db_session.refresh(detail)
-        return detail
+        try:
+            db_session.add(detail)
+            db_session.commit()
+            db_session.refresh(detail)
+            return detail
+        except IntegrityError as exc:
+            db_session.rollback()
+            # record_id is the only unique index here; FK and other violations are real errors
+            if isinstance(exc.orig, UniqueViolation) and (
+                existing := self.get_by_record_id(db_session, creator.record_id, detail_type)
+            ):
+                return existing
+            raise
 
     def create_and_flush(
         self,
@@ -72,9 +83,11 @@ class EventRecordDetailRepository(
             db_session.flush()
             nested.commit()
             return detail
-        except IntegrityError:
+        except IntegrityError as exc:
             nested.rollback()
-            if existing := self.get_by_record_id(db_session, creator.record_id, detail_type):
+            if isinstance(exc.orig, UniqueViolation) and (
+                existing := self.get_by_record_id(db_session, creator.record_id, detail_type)
+            ):
                 return existing
             raise
 

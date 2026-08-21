@@ -1,5 +1,7 @@
 import { apiClient } from '../client';
-import { API_ENDPOINTS } from '../config';
+import { API_ENDPOINTS, API_CONFIG } from '../config';
+import { getToken, clearSession } from '@/lib/auth/session';
+import { DEFAULT_REDIRECTS } from '@/lib/constants/routes';
 import { appendSearchParams } from '@/lib/utils/url';
 import type {
   UserRead,
@@ -52,13 +54,33 @@ export const usersService = {
     return apiClient.delete<void>(API_ENDPOINTS.userDetail(id));
   },
 
-  async uploadAppleXml(userId: string, file: File): Promise<void> {
+  async uploadAppleXml(
+    userId: string,
+    file: File,
+    onProgress?: (percent: number) => void
+  ): Promise<void> {
     const formData = new FormData();
     formData.append('file', file);
-    return apiClient.postMultipart<void>(
-      API_ENDPOINTS.userAppleXmlImport(userId),
-      formData
-    );
+
+    // Without a progress callback, keep the shared fetch path (401 handling, retries).
+    if (!onProgress) {
+      return apiClient.postMultipart<void>(
+        API_ENDPOINTS.userAppleXmlImport(userId),
+        formData
+      );
+    }
+
+    const token = getToken();
+    const url = `${API_CONFIG.baseUrl}${API_ENDPOINTS.userAppleXmlImport(userId)}`;
+    const { status, statusText } = await uploadWithProgress(url, formData, {
+      onProgress,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      // This hits our authenticated backend, so treat a 401 like apiClient does.
+      handleUnauthorized: true,
+    });
+    if (status < 200 || status >= 300) {
+      throw new Error(`Upload failed (${status} ${statusText})`);
+    }
   },
 
   async getAppleXmlPresignedUrl(
@@ -74,11 +96,12 @@ export const usersService = {
   async uploadToS3(
     uploadUrl: string,
     formFields: Record<string, string>,
-    file: File
+    file: File,
+    onProgress?: (percent: number) => void
   ): Promise<void> {
     const formData = new FormData();
 
-    // Add all form fields first (AWS requires these before the file)
+    // Add all form fields first (S3 requires these before the file)
     Object.entries(formFields).forEach(([key, value]) => {
       formData.append(key, value);
     });
@@ -86,14 +109,18 @@ export const usersService = {
     // Add the file last
     formData.append('file', file);
 
-    // Upload directly to S3 (no auth needed, using presigned URL)
-    const response = await fetch(uploadUrl, {
-      method: 'POST',
-      body: formData,
-    });
+    // Upload directly to S3 (no auth needed, using presigned URL). XHR is used
+    // instead of fetch so upload progress can be reported.
+    const { status, statusText } = await uploadWithProgress(
+      uploadUrl,
+      formData,
+      {
+        onProgress,
+      }
+    );
 
-    if (!response.ok) {
-      throw new Error(`S3 upload failed: ${response.statusText}`);
+    if (status < 200 || status >= 300) {
+      throw new Error(`S3 upload failed: ${status} ${statusText}`);
     }
   },
 
@@ -102,3 +129,66 @@ export const usersService = {
     return apiClient.post<InvitationCode>(endpoint, null);
   },
 };
+
+interface UploadWithProgressOptions {
+  onProgress?: (percent: number) => void;
+  headers?: Record<string, string>;
+  /**
+   * When true, a 401 clears the session and redirects to login — mirroring
+   * `apiClient`. Only enable for requests to our own authenticated backend;
+   * a 401/403 from a presigned S3/MinIO URL is not an app-auth failure.
+   */
+  handleUnauthorized?: boolean;
+}
+
+/**
+ * POST a FormData body via XMLHttpRequest so upload progress can be reported.
+ * `fetch` cannot observe request-body upload progress, which is why this exists.
+ * Resolves with the final status even for 4xx/5xx — callers decide how to react,
+ * except a 401 with `handleUnauthorized` which triggers the shared re-login flow.
+ */
+function uploadWithProgress(
+  url: string,
+  formData: FormData,
+  { onProgress, headers, handleUnauthorized }: UploadWithProgressOptions = {}
+): Promise<{ status: number; statusText: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+
+    if (headers) {
+      Object.entries(headers).forEach(([key, value]) => {
+        xhr.setRequestHeader(key, value);
+      });
+    }
+
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) {
+          onProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      });
+    }
+
+    xhr.addEventListener('load', () => {
+      if (handleUnauthorized && xhr.status === 401) {
+        clearSession();
+        if (typeof window !== 'undefined') {
+          window.location.href = DEFAULT_REDIRECTS.unauthenticated;
+        }
+        reject(new Error('Session expired — please sign in again.'));
+        return;
+      }
+      resolve({ status: xhr.status, statusText: xhr.statusText });
+    });
+    xhr.addEventListener('error', () =>
+      reject(new Error('Network error during upload'))
+    );
+    xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+    xhr.addEventListener('timeout', () =>
+      reject(new Error('Upload timed out'))
+    );
+
+    xhr.send(formData);
+  });
+}

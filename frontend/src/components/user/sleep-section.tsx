@@ -444,8 +444,10 @@ function SleepSessionRow({
                         <Activity className="h-4 w-4 text-emerald-400" />
                         <div className="text-right">
                           <p className="text-sm font-medium text-foreground tabular-nums">
-                            {r.avg_hrv_sdnn_ms !== null
-                              ? Math.round(r.avg_hrv_sdnn_ms)
+                            {(r.avg_hrv_rmssd_ms ?? r.avg_hrv_sdnn_ms) !== null
+                              ? Math.round(
+                                  (r.avg_hrv_rmssd_ms ?? r.avg_hrv_sdnn_ms)!
+                                )
                               : '-'}
                             <span className="text-xs text-muted-foreground ml-1">
                               ms

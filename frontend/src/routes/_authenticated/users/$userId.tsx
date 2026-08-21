@@ -32,6 +32,7 @@ import { API_CONFIG } from '@/lib/api/config';
 import { copyToClipboard } from '@/lib/utils/clipboard';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ProfileSection } from '@/components/user/profile-section';
+import { UploadProgressDialog } from '@/components/user/upload-progress-dialog';
 import { SleepSection } from '@/components/user/sleep-section';
 import { ActivitySection } from '@/components/user/activity-section';
 import { BodySection } from '@/components/user/body-section';
@@ -103,7 +104,12 @@ function UserDetailPage() {
     useState<DateRangeValue>(90);
 
   const { mutate: deleteUser, isPending: isDeleting } = useDeleteUser();
-  const { handleUpload, isUploading: isUploadingFile } = useAppleXmlUpload();
+  const {
+    handleUpload,
+    isUploading: isUploadingFile,
+    progress: uploadProgress,
+    resetProgress,
+  } = useAppleXmlUpload();
   const {
     mutate: generateInvitationCode,
     data: invitationCodeData,
@@ -346,6 +352,10 @@ function UserDetailPage() {
             accept=".xml"
             onChange={(e) => handleUpload(userId, e)}
             className="hidden"
+          />
+          <UploadProgressDialog
+            progress={uploadProgress}
+            onClose={resetProgress}
           />
           <AlertDialog
             open={isDeleteDialogOpen}
