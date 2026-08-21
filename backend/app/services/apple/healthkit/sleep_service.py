@@ -1,8 +1,10 @@
 import contextlib
 import json
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from logging import getLogger
+from typing import TypedDict
 from uuid import UUID, uuid4
 
 from app.config import settings
@@ -193,11 +195,18 @@ def _apply_transition(
     return state
 
 
+class SleepIngestResult(TypedDict):
+    """What a sleep batch actually did, as opposed to what it was handed."""
+
+    applied: int  # records whose stage resolved and reached the state machine
+    unmapped_stages: dict[str, int]  # stage label -> count, for stages we could not read
+
+
 def handle_sleep_data(
     db_session: DbSession,
     request: SDKSyncRequest,
     user_id: str,
-) -> None:
+) -> SleepIngestResult:
     """
     Process SDK sleep data and track sleep sessions using Redis state.
 
@@ -235,10 +244,12 @@ def handle_sleep_data(
         acquired = lock.acquire()
         if not acquired:
             logger.warning("Could not acquire sleep processing lock for user %s; skipping batch", user_id)
-            return
+            return {"applied": 0, "unmapped_stages": {}}
 
         current_state = load_sleep_state(user_id)
         provider = request.provider
+        applied = 0
+        unmapped_stages: Counter[str] = Counter()
 
         # Deduplicate and sort
         seen = set()
@@ -264,6 +275,10 @@ def handle_sleep_data(
             sleep_phase = get_apple_sleep_phase(sjson.stage)
 
             if sleep_phase is None:
+                # A stage we cannot read is a discarded night, not a no-op. Count it
+                # so the caller can report it — silence here is what let an Apple
+                # Watch's staged sleep vanish while every other source kept working.
+                unmapped_stages[str(sjson.stage)] += 1
                 continue
 
             if not current_state:
@@ -293,6 +308,7 @@ def handle_sleep_data(
                 device_model,
                 sjson.zoneOffset,
             )
+            applied += 1
 
         # Persist the accumulated state to Redis only once after processing the entire batch
         if current_state:
@@ -320,6 +336,8 @@ def handle_sleep_data(
     # Dispatch the stale-sleep task so sessions that have gone quiet (including
     # other users' sessions) are finalised promptly without waiting for the next beat.
     finalize_stale_sleeps.delay()
+
+    return {"applied": applied, "unmapped_stages": dict(unmapped_stages)}
 
 
 def _calculate_final_metrics(stages: list[SleepStateStage]) -> tuple[dict, list[SleepStage]]:
