@@ -70,6 +70,7 @@ class LoadDataResult(TypedDict):
     records_saved: int
     types: list[str]  # series types written
     sleep_saved: int
+    sleep_unmapped_stages: dict[str, int]  # stage label -> count, dropped as unreadable
     dropped: list[InvalidRecord]
     validation_ms: float
 
@@ -396,16 +397,21 @@ class ImportService:
         # Commit all workout and timeseries changes in one transaction
         db_session.commit()
 
-        # Process sleep (count sleep segments from input)
+        # Process sleep. Report what the state machine actually took, not how many
+        # records arrived: a stage label we cannot read is skipped, and counting the
+        # input here reported a night as saved while it was being discarded.
+        sleep_unmapped_stages: dict[str, int] = {}
         if request.data.sleep:
-            handle_sleep_data(db_session, request, user_id)
-            sleep_saved = len(request.data.sleep)
+            sleep_result = handle_sleep_data(db_session, request, user_id)
+            sleep_saved = sleep_result["applied"]
+            sleep_unmapped_stages = sleep_result["unmapped_stages"]
 
         return {
             "workouts_saved": workouts_saved,
             "records_saved": records_saved,
             "types": sorted(types),
             "sleep_saved": sleep_saved,
+            "sleep_unmapped_stages": sleep_unmapped_stages,
             "dropped": dropped,
             "validation_ms": validation_ms,
         }
@@ -474,6 +480,29 @@ class ImportService:
                 sleep_saved=saved_counts["sleep_saved"],
                 validation_ms=saved_counts["validation_ms"],
             )
+
+            unmapped = saved_counts.get("sleep_unmapped_stages") or {}
+            if unmapped:
+                # Loud on purpose. An unreadable stage silently costs a whole night,
+                # and the stage labels name exactly which vocabulary we are missing.
+                log_structured(
+                    self.log,
+                    "warning",
+                    f"{provider.capitalize()} SDK sleep stages could not be mapped",
+                    provider=f"{provider}",
+                    action=f"{provider}_sdk_sleep_stage_unmapped",
+                    batch_id=batch_id,
+                    user_id=user_id,
+                    unmapped_total=sum(unmapped.values()),
+                    unmapped_stages=unmapped,
+                )
+                with sentry_sdk.push_scope() as scope:
+                    scope.set_level("warning")
+                    scope.set_context(
+                        "unmapped_sleep_stages",
+                        {"batch_id": batch_id, "user_id": user_id, "provider": provider, "stages": unmapped},
+                    )
+                    sentry_sdk.capture_message(f"{provider} SDK payload: unreadable sleep stage labels")
 
             dropped = saved_counts.get("dropped") or []
             if dropped:

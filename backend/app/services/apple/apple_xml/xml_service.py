@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 from xml.etree import ElementTree as ET
 
 from app.config import settings
-from app.constants.series_types.sdk import SleepPhase, get_series_type_from_metric_type
+from app.constants.series_types.sdk import get_apple_sleep_phase, get_series_type_from_metric_type
 from app.constants.workout_types import get_unified_apple_workout_type_xml
 from app.schemas.enums import SeriesType, daily_total_flag
 from app.schemas.model_crud.activities import (
@@ -66,15 +66,6 @@ class XMLService:
         "minimum",
         "unit",
     )
-    SLEEP_VALUE_TO_STAGE: dict[str, SleepPhase] = {
-        "HKCategoryValueSleepAnalysisAsleepCore": SleepPhase.ASLEEP_LIGHT,
-        "HKCategoryValueSleepAnalysisAsleepDeep": SleepPhase.ASLEEP_DEEP,
-        "HKCategoryValueSleepAnalysisAsleepREM": SleepPhase.ASLEEP_REM,
-        "HKCategoryValueSleepAnalysisAwake": SleepPhase.AWAKE,
-        "HKCategoryValueSleepAnalysisInBed": SleepPhase.IN_BED,
-        "HKCategoryValueSleepAnalysisAsleep": SleepPhase.SLEEPING,
-        "HKCategoryValueSleepAnalysisAsleepUnspecified": SleepPhase.SLEEPING,
-    }
 
     def _parse_date_fields(self, document: dict[str, Any]) -> dict[str, Any]:
         for date_field in self.DATE_FIELDS:
@@ -148,7 +139,9 @@ class XMLService:
 
     def _normalize_sleep_record(self, document: dict[str, Any]) -> SleepRecord | None:
         """Normalize a sleep record."""
-        stage = self.SLEEP_VALUE_TO_STAGE.get(str(document.get("value")))
+        # Shared with the SDK ingest path so the two cannot drift: the XML export
+        # and the mobile SDKs describe the same stages in different dialects.
+        stage = get_apple_sleep_phase(str(document.get("value")))
         if stage is None:
             return None
 
