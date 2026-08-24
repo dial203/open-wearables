@@ -1,10 +1,10 @@
 import contextlib
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from logging import getLogger
-from typing import TypedDict
+from typing import Any, TypedDict
 from uuid import UUID, uuid4
 
 from app.config import settings
@@ -43,9 +43,43 @@ _STAGE_TO_METRIC: dict[str, str] = {
 }
 
 
-def key(user_id: str) -> str:
-    """Generate a key for the sleep state."""
-    return f"sleep:active:{user_id}"
+# Separates the user from the session scope inside a Redis key and inside the
+# active-session set.  A unit separator cannot occur in a HealthKit source name or
+# a device model, so a scope can never be confused for part of a user id.
+_SCOPE_SEP = "\x1f"
+
+
+def session_scope(source_name: str | None, device_model: str | None) -> str:
+    """Identify which stream of sleep a session belongs to.
+
+    A sleep session is per device+app, not per user.  Apple Health relays every
+    sleep-writing app on the phone through one upload, so a user can have Oura, a
+    bed sensor, a strap and the watch all reporting the same night.  Scoping the
+    state by the reporting stream keeps those nights separate; without it whichever
+    record happens to arrive first claims the session and every other source's
+    stages are absorbed into it, so the night is stored under the wrong device and
+    the real recorder appears to have written nothing at all.
+
+    Matches the identity of a ``DataSource`` (provider is already implied by the
+    upload) so a session can never span two rows that would be stored separately.
+    """
+    return f"{device_model or ''}{_SCOPE_SEP}{source_name or 'unknown'}"
+
+
+def state_scope(state: SleepState) -> str:
+    """The scope a live session belongs to, derived from the session itself."""
+    return session_scope(state.source_name, state.device_model)
+
+
+def key(user_id: str, scope: str = "") -> str:
+    """Generate a key for the sleep state.
+
+    An empty scope reproduces the pre-scoping key so sessions written by an older
+    release are still found and finalised rather than stranded until their TTL.
+    """
+    if not scope:
+        return f"sleep:active:{user_id}"
+    return f"sleep:active:{user_id}{_SCOPE_SEP}{scope}"
 
 
 def active_users_key() -> str:
@@ -53,9 +87,25 @@ def active_users_key() -> str:
     return "sleep:active_users"
 
 
-def load_sleep_state(user_id: str) -> SleepState | None:
+def active_member(user_id: str, scope: str = "") -> str:
+    """The member recorded in the active-session set for a (user, scope) pair.
+
+    Legacy members are the bare user id, which parses back to an empty scope.
+    """
+    if not scope:
+        return user_id
+    return f"{user_id}{_SCOPE_SEP}{scope}"
+
+
+def parse_active_member(member: str) -> tuple[str, str]:
+    """Split an active-session member back into ``(user_id, scope)``."""
+    user_id, _, scope = member.partition(_SCOPE_SEP)
+    return user_id, scope
+
+
+def load_sleep_state(user_id: str, scope: str = "") -> SleepState | None:
     """Load the sleep state from Redis."""
-    sleep_state_key = key(user_id)
+    sleep_state_key = key(user_id, scope)
     state = get_redis_client().get(sleep_state_key)
     if not state:
         return None
@@ -73,15 +123,19 @@ def load_sleep_state(user_id: str) -> SleepState | None:
             return None
 
 
-def save_sleep_state(user_id: str, state: SleepState) -> None:
-    get_redis_client().set(key(user_id), state.model_dump_json())
-    get_redis_client().expire(key(user_id), settings.redis_sleep_ttl_seconds)
-    get_redis_client().sadd(active_users_key(), user_id)
+def save_sleep_state(user_id: str, state: SleepState, scope: str | None = None) -> None:
+    scope = state_scope(state) if scope is None else scope
+    state_key = key(user_id, scope)
+    get_redis_client().set(state_key, state.model_dump_json())
+    get_redis_client().expire(state_key, settings.redis_sleep_ttl_seconds)
+    get_redis_client().sadd(active_users_key(), active_member(user_id, scope))
 
 
-def delete_sleep_state(user_id: str) -> None:
-    get_redis_client().delete(key(user_id))
-    get_redis_client().srem(active_users_key(), user_id)
+def delete_sleep_state(user_id: str, state: SleepState | None = None, scope: str | None = None) -> None:
+    if scope is None:
+        scope = state_scope(state) if state is not None else ""
+    get_redis_client().delete(key(user_id, scope))
+    get_redis_client().srem(active_users_key(), active_member(user_id, scope))
 
 
 def _create_new_sleep_state(
@@ -200,6 +254,8 @@ class SleepIngestResult(TypedDict):
 
     applied: int  # records whose stage resolved and reached the state machine
     unmapped_stages: dict[str, int]  # stage label -> count, for stages we could not read
+    incoming_by_source: dict[str, int]  # source label -> records offered, before any mapping
+    applied_by_source: dict[str, int]  # source label -> records that reached the state machine
 
 
 def handle_sleep_data(
@@ -240,86 +296,103 @@ def handle_sleep_data(
     redis_client = get_redis_client()
     lock = redis_client.lock(f"sleep:lock:{user_id}", timeout=30, blocking_timeout=15)
 
+    applied = 0
+    unmapped_stages: Counter[str] = Counter()
+    incoming_by_source: Counter[str] = Counter()
+    applied_by_source: Counter[str] = Counter()
+
     try:
         acquired = lock.acquire()
         if not acquired:
             logger.warning("Could not acquire sleep processing lock for user %s; skipping batch", user_id)
-            return {"applied": 0, "unmapped_stages": {}}
+            return {
+                "applied": 0,
+                "unmapped_stages": {},
+                "incoming_by_source": {},
+                "applied_by_source": {},
+            }
 
-        current_state = load_sleep_state(user_id)
         provider = request.provider
-        applied = 0
-        unmapped_stages: Counter[str] = Counter()
 
-        # Deduplicate and sort
+        # Deduplicate, then split by reporting stream. Sorting before the split keeps
+        # each stream chronological, which the gap logic in _apply_transition needs.
         seen = set()
-        unique_data = []
+        by_scope: dict[str, list[tuple[Any, str | None, str | None]]] = defaultdict(list)
 
-        # Sort first by startDate to ensure chronological processing
-        sorted_raw = sorted(request.data.sleep, key=lambda x: x.startDate)
-
-        for item in sorted_raw:
+        for item in sorted(request.data.sleep, key=lambda x: x.startDate):
             # Create a unique key for deduplication
             # SourceInfo is not hashable, use JSON dump
             source_key = item.source.model_dump_json() if item.source else None
             key_tuple = (item.startDate, item.endDate, item.stage, source_key)
 
-            if key_tuple not in seen:
-                seen.add(key_tuple)
-                unique_data.append(item)
-
-        for sjson in unique_data:
-            # Extract device info
-            device_model, software_version, original_source_name = extract_device_info(sjson.source)
-
-            sleep_phase = get_apple_sleep_phase(sjson.stage)
-
-            if sleep_phase is None:
-                # A stage we cannot read is a discarded night, not a no-op. Count it
-                # so the caller can report it — silence here is what let an Apple
-                # Watch's staged sleep vanish while every other source kept working.
-                unmapped_stages[str(sjson.stage)] += 1
+            if key_tuple in seen:
                 continue
+            seen.add(key_tuple)
 
-            if not current_state:
-                if sleep_phase not in SLEEP_START_STATES:
+            device_model, _software_version, original_source_name = extract_device_info(item.source)
+            incoming_by_source[original_source_name or "unknown"] += 1
+            by_scope[session_scope(original_source_name, device_model)].append(
+                (item, device_model, original_source_name)
+            )
+
+        # One session per reporting stream. A shared session would let whichever
+        # source sorted first claim the night and swallow every other source's
+        # stages, which is how a watch that records sleep every night can end up
+        # owning no sessions at all.
+        for scope, scoped_records in by_scope.items():
+            current_state = load_sleep_state(user_id, scope)
+
+            for sjson, device_model, original_source_name in scoped_records:
+                sleep_phase = get_apple_sleep_phase(sjson.stage)
+
+                if sleep_phase is None:
+                    # A stage we cannot read is a discarded night, not a no-op. Count it
+                    # so the caller can report it — silence here is what let an Apple
+                    # Watch's staged sleep vanish while every other source kept working.
+                    unmapped_stages[str(sjson.stage)] += 1
                     continue
 
-                current_state = _create_new_sleep_state(
+                if not current_state:
+                    if sleep_phase not in SLEEP_START_STATES:
+                        continue
+
+                    current_state = _create_new_sleep_state(
+                        sjson.startDate,
+                        sjson.endDate,
+                        sjson.id,
+                        provider,
+                        original_source_name,
+                        device_model,
+                        sjson.zoneOffset,
+                    )
+
+                current_state = _apply_transition(
+                    db_session,
+                    user_id,
+                    current_state,
+                    sleep_phase,
                     sjson.startDate,
                     sjson.endDate,
-                    sjson.id,
                     provider,
+                    sjson.id,
                     original_source_name,
                     device_model,
                     sjson.zoneOffset,
                 )
+                applied += 1
+                applied_by_source[original_source_name or "unknown"] += 1
 
-            current_state = _apply_transition(
-                db_session,
-                user_id,
-                current_state,
-                sleep_phase,
-                sjson.startDate,
-                sjson.endDate,
-                provider,
-                sjson.id,
-                original_source_name,
-                device_model,
-                sjson.zoneOffset,
-            )
-            applied += 1
+            if not current_state:
+                continue
 
-        # Persist the accumulated state to Redis only once after processing the entire batch
-        if current_state:
-            save_sleep_state(user_id, current_state)
+            # Persist the accumulated state once per stream, after its whole batch.
+            save_sleep_state(user_id, current_state, scope)
 
-        # Finalise synchronously if the session is already stale.  Historical
-        # uploads have end_time far in the past so this fires immediately, but
-        # finish_sleep now merges the result with any adjacent record already in
-        # the DB — so each payload extends the growing record rather than
-        # creating a separate session.
-        if current_state:
+            # Finalise synchronously if the session is already stale.  Historical
+            # uploads have end_time far in the past so this fires immediately, but
+            # finish_sleep now merges the result with any adjacent record already in
+            # the DB — so each payload extends the growing record rather than
+            # creating a separate session.
             session_end = current_state.end_time
             if session_end.tzinfo is None:
                 session_end = session_end.replace(tzinfo=timezone.utc)
@@ -337,7 +410,12 @@ def handle_sleep_data(
     # other users' sessions) are finalised promptly without waiting for the next beat.
     finalize_stale_sleeps.delay()
 
-    return {"applied": applied, "unmapped_stages": dict(unmapped_stages)}
+    return {
+        "applied": applied,
+        "unmapped_stages": dict(unmapped_stages),
+        "incoming_by_source": dict(incoming_by_source),
+        "applied_by_source": dict(applied_by_source),
+    }
 
 
 def _calculate_final_metrics(stages: list[SleepStateStage]) -> tuple[dict, list[SleepStage]]:
@@ -545,7 +623,7 @@ def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None
         event_record_service.create_detail(db_session, detail_for_record, detail_type="sleep")
         # Delete from Redis only after a successful DB write so a transient error
         # keeps the session available for the next periodic finalization attempt.
-        delete_sleep_state(user_id)
+        delete_sleep_state(user_id, state)
     except Exception as e:
         log_structured(
             logger,

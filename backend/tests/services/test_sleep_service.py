@@ -37,6 +37,20 @@ def _dt(iso: str) -> datetime:
     return datetime.fromisoformat(iso.replace("Z", "+00:00"))
 
 
+def _saved_states_by_device(mock_redis: MagicMock) -> dict[str, SleepState]:
+    """The session each device accumulated, read back out of the mocked Redis.
+
+    Keyed by ``device_model`` because that is what distinguishes the streams in
+    these payloads — the synthetic sources carry no name, so the source label is
+    "unknown" for all of them.
+    """
+    states: dict[str, SleepState] = {}
+    for call in mock_redis.set.call_args_list:
+        state = SleepState.model_validate_json(call[0][1])
+        states[state.device_model or "unknown"] = state
+    return states
+
+
 # ---------------------------------------------------------------------------
 # Synthetic payload: older Apple Watch (pre-watchOS 9) with sleeping + in_bed
 # Mimics pattern: Watch sends "sleeping" segments, iPhone sends "in_bed"
@@ -544,7 +558,11 @@ class TestHandleSleepDataIntegration:
         Modeled after older Apple Watch pattern:
         - 3 sleeping segments (Watch3,3)
         - 1 in_bed segment (iPhone15,2)
-        All within gap threshold → single session.
+
+        Two devices reported, so two sessions: a session belongs to the device that
+        recorded it. Folding them together would stamp the whole night with whichever
+        record sorted first — here the phone's in_bed, which starts five minutes
+        earlier than the watch's first sleeping segment.
         """
         user_id = str(uuid4())
 
@@ -568,22 +586,29 @@ class TestHandleSleepDataIntegration:
         # The finalize task should be dispatched
         mock_finalize.delay.assert_called_once()
 
-        # Verify saved state: grab the last set() call's value
-        last_set_call = mock_redis.set.call_args_list[-1]
-        state_json = last_set_call[0][1]  # second positional arg
-        state = SleepState.model_validate_json(state_json)
+        # One saved state per reporting device, addressed by a distinct Redis key.
+        states = _saved_states_by_device(mock_redis)
+        assert set(states) == {"Watch3,3", "iPhone15,2"}
 
-        # sleeping_seconds should be populated, NOT deep_seconds
-        assert state.sleeping_seconds > 0
-        assert state.deep_seconds == 0
-        assert state.light_seconds == 0
-        assert state.rem_seconds == 0
+        watch = states["Watch3,3"]
+        phone = states["iPhone15,2"]
 
-        # All entries are within the gap threshold so they merge into one session.
-        sleeping_stages = [s for s in state.stages if s.stage == SleepStageType.SLEEPING]
-        in_bed_stages = [s for s in state.stages if s.stage == SleepStageType.IN_BED]
-        assert len(sleeping_stages) >= 1
-        assert len(in_bed_stages) == 1
+        # The watch recorded the sleep: sleeping_seconds populated, no detailed stages.
+        assert watch.sleeping_seconds > 0
+        assert watch.deep_seconds == 0
+        assert watch.light_seconds == 0
+        assert watch.rem_seconds == 0
+        assert watch.device_model == "Watch3,3"
+
+        # All three of the watch's segments are within the gap threshold of each
+        # other, so they accumulate into that one session.
+        sleeping_stages = [s for s in watch.stages if s.stage == SleepStageType.SLEEPING]
+        assert len(sleeping_stages) == 3
+        assert not [s for s in watch.stages if s.stage == SleepStageType.IN_BED]
+
+        # The phone contributed only in_bed, and it stays on the phone's session.
+        assert [s.stage for s in phone.stages] == [SleepStageType.IN_BED]
+        assert phone.device_model == "iPhone15,2"
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
     @patch("app.services.apple.healthkit.sleep_service.event_record_service")
@@ -682,14 +707,260 @@ class TestSDKSyncEndpointSleep:
         assert data["status_code"] == 202
 
 
+class TestSessionsAreScopedPerDevice:
+    """Regression tests: one open sleep session per device, never one per user.
+
+    The state machine used to key its session on the user alone.  Apple Health
+    relays every sleep-writing app on the phone through a single upload, so a user
+    running a ring, a bed sensor and a watch has all three describing the same
+    night.  Whichever record sorted first opened the session and stamped its own
+    source on it; every other device's stages were then accumulated into that
+    session and vanished under the wrong name.  A watch can record sleep perfectly,
+    every night, and still own no sessions at all.
+    """
+
+    @staticmethod
+    def _payload(*entries: dict) -> dict:
+        return {
+            "provider": "apple",
+            "sdkVersion": "1.0.0",
+            "syncTimestamp": "2026-03-11T13:28:04Z",
+            "data": {"records": [], "workouts": [], "sleep": list(entries)},
+        }
+
+    @staticmethod
+    def _stage(id_: str, stage: str, start: str, end: str, name: str, model: str) -> dict:
+        return {
+            "id": id_,
+            "stage": stage,
+            "startDate": start,
+            "endDate": end,
+            "source": {"name": name, "device_model": model},
+        }
+
+    @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
+    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
+    @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
+    def test_an_earlier_source_does_not_swallow_the_watch(
+        self,
+        mock_redis_func: MagicMock,
+        mock_event_service: MagicMock,
+        mock_finalize: MagicMock,
+        db: Session,
+    ) -> None:
+        """A bed sensor that starts first must not absorb the watch's whole night."""
+        user_id = str(uuid4())
+
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+        mock_redis_func.return_value = mock_redis
+
+        mock_record = MagicMock()
+        mock_record.id = uuid4()
+        mock_event_service.create.return_value = mock_record
+        mock_event_service.find_adjacent_sleep_record.return_value = None
+
+        # The bed sensor sorts first; the watch's staged night sits inside its window.
+        request = SyncRequest.model_validate(
+            self._payload(
+                self._stage(
+                    "B1",
+                    "asleepUnspecified",
+                    "2026-03-10T22:00:00Z",
+                    "2026-03-11T06:00:00Z",
+                    "Eight Sleep",
+                    "iPhone18,1",
+                ),
+                self._stage(
+                    "W1",
+                    "asleepCore",
+                    "2026-03-10T22:30:00Z",
+                    "2026-03-11T00:00:00Z",
+                    "Michael's Apple Watch",
+                    "Watch7,12",
+                ),
+                self._stage(
+                    "W2",
+                    "asleepDeep",
+                    "2026-03-11T00:00:00Z",
+                    "2026-03-11T01:30:00Z",
+                    "Michael's Apple Watch",
+                    "Watch7,12",
+                ),
+                self._stage(
+                    "W3",
+                    "asleepREM",
+                    "2026-03-11T01:30:00Z",
+                    "2026-03-11T02:30:00Z",
+                    "Michael's Apple Watch",
+                    "Watch7,12",
+                ),
+            )
+        )
+
+        result = handle_sleep_data(db, request, user_id)
+
+        states = {s.source_name: s for s in _saved_states_by_device(mock_redis).values()}
+
+        # The watch owns a session of its own, with its own stages on it.
+        assert "Michael's Apple Watch" in states, f"the watch has no session of its own; sessions: {sorted(states)}"
+        watch = states["Michael's Apple Watch"]
+        assert watch.device_model == "Watch7,12"
+        assert watch.light_seconds > 0
+        assert watch.deep_seconds > 0
+        assert watch.rem_seconds > 0
+
+        # And the bed sensor still owns its own, unchanged.
+        assert "Eight Sleep" in states
+        assert states["Eight Sleep"].sleeping_seconds == 8 * 3600
+        assert states["Eight Sleep"].deep_seconds == 0
+
+        # Every record is accounted for, per source, so a loss is never silent.
+        assert result["incoming_by_source"] == {"Eight Sleep": 1, "Michael's Apple Watch": 3}
+        assert result["applied_by_source"] == {"Eight Sleep": 1, "Michael's Apple Watch": 3}
+        assert result["applied"] == 4
+
+    @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
+    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
+    @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
+    def test_same_name_on_two_devices_stays_separate(
+        self,
+        mock_redis_func: MagicMock,
+        mock_event_service: MagicMock,
+        mock_finalize: MagicMock,
+        db: Session,
+    ) -> None:
+        """Replacing a watch reuses the name; the two devices are still distinct.
+
+        HealthKit keeps writing under the name the user gave the watch, so an old
+        and a new watch share a source label and are told apart only by model.
+        """
+        user_id = str(uuid4())
+
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+        mock_redis_func.return_value = mock_redis
+
+        mock_record = MagicMock()
+        mock_record.id = uuid4()
+        mock_event_service.create.return_value = mock_record
+        mock_event_service.find_adjacent_sleep_record.return_value = None
+
+        request = SyncRequest.model_validate(
+            self._payload(
+                self._stage(
+                    "O1",
+                    "asleepCore",
+                    "2026-03-10T22:30:00Z",
+                    "2026-03-11T00:00:00Z",
+                    "Michael's Apple Watch",
+                    "Watch7,5",
+                ),
+                self._stage(
+                    "N1",
+                    "asleepDeep",
+                    "2026-03-10T22:35:00Z",
+                    "2026-03-11T00:05:00Z",
+                    "Michael's Apple Watch",
+                    "Watch7,12",
+                ),
+            )
+        )
+
+        handle_sleep_data(db, request, user_id)
+
+        states = _saved_states_by_device(mock_redis)
+        assert set(states) == {"Watch7,5", "Watch7,12"}
+        assert states["Watch7,5"].light_seconds > 0
+        assert states["Watch7,5"].deep_seconds == 0
+        assert states["Watch7,12"].deep_seconds > 0
+        assert states["Watch7,12"].light_seconds == 0
+
+    @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
+    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
+    @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
+    def test_each_stream_resumes_its_own_stored_session(
+        self,
+        mock_redis_func: MagicMock,
+        mock_event_service: MagicMock,
+        mock_finalize: MagicMock,
+        db: Session,
+    ) -> None:
+        """A second payload must extend the right device's session, not any session."""
+        user_id = str(uuid4())
+
+        mock_redis = MagicMock()
+        mock_redis_func.return_value = mock_redis
+
+        mock_record = MagicMock()
+        mock_record.id = uuid4()
+        mock_event_service.create.return_value = mock_record
+        mock_event_service.find_adjacent_sleep_record.return_value = None
+
+        first = SyncRequest.model_validate(
+            self._payload(
+                self._stage(
+                    "B1",
+                    "asleepUnspecified",
+                    "2026-03-10T22:00:00Z",
+                    "2026-03-10T23:00:00Z",
+                    "Eight Sleep",
+                    "iPhone18,1",
+                ),
+                self._stage(
+                    "W1",
+                    "asleepCore",
+                    "2026-03-10T22:30:00Z",
+                    "2026-03-11T00:00:00Z",
+                    "Michael's Apple Watch",
+                    "Watch7,12",
+                ),
+            )
+        )
+
+        mock_redis.get.return_value = None
+        handle_sleep_data(db, first, user_id)
+
+        stored = {call[0][0]: call[0][1] for call in mock_redis.set.call_args_list}
+        mock_redis.set.reset_mock()
+        mock_redis.get.side_effect = lambda k: stored.get(k)
+
+        second = SyncRequest.model_validate(
+            self._payload(
+                self._stage(
+                    "W2",
+                    "asleepDeep",
+                    "2026-03-11T00:00:00Z",
+                    "2026-03-11T01:30:00Z",
+                    "Michael's Apple Watch",
+                    "Watch7,12",
+                ),
+            )
+        )
+        handle_sleep_data(db, second, user_id)
+
+        states = _saved_states_by_device(mock_redis)
+
+        # Only the watch's stream was touched, and it kept its earlier stage.
+        assert set(states) == {"Watch7,12"}
+        watch = states["Watch7,12"]
+        assert watch.source_name == "Michael's Apple Watch"
+        assert watch.light_seconds > 0, "the earlier core segment was dropped"
+        assert watch.deep_seconds > 0
+
+
 class TestNoIntermediateRedisSaves:
-    """Regression test: Redis state must only be saved once per batch, not per stage.
+    """Regression test: Redis state must only be saved once per stream, not per stage.
 
     Previously, save_sleep_state was called inside the per-stage loop, exposing
     partially-accumulated intermediate states to the concurrent finalize_stale_sleeps
     task.  That task could read a partial state, decide it was stale, and finalize it
     — producing a duplicate (subset) sleep record.  Moving the save outside the loop
     prevents this race condition.
+
+    A batch now accumulates one session per reporting device, so the bound is one
+    save per device rather than one per batch.  What must never happen is a save
+    *inside* the stage loop, which is what the per-key counting below asserts.
     """
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
@@ -702,7 +973,7 @@ class TestNoIntermediateRedisSaves:
         mock_finalize: MagicMock,
         db: Session,
     ) -> None:
-        """Redis .set() should be called exactly once after processing all stages."""
+        """Redis .set() should be called once per device, after all of its stages."""
         user_id = str(uuid4())
 
         mock_redis = MagicMock()
@@ -718,19 +989,23 @@ class TestNoIntermediateRedisSaves:
 
         handle_sleep_data(db, request, user_id)
 
-        # Count how many times set() was called (each call = one Redis state save).
-        # With the fix, this should be exactly 1 — after the loop finishes.
-        # Before the fix, it was called once per stage (9 times for this payload).
+        # Each call = one Redis state save. The payload has two reporting devices
+        # (a watch and the phone's in_bed), so two keys, each written exactly once.
+        # Before the fix it was called once per stage (9 times for this payload).
         set_calls = mock_redis.set.call_args_list
-        assert len(set_calls) == 1, (
-            f"Expected exactly 1 Redis save per batch, got {len(set_calls)}. "
+        keys = [call[0][0] for call in set_calls]
+        assert len(keys) == len(set(keys)), (
+            f"A Redis key was written more than once per batch: {keys}. "
             "Intermediate saves expose partial state to finalize_stale_sleeps."
         )
 
-        # Verify the single saved state contains ALL stages from the payload
-        state = SleepState.model_validate_json(set_calls[0][0][1])
-        # The payload has 9 stages; in_bed is included but counted under in_bed_seconds
-        assert len(state.stages) >= 8  # at least the 8 watch stages + 1 in_bed
+        states = _saved_states_by_device(mock_redis)
+        assert set(states) == {"Watch7,1", "iPhone15,2"}
+
+        # The watch's single saved state carries every one of its stages, so no
+        # stage was lost to an intermediate save.
+        assert len(states["Watch7,1"].stages) == 8
+        assert [s.stage for s in states["iPhone15,2"].stages] == [SleepStageType.IN_BED]
 
 
 class TestHistoricalBulkUploadMerging:
