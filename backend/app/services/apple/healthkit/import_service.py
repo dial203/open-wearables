@@ -71,6 +71,8 @@ class LoadDataResult(TypedDict):
     types: list[str]  # series types written
     sleep_saved: int
     sleep_unmapped_stages: dict[str, int]  # stage label -> count, dropped as unreadable
+    sleep_incoming_by_source: dict[str, int]  # source label -> records offered
+    sleep_applied_by_source: dict[str, int]  # source label -> records that reached the state machine
     dropped: list[InvalidRecord]
     validation_ms: float
 
@@ -401,10 +403,14 @@ class ImportService:
         # records arrived: a stage label we cannot read is skipped, and counting the
         # input here reported a night as saved while it was being discarded.
         sleep_unmapped_stages: dict[str, int] = {}
+        sleep_incoming_by_source: dict[str, int] = {}
+        sleep_applied_by_source: dict[str, int] = {}
         if request.data.sleep:
             sleep_result = handle_sleep_data(db_session, request, user_id)
             sleep_saved = sleep_result["applied"]
             sleep_unmapped_stages = sleep_result["unmapped_stages"]
+            sleep_incoming_by_source = sleep_result["incoming_by_source"]
+            sleep_applied_by_source = sleep_result["applied_by_source"]
 
         return {
             "workouts_saved": workouts_saved,
@@ -412,6 +418,8 @@ class ImportService:
             "types": sorted(types),
             "sleep_saved": sleep_saved,
             "sleep_unmapped_stages": sleep_unmapped_stages,
+            "sleep_incoming_by_source": sleep_incoming_by_source,
+            "sleep_applied_by_source": sleep_applied_by_source,
             "dropped": dropped,
             "validation_ms": validation_ms,
         }
@@ -478,6 +486,11 @@ class ImportService:
                 records_saved=saved_counts["records_saved"],
                 workouts_saved=saved_counts["workouts_saved"],
                 sleep_saved=saved_counts["sleep_saved"],
+                # Which device or app each sleep record came from. A count of what was
+                # handed in says nothing about *whose* night it was, and "the watch is
+                # missing" is only answerable from a per-source breakdown.
+                sleep_incoming_by_source=saved_counts.get("sleep_incoming_by_source") or {},
+                sleep_applied_by_source=saved_counts.get("sleep_applied_by_source") or {},
                 validation_ms=saved_counts["validation_ms"],
             )
 

@@ -9,9 +9,11 @@ from app.config import settings
 from app.database import SessionLocal
 from app.integrations.redis_client import get_redis_client
 from app.services.apple.healthkit.sleep_service import (
+    active_member,
     active_users_key,
     finish_sleep,
     load_sleep_state,
+    parse_active_member,
 )
 from app.utils.sentry_helpers import log_and_capture_error
 
@@ -24,16 +26,25 @@ def finalize_stale_sleeps() -> None:
     redis_client = get_redis_client()
 
     with SessionLocal() as db:
-        for user_id in cast(set[str], redis_client.smembers(active_users_key())):
+        # Members identify a (user, reporting stream) pair; a member written by an
+        # older release is the bare user id and parses back to an empty scope, which
+        # still addresses the key that release wrote.
+        for member in cast(set[str], redis_client.smembers(active_users_key())):
+            user_id, scope = parse_active_member(member)
             try:
-                # Skip users whose upload is currently in progress.
+                # Skip users whose upload is currently in progress. The lock stays
+                # per-user so a batch spanning several streams is still serialised
+                # against this sweep as a whole.
                 lock = redis_client.lock(f"sleep:lock:{user_id}", timeout=30, blocking_timeout=0)
                 if not lock.acquire(blocking=False):
                     continue
 
                 try:
-                    state = load_sleep_state(user_id)
+                    state = load_sleep_state(user_id, scope)
                     if not state:
+                        # The state expired or was finalised elsewhere; drop the
+                        # member so the set cannot grow without bound.
+                        redis_client.srem(active_users_key(), active_member(user_id, scope))
                         continue
 
                     end_time = state.end_time

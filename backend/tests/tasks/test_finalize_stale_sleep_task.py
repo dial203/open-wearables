@@ -92,7 +92,7 @@ class TestFinalizeStaleSleepsTask:
         finalize_stale_sleeps()
 
         # Assert
-        mock_load_state.assert_called_once_with(user_id)
+        mock_load_state.assert_called_once_with(user_id, "")
         mock_finish_sleep.assert_called_once_with(db, user_id, mock_sleep_state)
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finish_sleep")
@@ -144,7 +144,7 @@ class TestFinalizeStaleSleepsTask:
         finalize_stale_sleeps()
 
         # Assert
-        mock_load_state.assert_called_once_with(user_id)
+        mock_load_state.assert_called_once_with(user_id, "")
         mock_finish_sleep.assert_not_called()  # Should not finalize recent sessions
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.load_sleep_state")
@@ -176,7 +176,7 @@ class TestFinalizeStaleSleepsTask:
 
         # Assert
         assert result is None
-        mock_load_state.assert_called_once_with(user_id)
+        mock_load_state.assert_called_once_with(user_id, "")
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finish_sleep")
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.load_sleep_state")
@@ -365,4 +365,4 @@ class TestFinalizeStaleSleepsTask:
 
         # Assert
         assert result is None  # Task completes and skips the malformed user
-        mock_load_state.assert_called_once_with(user_id)
+        mock_load_state.assert_called_once_with(user_id, "")
