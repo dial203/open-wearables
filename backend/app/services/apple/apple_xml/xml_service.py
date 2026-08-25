@@ -108,7 +108,7 @@ class XMLService:
             )
             return None
 
-    def _extract_device_info(self, raw_source: str | None) -> SourceInfo:
+    def _extract_device_info(self, raw_source: str | None, source_name: str | None = None) -> SourceInfo:
         """
         Extract device information from source info.
         Example device string: device="<<HKDevice: 0x66aaba640>,
@@ -116,9 +116,16 @@ class XMLService:
           hardware:Watch6,12, software:26.2, creation date:2026-01-15 22:56:09 +0000>"
         Mobile SDK extracts more info about device, but XML exposes
           only the fields above.
+
+        ``source_name`` is the record's own ``sourceName`` attribute, used when the
+        device string names nothing. Whole categories of the Apple export carry no
+        ``device`` attribute at all - sleep is one - and for those it is the only
+        statement of what wrote the sample.
         """
+        fallback_name = source_name.strip() if source_name and source_name.strip() else None
+
         if not raw_source:
-            return SourceInfo()
+            return SourceInfo(name=fallback_name)
 
         source_list = raw_source.strip("<>").split(", ")
         raw_fields: dict[str, str] = {}
@@ -129,7 +136,7 @@ class XMLService:
             raw_fields[key.strip()] = value.strip()
 
         return SourceInfo(
-            name=raw_fields.get("name"),
+            name=raw_fields.get("name") or fallback_name,
             device_id=raw_fields.get("device"),
             device_model=raw_fields.get("model"),
             device_manufacturer=raw_fields.get("manufacturer"),
@@ -148,7 +155,11 @@ class XMLService:
         start_date = datetime.fromisoformat(str(document.get("startDate")))
         end_date = datetime.fromisoformat(str(document.get("endDate")))
 
-        source_info = self._extract_device_info(document.get("device", ""))
+        # Sleep records in the Apple export carry no ``device`` attribute, so
+        # ``sourceName`` is the only thing naming the recorder. Without it every
+        # sleep record in an export resolves to no source, and a watch's entire
+        # history is stored under "unknown" instead of under the watch.
+        source_info = self._extract_device_info(document.get("device", ""), document.get("sourceName"))
 
         return SleepRecord(
             id=None,
