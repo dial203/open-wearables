@@ -92,3 +92,27 @@ class TestSourceNameIsReadWhenNoDeviceAttribute:
     def test_an_unreadable_stage_is_still_rejected(self, service: XMLService) -> None:
         """Naming the source must not smuggle through a record we cannot read."""
         assert service._normalize_sleep_record({**WATCH_SLEEP_RECORD, "value": "banana"}) is None
+
+
+class TestTheImportDeclaresTheRealProvider:
+    """An export and an SDK upload are the same Apple Health data by different routes."""
+
+    def test_sleep_is_imported_as_apple_not_as_the_transport(self, service: XMLService) -> None:
+        from app.schemas.enums.provider import ProviderName
+
+        request = service._wrap_sleep_data([])
+
+        assert request.provider == ProviderName.APPLE.value
+
+    def test_the_declared_provider_is_a_real_provider_name(self, service: XMLService) -> None:
+        """The reason this bit: an unknown name degrades silently, it does not raise.
+
+        ``_build_creation`` resolves the provider inside ``suppress(ValueError)``, so a
+        value that is not a ``ProviderName`` leaves the data source on whatever the
+        source string implied — ``unknown`` when the source is null, which is exactly
+        the pairing an export's sleep records produced.
+        """
+        from app.schemas.enums.provider import ProviderName
+
+        # Constructing it must not raise; that is what the old value did.
+        assert ProviderName(service._wrap_sleep_data([]).provider) is ProviderName.APPLE

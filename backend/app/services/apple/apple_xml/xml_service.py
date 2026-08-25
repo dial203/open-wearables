@@ -10,6 +10,7 @@ from app.config import settings
 from app.constants.series_types.sdk import get_apple_sleep_phase, get_series_type_from_metric_type
 from app.constants.workout_types import get_unified_apple_workout_type_xml
 from app.schemas.enums import SeriesType, daily_total_flag
+from app.schemas.enums.provider import ProviderName
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -309,9 +310,21 @@ class XMLService:
 
     def _wrap_sleep_data(self, sleep_records: list[SleepRecord]) -> SyncRequest:
         """Wrap sleep data in a SyncRequest
-        to be sent to the handle_sleep_data function."""
+        to be sent to the handle_sleep_data function.
+
+        The provider is ``apple``, not the transport. An export and an SDK upload are
+        the same Apple Health data arriving by different routes, and the provider is
+        how the two are reconciled: ``find_adjacent_sleep_record`` filters by it, so a
+        transport-specific value would keep a night imported from an export from ever
+        merging with the same night synced by the app.
+
+        ``apple_health_xml`` was not a ``ProviderName`` at all, and nothing rejected it:
+        ``_build_creation`` resolves the name inside ``contextlib.suppress(ValueError)``,
+        so an unrecognised one silently degrades to ``unknown`` and takes the sleep with
+        it.
+        """
         return SyncRequest(
-            provider="apple_health_xml",
+            provider=ProviderName.APPLE.value,
             sdkVersion="n/a",
             syncTimestamp=datetime.now(),
             data=SyncRequestData(
