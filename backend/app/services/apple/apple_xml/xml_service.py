@@ -10,6 +10,7 @@ from app.config import settings
 from app.constants.series_types.sdk import get_apple_sleep_phase, get_series_type_from_metric_type
 from app.constants.workout_types import get_unified_apple_workout_type_xml
 from app.schemas.enums import SeriesType, daily_total_flag
+from app.schemas.enums.provider import ProviderName
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -108,7 +109,7 @@ class XMLService:
             )
             return None
 
-    def _extract_device_info(self, raw_source: str | None) -> SourceInfo:
+    def _extract_device_info(self, raw_source: str | None, source_name: str | None = None) -> SourceInfo:
         """
         Extract device information from source info.
         Example device string: device="<<HKDevice: 0x66aaba640>,
@@ -116,9 +117,16 @@ class XMLService:
           hardware:Watch6,12, software:26.2, creation date:2026-01-15 22:56:09 +0000>"
         Mobile SDK extracts more info about device, but XML exposes
           only the fields above.
+
+        ``source_name`` is the record's own ``sourceName`` attribute, used when the
+        device string names nothing. Whole categories of the Apple export carry no
+        ``device`` attribute at all - sleep is one - and for those it is the only
+        statement of what wrote the sample.
         """
+        fallback_name = source_name.strip() if source_name and source_name.strip() else None
+
         if not raw_source:
-            return SourceInfo()
+            return SourceInfo(name=fallback_name)
 
         source_list = raw_source.strip("<>").split(", ")
         raw_fields: dict[str, str] = {}
@@ -129,7 +137,7 @@ class XMLService:
             raw_fields[key.strip()] = value.strip()
 
         return SourceInfo(
-            name=raw_fields.get("name"),
+            name=raw_fields.get("name") or fallback_name,
             device_id=raw_fields.get("device"),
             device_model=raw_fields.get("model"),
             device_manufacturer=raw_fields.get("manufacturer"),
@@ -148,7 +156,11 @@ class XMLService:
         start_date = datetime.fromisoformat(str(document.get("startDate")))
         end_date = datetime.fromisoformat(str(document.get("endDate")))
 
-        source_info = self._extract_device_info(document.get("device", ""))
+        # Sleep records in the Apple export carry no ``device`` attribute, so
+        # ``sourceName`` is the only thing naming the recorder. Without it every
+        # sleep record in an export resolves to no source, and a watch's entire
+        # history is stored under "unknown" instead of under the watch.
+        source_info = self._extract_device_info(document.get("device", ""), document.get("sourceName"))
 
         return SleepRecord(
             id=None,
@@ -298,9 +310,21 @@ class XMLService:
 
     def _wrap_sleep_data(self, sleep_records: list[SleepRecord]) -> SyncRequest:
         """Wrap sleep data in a SyncRequest
-        to be sent to the handle_sleep_data function."""
+        to be sent to the handle_sleep_data function.
+
+        The provider is ``apple``, not the transport. An export and an SDK upload are
+        the same Apple Health data arriving by different routes, and the provider is
+        how the two are reconciled: ``find_adjacent_sleep_record`` filters by it, so a
+        transport-specific value would keep a night imported from an export from ever
+        merging with the same night synced by the app.
+
+        ``apple_health_xml`` was not a ``ProviderName`` at all, and nothing rejected it:
+        ``_build_creation`` resolves the name inside ``contextlib.suppress(ValueError)``,
+        so an unrecognised one silently degrades to ``unknown`` and takes the sleep with
+        it.
+        """
         return SyncRequest(
-            provider="apple_health_xml",
+            provider=ProviderName.APPLE.value,
             sdkVersion="n/a",
             syncTimestamp=datetime.now(),
             data=SyncRequestData(
