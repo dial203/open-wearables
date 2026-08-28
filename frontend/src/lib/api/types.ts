@@ -87,6 +87,58 @@ export interface PresignedURLResponse {
   bucket: string;
 }
 
+export interface MultipartCreateRequest {
+  filename: string;
+  content_type?: string;
+  file_size: number;
+}
+
+export interface MultipartCreateResponse {
+  upload_id: string;
+  key: string;
+  bucket: string;
+  part_size: number;
+}
+
+export interface MultipartSignRequest {
+  key: string;
+  upload_id: string;
+  part_numbers: number[];
+  expiration_seconds?: number;
+}
+
+export interface SignedPart {
+  part_number: number;
+  url: string;
+}
+
+export interface MultipartSignResponse {
+  urls: SignedPart[];
+}
+
+export interface CompletedPart {
+  part_number: number;
+  etag: string;
+}
+
+export interface MultipartCompleteRequest {
+  key: string;
+  upload_id: string;
+  parts: CompletedPart[];
+}
+
+export interface MultipartCompleteResponse {
+  status: string;
+  key: string;
+  bucket: string;
+  task_id: string | null;
+}
+
+export interface MultipartAbortRequest {
+  key: string;
+  upload_id: string;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;
@@ -704,6 +756,7 @@ export interface HealthScoreResponse {
   recorded_at: string;
   zone_offset: string | null;
   components: Record<string, ScoreComponent> | null;
+  event_record_id: string | null;
 }
 
 export interface HealthScoreParams {

@@ -178,7 +178,7 @@ try:
     process_item(item)
 except Exception as e:
     log_and_capture_error(
-        e, logger, f"Failed to process item {item.id}: {e}", extra={"item_id": item.id, "user_id": user_id}
+        e, logger, "Failed to process item", extra={"item_id": item.id, "user_id": user_id, "error": str(e)}
     )
     continue
 ```
@@ -188,6 +188,34 @@ except Exception as e:
 - ✅ Batch processing where you want to continue despite errors
 - ✅ Multi-provider sync where one provider failure shouldn't stop others
 - ❌ Don't use if exception is re-raised or allowed to propagate naturally
+
+### Logging
+
+**Default rule:** Use `log_structured` instead of raw `logger.info/warning/error/...`. Structured logs are emitted as single-line JSON, making them queryable by attribute (`@user_id:...`, `@action:...`) in Railway, GCP, Vercel, etc. This is the established standard in the codebase - prefer it even when editing an existing file that still uses the raw logger.
+
+```python
+from app.utils.structured_logging import log_structured
+
+# DON'T - unstructured, not queryable by attribute
+self.logger.warning(f"Failed to save {key} sample for user {user_id} at {recorded_at}: {e}")
+
+# DO - structured, queryable
+log_structured(
+    self.logger,
+    "warning",
+    "Failed to save activity sample",
+    provider=self.provider_name,
+    action="save_activity_sample_failed",
+    user_id=str(user_id),
+    series=key,
+    recorded_at=recorded_at,
+    error=str(e),
+)
+```
+
+- Pass the message as a stable, human-readable string and put the variable parts in `**attributes` (don't f-string them into the message).
+- `trace_id` is injected automatically from context when not supplied.
+- For handled exceptions in background tasks you still want in Sentry, use `log_and_capture_error` (see above) rather than plain `logger.error`. Keep its `message` stable there too and pass variables via `extra` - note that `extra` becomes Sentry event context, not queryable log attributes.
 
 ### Provider Strategy Pattern
 
@@ -207,11 +235,52 @@ class GarminStrategy(BaseProviderStrategy):
 
 ## Database Migrations
 
+Schema changes use Alembic:
+
 ```bash
 make create_migration m="Add user table"  # Create
 make migrate                               # Apply
 make downgrade                             # Rollback
 ```
+
+### Data migrations
+
+One-off data corrections, backfills, or clean-ups that can't be expressed as a
+zero-downtime Alembic migration live in `scripts/data_migrations/`. Each must be
+idempotent and support a `--dry-run` flag, and its **module docstring is the source
+of truth** for the rationale (the problem it fixes, what it changes, and any details
+such as conflict handling) — put it there, not in the docs.
+
+See `docs/dev-guides/data-migrations.mdx` for how to run them and how they're wired
+into startup.
+
+### Alembic heads after an upstream sync
+
+This is a fork. Our migrations sit on a branch off upstream's chain, so any
+upstream sync that brings in a migration leaves **two alembic heads** and
+`make migrate` fails with "Multiple head revisions are present". Expect this on
+every sync that touches `migrations/versions/`; it is not a sign anything went
+wrong.
+
+The fix is one merge revision, generated — never hand-written, so the parent
+revisions are guaranteed to match what is actually on disk:
+
+```bash
+uv run alembic heads                 # confirm there are two
+uv run alembic merge -m "merge upstream <what> into fork" heads
+uv run alembic heads                 # confirm one head again
+```
+
+Then replace the generated stub's docstring with which two branches it joins and
+why either order is safe (see `f1a2b3c4d5e6` and `92b3c62b7c00` for the pattern).
+Leave `upgrade()`/`downgrade()` as `pass` — a merge point does no schema work.
+
+**Never re-point an existing merge revision's `down_revision` to absorb a new
+upstream head.** It looks tidier than accumulating merge points, but any database
+that already applied that revision has it recorded in `alembic_version`, and
+rewriting its ancestry makes the new upstream migration look unapplied beneath an
+applied descendant. One merge revision per sync is the cost of maintaining the
+fork.
 
 ## Code Style
 - Line length: 120 characters

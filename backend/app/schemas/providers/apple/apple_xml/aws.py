@@ -1,10 +1,12 @@
 from pydantic import BaseModel, Field
 
+from app.config import settings
+
 MIN_EXPIRATION_SECONDS = 60  # 1 minute
 MAX_EXPIRATION_SECONDS = 3600  # 1 hour
 DEFAULT_EXPIRATION_SECONDS = 300  # 5 minutes
 MIN_FILE_SIZE = 1024  # 1KB
-MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024  # 5GiB (S3 presigned POST ceiling for a single upload)
+MAX_FILE_SIZE = settings.apple_xml_max_file_size_bytes
 DEFAULT_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 
