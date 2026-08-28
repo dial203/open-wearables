@@ -300,6 +300,13 @@ def mock_external_apis() -> Generator[dict[str, MagicMock], None, None]:
     }
     mock_s3.head_bucket.return_value = {}
     mock_s3.put_object.return_value = {"ETag": "test-etag"}
+    mock_s3.create_multipart_upload.return_value = {"UploadId": "test-upload-id"}
+    mock_s3.list_parts.return_value = {
+        "Parts": [{"PartNumber": 1, "ETag": "e1"}],
+        "IsTruncated": False,
+    }
+    mock_s3.complete_multipart_upload.return_value = {"ETag": "test-etag", "Key": "test-user/raw/test.xml"}
+    mock_s3.abort_multipart_upload.return_value = {}
 
     garmin_handler = "app.services.providers.garmin.webhook_handler"
 
@@ -307,13 +314,30 @@ def mock_external_apis() -> Generator[dict[str, MagicMock], None, None]:
         patch("httpx.AsyncClient") as mock_httpx,
         patch("boto3.client", return_value=mock_s3) as mock_boto3,
         patch("requests.Session") as mock_requests,
-        patch("app.services.apple.apple_xml.aws_service.AWS_BUCKET_NAME", "test-bucket"),
-        patch("app.services.apple.apple_xml.presigned_url_service.AWS_BUCKET_NAME", "test-bucket"),
+        patch.object(settings, "aws_bucket_name", "test-bucket"),
         patch("app.services.apple.apple_xml.aws_service.get_s3_client", return_value=mock_s3),
         patch("app.services.apple.apple_xml.presigned_url_service.get_s3_client", return_value=mock_s3),
+        patch("app.services.apple.apple_xml.multipart_upload_service.get_s3_client", return_value=mock_s3),
+        patch("app.services.apple.apple_xml.presigned_url_service.get_public_s3_client", return_value=mock_s3),
+        patch("app.services.apple.apple_xml.multipart_upload_service.get_public_s3_client", return_value=mock_s3),
         patch("app.integrations.celery.tasks.process_aws_upload_task.get_s3_client", return_value=mock_s3),
         patch(
             "app.services.apple.apple_xml.presigned_url_service.presigned_url_service.s3_client", mock_s3, create=True
+        ),
+        patch(
+            "app.services.apple.apple_xml.presigned_url_service.presigned_url_service.public_s3_client",
+            mock_s3,
+            create=True,
+        ),
+        patch(
+            "app.services.apple.apple_xml.multipart_upload_service.multipart_upload_service.s3_client",
+            mock_s3,
+            create=True,
+        ),
+        patch(
+            "app.services.apple.apple_xml.multipart_upload_service.multipart_upload_service.public_s3_client",
+            mock_s3,
+            create=True,
         ),
         patch(f"{garmin_handler}.mark_type_success", return_value=False),
         patch(

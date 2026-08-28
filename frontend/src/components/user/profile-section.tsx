@@ -18,23 +18,22 @@ import { copyToClipboard } from '@/lib/utils/clipboard';
 import { ConnectionCard } from '@/components/user/connection-card';
 import type { SyncStatusEvent, SyncRunSummary } from '@/lib/api';
 import { DataSummarySection } from '@/components/user/data-summary-section';
-import { useSyncStatusStream, useSyncRuns } from '@/hooks/api/use-sync-status';
+import { useSyncRuns } from '@/hooks/api/use-sync-status';
 
 interface ProfileSectionProps {
   userId: string;
+  activeRuns: Map<string, SyncStatusEvent>;
 }
 
 // Stable empty reference so cards for providers with no recent runs don't get a fresh [] each render.
 const EMPTY_RUNS: SyncRunSummary[] = [];
 
-export function ProfileSection({ userId }: ProfileSectionProps) {
+export function ProfileSection({ userId, activeRuns }: ProfileSectionProps) {
   const { data: user, isLoading: userLoading } = useUser(userId);
   const { data: connections, isLoading: connectionsLoading } =
     useUserConnections(userId);
   const { mutate: updateUser, isPending: isUpdating } = useUpdateUser();
 
-  // Live sync stream – one SSE connection shared across all provider cards
-  const { activeRuns } = useSyncStatusStream(userId);
   const { data: syncRuns } = useSyncRuns(userId, 30);
 
   // Group sync state by provider once per change instead of re-scanning for every card on every

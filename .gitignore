@@ -158,6 +158,9 @@ cython_debug/
 docker/volumes/
 volumes
 
+# Redis snapshots (written into the working tree by a local redis-server)
+*.rdb
+
 # SSL certificates
 *.pem
 

@@ -27,6 +27,7 @@ import {
   useGenerateInvitationCode,
 } from '@/hooks/api/use-users';
 import { useUserDataSummary } from '@/hooks/api/use-health';
+import { useSyncStatusStream } from '@/hooks/api/use-sync-status';
 import { ROUTES } from '@/lib/constants/routes';
 import { API_CONFIG } from '@/lib/api/config';
 import { copyToClipboard } from '@/lib/utils/clipboard';
@@ -87,6 +88,9 @@ interface TabConfig {
 
 function UserDetailPage() {
   const { userId } = Route.useParams();
+  // Keep the user's stream mounted regardless of the selected tab so background XML
+  // completion always refreshes the active health queries.
+  const { activeRuns } = useSyncStatusStream(userId);
   const navigate = useNavigate();
   const { data: user, isLoading: userLoading } = useUser(userId);
   const { data: dataSummary } = useUserDataSummary(userId);
@@ -131,7 +135,7 @@ function UserDetailPage() {
         id: 'profile',
         label: 'Profile',
         icon: User,
-        content: <ProfileSection userId={userId} />,
+        content: <ProfileSection userId={userId} activeRuns={activeRuns} />,
       },
       {
         id: 'workouts',
@@ -212,6 +216,7 @@ function UserDetailPage() {
     ],
     [
       userId,
+      activeRuns,
       workoutDateRange,
       activityDateRange,
       sleepDateRange,

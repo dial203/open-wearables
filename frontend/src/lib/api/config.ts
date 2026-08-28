@@ -35,6 +35,14 @@ export const API_ENDPOINTS = {
     `/api/v1/users/${userId}/import/apple/xml/direct`,
   userAppleXmlPresignedUrl: (userId: string) =>
     `/api/v1/users/${userId}/import/apple/xml/s3`,
+  userAppleXmlMultipartCreate: (userId: string) =>
+    `/api/v1/users/${userId}/import/apple/xml/s3/multipart/create`,
+  userAppleXmlMultipartSign: (userId: string) =>
+    `/api/v1/users/${userId}/import/apple/xml/s3/multipart/sign`,
+  userAppleXmlMultipartComplete: (userId: string) =>
+    `/api/v1/users/${userId}/import/apple/xml/s3/multipart/complete`,
+  userAppleXmlMultipartAbort: (userId: string) =>
+    `/api/v1/users/${userId}/import/apple/xml/s3/multipart/abort`,
   userInvitationCode: (userId: string) =>
     `/api/v1/users/${userId}/invitation-code`,
 

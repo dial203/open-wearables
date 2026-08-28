@@ -4,7 +4,7 @@ import warnings
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import quote
 
 if TYPE_CHECKING:
@@ -239,6 +239,24 @@ class Settings(BaseSettings):
     aws_region: str = "eu-north-1"
     # for topic ARN verification from SNS notification (signature is verified regardless)
     aws_sns_topic_arn: SecretStr | None = None
+    # custom S3-compatible endpoint; enables path-style + SigV4. See Apple XML import docs.
+    aws_endpoint_url: str | None = None
+    # browser-facing endpoint for presigned URLs; falls back to aws_endpoint_url
+    aws_public_endpoint_url: str | None = None
+    # upload trigger: "client" (/complete) or "sns" (S3 bucket event); only one dispatches
+    apple_xml_upload_completion_mode: Literal["client", "sns"] = "client"
+    # max XML upload size, 5 MiB - 5 TiB (default 5 GiB)
+    apple_xml_max_file_size_bytes: int = Field(
+        5 * 1024 * 1024 * 1024,
+        ge=5 * 1024 * 1024,
+        le=5 * 1024 * 1024 * 1024 * 1024,
+    )
+    # browser multipart chunk size, 5 MiB - 5 GiB (default 100 MiB)
+    apple_xml_multipart_part_size_bytes: int = Field(
+        100 * 1024 * 1024,
+        ge=5 * 1024 * 1024,
+        le=5 * 1024 * 1024 * 1024,
+    )
 
     xml_chunk_size: int = 50_000
 
@@ -248,6 +266,11 @@ class Settings(BaseSettings):
     raw_payload_s3_bucket: str | None = None  # defaults to aws_bucket_name if not set
     raw_payload_s3_prefix: str = "raw-payloads"
     raw_payload_s3_endpoint_url: str | None = None  # for S3-compatible storage (e.g. Railway Object Storage)
+
+    # SDK sync enqueues an S3 reference instead of the inline body, so a backlog stops eating
+    # broker memory. Needs a bucket, not raw_payload_storage=s3 — archival is a debug aid,
+    # not a reliability dependency.
+    sdk_payload_s3_offload: bool = False
 
     # SVIX WEBHOOK SETTINGS
     # Master switch for outgoing webhooks. Off by default so deployments without Svix
@@ -264,6 +287,16 @@ class Settings(BaseSettings):
         if self.access_log_level is None:
             self.access_log_level = (
                 AccessLogLevel.ERRORS if self.environment == EnvironmentType.PRODUCTION else AccessLogLevel.ALL
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_sdk_payload_s3_offload(self) -> "Settings":
+        """Fail at startup rather than degrading to inline payloads on the first request."""
+        if self.sdk_payload_s3_offload and not self.raw_payload_bucket:
+            raise ValueError(
+                "SDK_PAYLOAD_S3_OFFLOAD is on but no S3 bucket is configured - "
+                "set RAW_PAYLOAD_S3_BUCKET or AWS_BUCKET_NAME."
             )
         return self
 
@@ -336,6 +369,11 @@ class Settings(BaseSettings):
             )
             return legacy_value
         return f"{self.api_base_url}/api/v1/oauth/{provider.value}/callback"
+
+    @property
+    def raw_payload_bucket(self) -> str | None:
+        """Bucket for raw payload storage and SDK payload offload."""
+        return self.raw_payload_s3_bucket or self.aws_bucket_name
 
     @property
     def redis_url(self) -> str:
