@@ -6,8 +6,9 @@ Each tool has two error paths worth covering:
 - outer `OpenWearablesError` from the downstream resource fetch -> generic error envelope
 """
 
+from collections.abc import Awaitable, Callable
+
 import pytest
-from fastmcp.tools import FunctionTool
 from pytest_httpx import HTTPXMock
 
 from app.tools.activity import get_activity_summary
@@ -34,7 +35,7 @@ async def test_get_users_returns_empty_envelope_on_auth_error(httpx_mock: HTTPXM
         status_code=401,
     )
 
-    result = await get_users.fn()
+    result = await get_users()
 
     assert result["users"] == []
     assert result["total"] == 0
@@ -51,7 +52,7 @@ async def test_get_users_returns_empty_envelope_on_auth_error(httpx_mock: HTTPXM
     ],
 )
 async def test_summary_tools_return_user_not_found_envelope_on_404(
-    tool: FunctionTool,
+    tool: Callable[..., Awaitable[dict]],
     httpx_mock: HTTPXMock,
 ) -> None:
     """Summary tools turn a 404 on user lookup into the 'User not found' envelope (inner except block)."""
@@ -61,7 +62,7 @@ async def test_summary_tools_return_user_not_found_envelope_on_404(
         status_code=404,
     )
 
-    result = await tool.fn(
+    result = await tool(
         user_id=USER_ID,
         start_date="2026-01-01",
         end_date="2026-01-07",
@@ -79,7 +80,7 @@ async def test_get_timeseries_returns_user_not_found_envelope_on_404(httpx_mock:
         status_code=404,
     )
 
-    result = await get_timeseries.fn(
+    result = await get_timeseries(
         user_id=USER_ID,
         start_time="2026-04-05T00:00:00Z",
         end_time="2026-04-05T23:59:59Z",
@@ -108,7 +109,7 @@ async def test_get_activity_summary_returns_generic_error_envelope_on_downstream
         status_code=401,
     )
 
-    result = await get_activity_summary.fn(
+    result = await get_activity_summary(
         user_id=USER_ID,
         start_date="2026-01-01",
         end_date="2026-01-07",
@@ -141,7 +142,7 @@ async def test_get_activity_summary_walks_every_page(httpx_mock: HTTPXMock) -> N
     httpx_mock.add_response(json=_page([{"date": "2026-01-01", "steps": 100}], "CURSOR_2"))
     httpx_mock.add_response(json=_page([{"date": "2026-04-01", "steps": 900}], None))
 
-    result = await get_activity_summary.fn(user_id=USER_ID, start_date="2026-01-01", end_date="2026-04-01")
+    result = await get_activity_summary(user_id=USER_ID, start_date="2026-01-01", end_date="2026-04-01")
 
     assert [r["date"] for r in result["records"]] == ["2026-01-01", "2026-04-01"]
     assert result["summary"]["total_steps"] == 1000
@@ -155,7 +156,7 @@ async def test_get_sleep_summary_walks_every_page(httpx_mock: HTTPXMock) -> None
     httpx_mock.add_response(json=_page([{"date": "2026-01-01"}], "CURSOR_2"))
     httpx_mock.add_response(json=_page([{"date": "2026-04-01"}], None))
 
-    result = await get_sleep_summary.fn(user_id=USER_ID, start_date="2026-01-01", end_date="2026-04-01")
+    result = await get_sleep_summary(user_id=USER_ID, start_date="2026-01-01", end_date="2026-04-01")
 
     assert len(result["records"]) == 2
     assert result["truncated"] is False
@@ -167,7 +168,7 @@ async def test_get_workout_events_walks_every_page(httpx_mock: HTTPXMock) -> Non
     httpx_mock.add_response(json=_page([{"id": "w1", "type": "running"}], "CURSOR_2"))
     httpx_mock.add_response(json=_page([{"id": "w2", "type": "cycling"}], None))
 
-    result = await get_workout_events.fn(user_id=USER_ID, start_date="2026-01-01", end_date="2026-04-01")
+    result = await get_workout_events(user_id=USER_ID, start_date="2026-01-01", end_date="2026-04-01")
 
     assert result["summary"]["total_workouts"] == 2
     assert result["truncated"] is False
@@ -183,7 +184,7 @@ async def test_pagination_that_never_ends_is_reported_not_hidden(
     for _ in range(3):
         httpx_mock.add_response(json=_page([{"date": "2026-01-01", "steps": 1}], "ALWAYS_MORE"))
 
-    result = await get_activity_summary.fn(user_id=USER_ID, start_date="2026-01-01", end_date="2026-12-31")
+    result = await get_activity_summary(user_id=USER_ID, start_date="2026-01-01", end_date="2026-12-31")
 
     assert result["truncated"] is True
     assert len(result["records"]) == 3
@@ -193,7 +194,7 @@ async def test_activity_sort_order_reaches_the_api(httpx_mock: HTTPXMock) -> Non
     httpx_mock.add_response(method="GET", url=f"https://api.test.com/api/v1/users/{USER_ID}", json=USER_PAYLOAD)
     httpx_mock.add_response(json=_page([{"date": "2026-04-01", "steps": 900}], None))
 
-    await get_activity_summary.fn(user_id=USER_ID, start_date="2026-01-01", end_date="2026-04-01", sort_order="desc")
+    await get_activity_summary(user_id=USER_ID, start_date="2026-01-01", end_date="2026-04-01", sort_order="desc")
 
     assert "sort_order=desc" in str(httpx_mock.get_requests()[-1].url)
 
@@ -267,7 +268,7 @@ async def test_get_menstrual_cycles_transforms_records_and_summary(httpx_mock: H
         },
     )
 
-    result = await get_menstrual_cycles.fn(
+    result = await get_menstrual_cycles(
         user_id=USER_ID,
         start_date="2026-01-01",
         end_date="2026-02-28",
@@ -334,7 +335,7 @@ async def test_get_menstrual_cycles_walks_pagination(httpx_mock: HTTPXMock) -> N
         },
     )
 
-    result = await get_menstrual_cycles.fn(
+    result = await get_menstrual_cycles(
         user_id=USER_ID,
         start_date="2026-01-01",
         end_date="2026-02-28",
@@ -365,7 +366,7 @@ async def test_get_menstrual_cycles_handles_empty_data(httpx_mock: HTTPXMock) ->
         },
     )
 
-    result = await get_menstrual_cycles.fn(
+    result = await get_menstrual_cycles(
         user_id=USER_ID,
         start_date="2026-01-01",
         end_date="2026-01-07",

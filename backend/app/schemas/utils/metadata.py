@@ -1,11 +1,11 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, computed_field
 
 from app.constants.devices_map import resolve_device_name
-from app.schemas.enums import DeviceType
+from app.schemas.enums import DeviceType, Resolution
 
 
 class SourceMetadata(BaseModel):
@@ -69,12 +69,18 @@ class SourceMetadata(BaseModel):
         # from app.schemas.enums, so a top-level import would close an import cycle.
         from app.utils.device_registry import resolve_ingestion_route
 
+        # .value, not str(): ProviderName is a (str, Enum), so str(member) renders as
+        # "ProviderName.GARMIN" rather than "garmin". A row read back from the database
+        # arrives as a plain string and is unaffected, but one still holding the enum
+        # (a freshly created DataSource) would put the member name into the response.
+        provider = getattr(data_source.provider, "value", data_source.provider)
+
         return cls(
-            provider=str(data_source.provider) if data_source.provider else "unknown",
+            provider=provider if provider else "unknown",
             source=data_source.source,
             device=data_source.device_model,
             data_source_id=data_source.id,
-            ingestion_provider=str(data_source.provider) if data_source.provider else None,
+            ingestion_provider=provider if provider else None,
             source_tag=data_source.source,
             original_source_name=data_source.original_source_name,
             device_type=data_source.device_type,
@@ -87,7 +93,7 @@ class SourceMetadata(BaseModel):
 
 
 class TimeseriesMetadata(BaseModel):
-    resolution: Literal["raw", "1min", "5min", "15min", "1hour"] | None = None
+    resolution: Resolution | None = None
     sample_count: int | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None

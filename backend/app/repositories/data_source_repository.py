@@ -116,11 +116,19 @@ class DataSourceRepository(
         if device_model is None:
             device_model = self._connection_device_label(db_session, user_id, provider)
 
-        # Non-destructive brand tagging: when the provider did not supply an
-        # original_source_name, derive a canonical brand (e.g. Oura data arriving
-        # via Apple/Google Health) so the same brand groups across ingest paths.
-        if original_source_name is None:
-            original_source_name = resolve_brand(provider, device_model, source)
+        # Non-destructive brand tagging: derive a canonical brand (e.g. Oura data
+        # arriving via Apple/Google Health) so the same brand groups across ingest paths.
+        #
+        # resolve_brand() wins over whatever the caller passed. The one caller that
+        # supplies original_source_name (event_record_repository) hands us the raw
+        # `creator.source` — a package id or provider key like "com.oura.oura", not a
+        # brand — so honouring the argument first would skip resolution entirely and
+        # put a literal where consumers expect "Oura". That also feeds device-type
+        # inference below and resolve_ingestion_route(), which compares this value
+        # against the platform brand: a raw literal never matches, so Apple's own data
+        # inside Apple Health would read as relayed rather than first-party.
+        # The caller's value remains the fallback for what resolve_brand() can't name.
+        original_source_name = resolve_brand(provider, device_model, source) or original_source_name
 
         existing = self.get_by_identity(db_session, user_id, provider, device_model, source)
         if existing:
