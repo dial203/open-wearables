@@ -1,0 +1,85 @@
+############################################################
+# Local AI PR Review — dial203
+# Runs on the homelab self-hosted runners (labels ...proxmox),
+# calls the LOCAL Ollama (qwen2.5-coder:7b) on dial-desktop
+# over the Tailscale mesh (100.126.128.91:11434).
+#
+# Fires only on opened/ready_for_review (NOT every commit:
+# synchronize) to avoid burning the GPU on re-reviews.
+# Copy to each repo:  .github/workflows/pr-review.yml
+############################################################
+name: Local AI Code Review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ai-review:
+    runs-on: [self-hosted, linux, x64, proxmox]
+    steps:
+      - name: Checkout PR head (full history for diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Generate review with local Ollama
+        env:
+          OLLAMA_URL: http://100.126.128.91:11434
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          DIFF="$(git diff "$BASE...$HEAD")"
+          if [ -z "$DIFF" ]; then
+            echo "No code changes detected to review (merge/whitespace only)."
+            exit 0
+          fi
+          if [ "${#DIFF}" -gt 48000 ]; then
+            DIFF="${DIFF:0:48000}"$'\n...[diff truncated by local reviewer]'
+          fi
+          python3 - "$OLLAMA_URL" "$DIFF" <<'PY'
+          import sys, json, urllib.request
+          url, diff = sys.argv[1], sys.argv[2]
+          prompt = ("You are a senior software engineer doing a thorough code review of a pull request. "
+                    "Review this git diff for: correctness bugs, security vulnerabilities, "
+                    "concurrency/error-handling issues, and clearer design. Be concise, specific, "
+                    "cite exact file:line where possible. Format as a short markdown report with "
+                    "'### Issues' and '### Suggestions' sections. If the change is clean, say so briefly.\n\n"
+                    "Diff:\n\n" + diff)
+          body = json.dumps({"model": "qwen2.5-coder:7b", "stream": False, "prompt": prompt,
+                             "options": {"temperature": 0.2}}).encode()
+          req = urllib.request.Request(url + "/api/generate", data=body,
+                                       headers={"Content-Type": "application/json"})
+          r = json.load(urllib.request.urlopen(req, timeout=900))
+          open("review.md", "w").write(r["response"])
+          PY
+
+      - name: Post review comment
+        if: hashFiles('review.md') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}" <<'PY'
+          import os, sys, json, urllib.request
+          repo, pr = sys.argv[1], sys.argv[2]
+          body = open("review.md").read()
+          label = "_Local review (`qwen2.5-coder:7b` on dial203 homelab runner)_\n\n"
+          payload = json.dumps({"body": label + body}).encode()
+          req = urllib.request.Request(
+              "https://api.github.com/repos/" + repo + "/issues/" + pr + "/comments",
+              data=payload,
+              headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                       "Content-Type": "application/json"})
+          urllib.request.urlopen(req)
+          PY
