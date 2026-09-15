@@ -1,8 +1,12 @@
 ############################################################
 # Local AI PR Review — dial203
 # Runs on the homelab self-hosted runners (labels ...proxmox),
-# calls the LOCAL Ollama (qwen2.5-coder:14b) on dial-desktop
+# calls the LOCAL Ollama (qwen2.5-coder:7b) on dial-desktop
 # over the Tailscale mesh (100.126.128.91:11434).
+#
+# Uses the 7b (4.7GB) build: it fits the RX580's 8GB VRAM and runs
+# GPU-fast. Do NOT bump to 14b (9.9GB) — it exceeds VRAM and Ollama
+# falls back to CPU-only (num_gpu:0), taking minutes per review.
 #
 # Fires only on opened/ready_for_review (NOT every commit:
 # synchronize) to avoid burning the GPU on re-reviews.
@@ -57,8 +61,8 @@ jobs:
                     "cite exact file:line where possible. Format as a short markdown report with "
                     "'### Issues' and '### Suggestions' sections. If the change is clean, say so briefly.\n\n"
                     "Diff:\n\n" + diff)
-          body = json.dumps({"model": "qwen2.5-coder:14b", "stream": False, "prompt": prompt,
-                             "options": {"temperature": 0.2, "num_gpu": 0}}).encode()
+          body = json.dumps({"model": "qwen2.5-coder:7b", "stream": False, "prompt": prompt,
+                             "options": {"temperature": 0.2}}).encode()
           req = urllib.request.Request(url + "/api/generate", data=body,
                                        headers={"Content-Type": "application/json"})
           r = json.load(urllib.request.urlopen(req, timeout=900))
@@ -74,7 +78,7 @@ jobs:
           import os, sys, json, urllib.request
           repo, pr = sys.argv[1], sys.argv[2]
           body = open("review.md").read()
-          label = "_Local review (`qwen2.5-coder:14b` on dial203 homelab runner)_\n\n"
+          label = "_Local review (`qwen2.5-coder:7b` on dial203 homelab runner, GPU)_\n\n"
           payload = json.dumps({"body": label + body}).encode()
           req = urllib.request.Request(
               "https://api.github.com/repos/" + repo + "/issues/" + pr + "/comments",
