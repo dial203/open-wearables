@@ -56,13 +56,16 @@ jobs:
           import sys, json, urllib.request
           url, diff = sys.argv[1], sys.argv[2]
           prompt = ("You are a senior software engineer doing a thorough code review of a pull request. "
-                    "Review this git diff for: correctness bugs, security vulnerabilities, "
-                    "concurrency/error-handling issues, and clearer design. Be concise, specific, "
+                    "Review this git diff for REAL defects only: correctness bugs, security vulnerabilities, "
+                    "concurrency/error-handling issues, resource leaks. Be concise, specific, "
                     "cite exact file:line where possible. Format as a short markdown report with "
-                    "'### Issues' and '### Suggestions' sections. If the change is clean, say so briefly.\n\n"
+                    "'### Issues' and '### Suggestions' sections. IMPORTANT: do NOT raise cosmetic or "
+                    "stylistic concerns (naming, formatting, broad-exception style, logging verbosity) "
+                    "unless they cause an actual bug. If there are no real defects, say 'No critical "
+                    "issues found in this diff.' and stop rather than inventing minor points.\n\n"
                     "Diff:\n\n" + diff)
           body = json.dumps({"model": "qwen2.5-coder:7b", "stream": False, "prompt": prompt,
-                             "options": {"temperature": 0.2}}).encode()
+                                       "options": {"temperature": 0.2}}).encode()
           req = urllib.request.Request(url + "/api/generate", data=body,
                                        headers={"Content-Type": "application/json"})
           r = json.load(urllib.request.urlopen(req, timeout=900))
@@ -78,7 +81,7 @@ jobs:
           import os, sys, json, urllib.request
           repo, pr = sys.argv[1], sys.argv[2]
           body = open("review.md").read()
-          label = "_Local review (`qwen2.5-coder:7b` on dial203 homelab runner, GPU)_\n\n"
+          label = "_Local review (`qwen2.5-coder:7b` on dial203 homelab runner)_\n\n"
           payload = json.dumps({"body": label + body}).encode()
           req = urllib.request.Request(
               "https://api.github.com/repos/" + repo + "/issues/" + pr + "/comments",
