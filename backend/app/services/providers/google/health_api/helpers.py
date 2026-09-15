@@ -1,18 +1,45 @@
 """Shared value/timestamp helpers for the Google Health API handlers."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from pydantic import ValidationError
+
+from app.schemas.providers.google import DataPointsPage
 from app.utils.conversion import to_decimal
 from app.utils.dates import offset_to_iso, to_rfc3339
 
 GOOGLE_HEALTH_API_SOURCE = "google_health_api"
 
 
+def parse_page(response: Any, endpoint: str) -> DataPointsPage:
+    """Validate one page envelope of a dataPoints / reconcile / rollUp response.
+
+    Raises so the caller's per-metric handler records the failure: a malformed page must
+    never read as an exhausted window, which is what let a failed fetch pass as "no data" (#1545).
+    """
+    try:
+        return DataPointsPage.model_validate(response)
+    except ValidationError as e:
+        raise RuntimeError(f"Malformed {endpoint} response: {type(response).__name__}") from e
+
+
 def physical_interval(start: datetime, end: datetime) -> dict[str, str]:
     """Build a google.type.Interval; ``start`` is inclusive, ``end`` is exclusive."""
     return {"startTime": to_rfc3339(start), "endTime": to_rfc3339(end)}
+
+
+def civil_interval(start: date, end: date) -> dict[str, Any]:
+    """Build a CivilTimeInterval; ``start`` is inclusive, ``end`` is exclusive.
+
+    CivilDateTime carries no offset, so dailyRollUp buckets on the user's civil days
+    regardless of the range the request asks for.
+    """
+    return {
+        "start": {"date": {"year": start.year, "month": start.month, "day": start.day}},
+        "end": {"date": {"year": end.year, "month": end.month, "day": end.day}},
+    }
 
 
 def read_number(
