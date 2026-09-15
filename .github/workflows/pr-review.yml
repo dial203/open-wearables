@@ -68,8 +68,14 @@ jobs:
                                        "options": {"temperature": 0.2}}).encode()
           req = urllib.request.Request(url + "/api/generate", data=body,
                                        headers={"Content-Type": "application/json"})
-          r = json.load(urllib.request.urlopen(req, timeout=900))
-          open("review.md", "w").write(r["response"])
+          try:
+              r = json.load(urllib.request.urlopen(req, timeout=600))
+              open("review.md", "w").write(r["response"])
+          except Exception as e:
+              open("review.md", "w").write(
+                  "⚠️ **Local review could not be generated** "
+                  f"({e.__class__.__name__}). Advisory only — please review "
+                  "manually. The AI review is NOT a pass/fail gate.")
           PY
 
       - name: Post review comment
