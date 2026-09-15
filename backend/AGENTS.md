@@ -243,6 +243,14 @@ make migrate                               # Apply
 make downgrade                             # Rollback
 ```
 
+### Resolving migration conflicts
+
+When you rebase and `main` gained a migration in the meantime, `alembic heads` shows two heads. Resolve it by moving **your** migration to the end of the chain. Never touch a migration that is already on `main`: databases that applied it treat everything inserted before it as already done and skip it silently.
+
+1. Set `down_revision` of your migration to the head from `main`.
+2. Rename your file so its date is later than the last migration on `main`. Keep the `rev` id. If your dev database already ran this migration, run `make downgrade` before re-pointing and `make migrate` after; otherwise the database keeps your revision as current and never applies the migration from `main`.
+3. CI checks the chain and fails on a second head, on a changed `down_revision` in a migration already on `main`, and on a deleted or renamed migration.
+
 ### Data migrations
 
 One-off data corrections, backfills, or clean-ups that can't be expressed as a
@@ -256,11 +264,20 @@ into startup.
 
 ### Alembic heads after an upstream sync
 
-This is a fork. Our migrations sit on a branch off upstream's chain, so any
-upstream sync that brings in a migration leaves **two alembic heads** and
-`make migrate` fails with "Multiple head revisions are present". Expect this on
-every sync that touches `migrations/versions/`; it is not a sign anything went
-wrong.
+The section above covers the everyday case: **your** migration collides with one
+that reached `main` while you were working, and you move yours to the end of the
+chain. This section is the other case, and the two are not interchangeable — pick
+by which side owns the migrations that are not yet shared.
+
+This is a fork. Our migrations sit on a branch off upstream's chain, so any sync
+that brings in an upstream migration leaves **two alembic heads** and `make migrate`
+fails with "Multiple head revisions are present". Expect this on every sync that
+touches `migrations/versions/`; it is not a sign anything went wrong.
+
+Re-pointing does not apply here. Both heads are already on a `main` somewhere — ours
+on this fork's, theirs on upstream's — so there is no unshared migration to move, and
+editing either side is the mistake `check_migrations.py` exists to catch. Re-pointing
+upstream's files would also re-conflict on every future sync.
 
 The fix is one merge revision, generated — never hand-written, so the parent
 revisions are guaranteed to match what is actually on disk:
@@ -281,6 +298,10 @@ that already applied that revision has it recorded in `alembic_version`, and
 rewriting its ancestry makes the new upstream migration look unapplied beneath an
 applied descendant. One merge revision per sync is the cost of maintaining the
 fork.
+
+A merge revision passes `make check_migrations`: it is a new file, so it trips
+neither the single-head check nor the "existing migration changed" check. Run it
+before pushing a sync.
 
 ## Code Style
 - Line length: 120 characters
@@ -421,7 +442,8 @@ app/api/routes/
 
 **Route implementation:**
 - Use `@router.method()` decorator with HTTP method and path
-- Add `response_model` (Pydantic) and `status_code` (fastapi.status)
+- Add `response_model` (Pydantic)
+- Set `status_code` (fastapi.status) only when the success response is not 200: `HTTP_201_CREATED` for creates, `HTTP_202_ACCEPTED` for background work, `HTTP_204_NO_CONTENT` for deletes without a body. FastAPI defaults to 200, so never write `status_code=status.HTTP_200_OK`
 - Define functions as `async` by default
 - Use **kebab-case** for paths: `/heart-rate`, `/import-data`
 - Keep route code minimal, delegate to services

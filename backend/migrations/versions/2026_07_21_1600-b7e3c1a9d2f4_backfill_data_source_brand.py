@@ -15,9 +15,6 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-from app.schemas.enums import ProviderName
-from app.utils.device_registry import resolve_brand
-
 # revision identifiers, used by Alembic.
 revision: str = "b7e3c1a9d2f4"
 down_revision: Union[str, None] = "7d6921a86914"
@@ -26,6 +23,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Imported here rather than at module scope (the house rule in backend/AGENTS.md):
+    # importing app.* pulls in app.config, which instantiates Settings() and so requires
+    # SECRET_KEY et al. Anything that merely *loads* the migration files would then need a
+    # full environment -- alembic's ScriptDirectory does, and so does
+    # scripts/check_migrations.py, which documents itself as needing "no database, no
+    # application settings". Deferring the import keeps that true: only actually running
+    # the migration needs settings, and by then they are configured.
+    from app.schemas.enums import ProviderName
+    from app.utils.device_registry import resolve_brand
+
     conn = op.get_bind()
     rows = conn.execute(
         sa.text("SELECT id, provider, device_model, source FROM data_source WHERE original_source_name IS NULL")

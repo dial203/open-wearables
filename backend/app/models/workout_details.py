@@ -3,7 +3,7 @@ from typing import ClassVar
 from sqlalchemy import Index
 from sqlalchemy.orm import Mapped
 
-from app.mappings import FKEventRecord, json_binary, numeric_5_2, numeric_10_3, str_255
+from app.mappings import FKEventRecord, json_binary, numeric_5_2, numeric_10_3, str_10, str_32, str_255
 
 from .event_record_detail import DetailType, EventRecordDetail
 
@@ -63,3 +63,7 @@ class WorkoutDetails(EventRecordDetail):
     # fit-files/{provider}/{YYYY-MM-DD}/{user_id}/{activity_id}.fit. Used by the
     # workout FIT-download endpoint to locate the file (local dir or S3).
     fit_file_key: Mapped[str_255 | None]
+
+    entry_source: Mapped[str_32 | None]
+    intensity: Mapped[str_10 | None]
+    label: Mapped[str_255 | None]
