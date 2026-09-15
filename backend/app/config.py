@@ -107,6 +107,13 @@ class Settings(BaseSettings):
     # Will default to false in a future release.
     historical_sync_on_connect: bool = True
 
+    # Per-request timeout for provider API calls (connect/read/write/pool alike).
+    provider_request_timeout_seconds: float = Field(30.0, gt=0, le=300)
+
+    # How long a linked-account pull lock survives without renewal. The holder renews it
+    # four times per lease from a daemon thread, so the lock dies with the worker process.
+    linked_sync_pull_lease_seconds: int = Field(120, ge=30, le=3600)
+
     # Whether to ingest per-second workout samples (speed, cadence, power, GPS, etc.) into
     # data_point_series on workout webhook arrival. Significantly increases DB storage.
     # Per-provider granularity will be added via ProviderSetting in a future release.
