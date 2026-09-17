@@ -5,11 +5,22 @@ from sqlalchemy import Index, text
 from sqlalchemy.orm import Mapped
 
 from app.database import BaseDbModel
-from app.mappings import FKDeviceOptional, FKUser, FKUserConnection, OneToMany, PrimaryKey, str_32, str_50, str_100
+from app.mappings import (
+    FKDeviceOptional,
+    FKUser,
+    FKUserConnection,
+    ManyToOne,
+    OneToMany,
+    PrimaryKey,
+    str_32,
+    str_50,
+    str_100,
+)
 from app.schemas.enums import ProviderName
 
 if TYPE_CHECKING:
     from app.models.data_point_series import DataPointSeries
+    from app.models.device import Device
     from app.models.event_record import EventRecord
 
 
@@ -60,6 +71,10 @@ class DataSource(BaseDbModel):
     # sent them, because they are the record of what the provider claimed; device_id
     # is our interpretation of it, and the two have to stay separable.
     device_id: Mapped[FKDeviceOptional]
+    # Not eager-loaded: attribution is read per sample on the timeseries paths, and a
+    # lazy load there would be one query per row. Callers that want the device's label
+    # join it explicitly; SourceMetadata falls back to the id alone when they have not.
+    device: Mapped[ManyToOne["Device"]]
 
     event_records: Mapped[OneToMany["EventRecord"]]
     data_points: Mapped[OneToMany["DataPointSeries"]]

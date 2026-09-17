@@ -76,3 +76,20 @@ def test_humanize_device_model_falls_back_to_the_full_registry() -> None:
 
 def test_humanize_device_model_prefers_the_curated_name() -> None:
     assert humanize_device_model("Watch7,5") == "Apple Watch Series 8"
+
+
+def test_health_connect_is_not_resolved_as_garmin() -> None:
+    """The bare "connect" keyword exists to catch Garmin Connect.
+
+    It also matches "Health Connect", so an Android relay with no device_model used to
+    resolve to brand Garmin - filing every Health Connect source under a maker the
+    user may not own.
+    """
+    from app.schemas.enums import ProviderName
+    from app.utils.device_registry import resolve_brand
+
+    assert resolve_brand(ProviderName.GOOGLE, None, "Health Connect") == "Health Connect"
+    assert resolve_brand(ProviderName.GOOGLE, None, "healthconnect") == "Health Connect"
+    # Garmin Connect still resolves to Garmin.
+    assert resolve_brand(ProviderName.APPLE, None, "Garmin Connect") == "Garmin"
+    assert resolve_brand(ProviderName.APPLE, None, "Connect") == "Garmin"

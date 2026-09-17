@@ -10,6 +10,7 @@ from .dashboard import router as dashboard_router
 from .data_sources import router as data_sources_router
 from .deprecated_webhooks import router as deprecated_webhooks_router
 from .developers import router as developers_router
+from .devices import router as devices_router
 from .events import router as events_router
 from .health_scores import router as health_scores_router
 from .import_xml import router as import_xml_router
@@ -68,6 +69,7 @@ v1_router.include_router(config_router, tags=["Internal: Config"])
 v1_router.include_router(archival_router, tags=["Internal: Data Lifecycle"])
 v1_router.include_router(seed_data_router, tags=["Internal: Seed Data"])
 v1_router.include_router(priorities_router, tags=["Internal: Priorities"])
+v1_router.include_router(devices_router, tags=["Internal: Devices"])
 
 # --- System: provider webhooks ---
 v1_router.include_router(oura_webhooks_router, prefix="/oura/webhooks", tags=["System: Oura Webhooks"])

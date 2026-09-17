@@ -40,6 +40,12 @@ ANDROID_PACKAGE_BRANDS: dict[str, str] = {
 # Substring match (case-insensitive) against the `source` string, e.g. Apple
 # HealthKit source names like "Oura", "WHOOP", "Connect" (Garmin Connect).
 SOURCE_NAME_BRANDS: tuple[tuple[str, str], ...] = (
+    # "health connect" must precede the bare "connect" below, which is there to catch
+    # Garmin Connect. Without it, a Health Connect source name with no device_model
+    # resolves to brand "Garmin" - the substring matches - and every Android relay
+    # gets filed under a maker the user may not own.
+    ("health connect", "Health Connect"),
+    ("healthconnect", "Health Connect"),
     ("oura", "Oura"),
     ("whoop", "Whoop"),
     ("zepp", "Zepp"),

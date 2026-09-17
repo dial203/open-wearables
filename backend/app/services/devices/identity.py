@@ -192,6 +192,39 @@ def claims_from_garmin_summary(summary_id: str | None) -> list[IdentityClaim]:
     return [claim] if claim else []
 
 
+# Values that appear in `source` but name the integration rather than a writing app.
+# Google stamps every row with one constant (GOOGLE_HEALTH_API_SOURCE) regardless of
+# which app wrote it, so on that route the column carries no device information at all
+# unless it happens to hold a real package name.
+_PROVIDER_LITERALS: frozenset[str] = frozenset(
+    {
+        "google_health_api",
+        "google_health",
+        "health_connect",
+        "apple_health_sdk",
+        "healthkit",
+        "api_response",
+        "webhook",
+    }
+)
+
+# Routes whose `source` can hold a writing app's identifier at all.
+_WRITER_ID_ROUTES: frozenset[str] = frozenset(
+    {ProviderName.GOOGLE.value, ProviderName.APPLE.value, ProviderName.SAMSUNG.value}
+)
+
+
+def _is_writer_id(provider_value: str, source: str) -> bool:
+    """Whether `source` names an app that wrote the data, rather than the integration."""
+    if provider_value not in _WRITER_ID_ROUTES:
+        return False
+    normalized = source.strip().casefold()
+    if normalized in _PROVIDER_LITERALS:
+        return False
+    # A provider's own key ("google", "apple") is the integration, not a writer.
+    return normalized != provider_value
+
+
 def claims_from_data_source(
     provider: ProviderName | str,
     device_model: str | None,
@@ -209,9 +242,10 @@ def claims_from_data_source(
 
     # A Health Connect / HealthKit writer id, which only these routes carry. Elsewhere
     # `source` is the provider's own literal ("garmin", "google_health_api") and says
-    # nothing about a device, so claiming it would give every user of that provider one
-    # shared identity value.
-    if source and provider_value in (ProviderName.GOOGLE.value, ProviderName.APPLE.value, ProviderName.SAMSUNG.value):
+    # nothing about a device, so claiming it would give every one of that user's
+    # devices on that route the same identity value - noise at best, and a grouping
+    # key that means "same provider" if it were ever promoted.
+    if source and _is_writer_id(provider_value, source):
         kind = (
             DeviceIdentityKind.HEALTH_CONNECT_PACKAGE
             if provider_value == ProviderName.GOOGLE.value
