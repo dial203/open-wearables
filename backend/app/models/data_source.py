@@ -5,7 +5,7 @@ from sqlalchemy import Index, text
 from sqlalchemy.orm import Mapped
 
 from app.database import BaseDbModel
-from app.mappings import FKUser, FKUserConnection, OneToMany, PrimaryKey, str_32, str_50, str_100
+from app.mappings import FKDeviceOptional, FKUser, FKUserConnection, OneToMany, PrimaryKey, str_32, str_50, str_100
 from app.schemas.enums import ProviderName
 
 if TYPE_CHECKING:
@@ -49,6 +49,17 @@ class DataSource(BaseDbModel):
     source: Mapped[str_100 | None]
     device_type: Mapped[str_32 | None]
     original_source_name: Mapped[str_100 | None]
+
+    # The physical unit this source is attributed to, once one is known. NULL means
+    # unattributed, which is a normal resting state rather than an error: detection
+    # only groups on provider-issued identifiers, so a source whose provider reports
+    # none waits for a person to link it. ON DELETE SET NULL - removing a device must
+    # never remove ingested data.
+    #
+    # This does not replace device_model/source. Those stay exactly as the provider
+    # sent them, because they are the record of what the provider claimed; device_id
+    # is our interpretation of it, and the two have to stay separable.
+    device_id: Mapped[FKDeviceOptional]
 
     event_records: Mapped[OneToMany["EventRecord"]]
     data_points: Mapped[OneToMany["DataPointSeries"]]

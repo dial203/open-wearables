@@ -9,6 +9,14 @@ from .data_granularity import (
     DataGranularity,
     Resolution,
 )
+from .device_registry import (
+    STRONG_IDENTITY_KINDS,
+    DeviceHistoryAction,
+    DeviceIdentityKind,
+    IdentityConfidence,
+    LabelSource,
+    LinkProposalStatus,
+)
 from .device_type import (
     DEFAULT_DEVICE_TYPE_PRIORITY,
     DeviceType,
@@ -43,6 +51,12 @@ from .workout_types import (
 
 __all__ = [
     "DeviceType",
+    "DeviceIdentityKind",
+    "IdentityConfidence",
+    "STRONG_IDENTITY_KINDS",
+    "LabelSource",
+    "DeviceHistoryAction",
+    "LinkProposalStatus",
     "DEFAULT_DEVICE_TYPE_PRIORITY",
     "infer_device_type_from_model",
     "infer_device_type_from_source_name",
