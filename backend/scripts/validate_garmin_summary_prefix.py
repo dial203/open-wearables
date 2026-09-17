@@ -39,10 +39,37 @@ from __future__ import annotations
 import argparse
 import sys
 from collections import defaultdict
+from dataclasses import dataclass, field
 from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
+
+
+@dataclass
+class PrefixStats:
+    """What one summaryId prefix co-occurs with, across a user's records.
+
+    A dataclass rather than a dict because the fields are not the same shape -
+    three sets and a counter - and a dict annotation that says otherwise is either
+    wrong or has to widen to the point of saying nothing.
+    """
+
+    data_sources: set[UUID] = field(default_factory=set)
+    models: set[str | None] = field(default_factory=set)
+    categories: set[str] = field(default_factory=set)
+    count: int = 0
+
+    def add(self, data_source_id: UUID, device_model: str | None, category: str) -> None:
+        self.data_sources.add(data_source_id)
+        self.models.add(device_model)
+        self.categories.add(category)
+        self.count += 1
+
+    @property
+    def named_models(self) -> set[str]:
+        """Models excluding the NULLs, which say nothing about which device this is."""
+        return {m for m in self.models if m}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,20 +112,14 @@ def main(argv: list[str] | None = None) -> int:
 
         # prefix -> what it co-occurs with. If a prefix is per-device, its records
         # should concentrate in one data source and one device_model.
-        by_user: dict[UUID, dict[str, dict[str, set]]] = defaultdict(
-            lambda: defaultdict(lambda: {"data_sources": set(), "models": set(), "categories": set(), "count": 0})
-        )
+        by_user: dict[UUID, dict[str, PrefixStats]] = defaultdict(lambda: defaultdict(PrefixStats))
         skipped = 0
         for user_id, data_source_id, device_model, external_id, category in rows:
             prefix = garmin_summary_prefix(external_id)
             if prefix is None:
                 skipped += 1
                 continue
-            bucket = by_user[user_id][prefix]
-            bucket["data_sources"].add(data_source_id)
-            bucket["models"].add(device_model)
-            bucket["categories"].add(category)
-            bucket["count"] += 1
+            by_user[user_id][prefix].add(data_source_id, device_model, category)
 
         _report(by_user, len(rows), skipped, verbose=args.verbose)
 
@@ -110,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         session.close()
 
 
-def _report(by_user: dict, total_rows: int, skipped: int, verbose: bool) -> None:
+def _report(by_user: dict[UUID, dict[str, PrefixStats]], total_rows: int, skipped: int, verbose: bool) -> None:
     print(f"Scanned {total_rows} Garmin event records ({skipped} with no parseable summaryId prefix).\n")
 
     single_prefix_users = 0
@@ -119,16 +140,16 @@ def _report(by_user: dict, total_rows: int, skipped: int, verbose: bool) -> None
         if len(prefixes) == 1:
             single_prefix_users += 1
         print(f"user {user_id}: {len(prefixes)} prefix(es)")
-        for prefix, info in sorted(prefixes.items(), key=lambda kv: -kv[1]["count"]):
-            models = {m for m in info["models"] if m}
+        for prefix, info in sorted(prefixes.items(), key=lambda kv: -kv[1].count):
+            models = info.named_models
             if len(models) > 1:
                 multi_model_prefixes += 1
             if verbose or len(prefixes) > 1:
                 print(
-                    f"  {prefix:16} records={info['count']:<7} "
-                    f"data_sources={len(info['data_sources'])} "
+                    f"  {prefix:16} records={info.count:<7} "
+                    f"data_sources={len(info.data_sources)} "
                     f"models={sorted(models) or ['-']} "
-                    f"categories={sorted(info['categories'])}"
+                    f"categories={sorted(info.categories)}"
                 )
         print()
 
@@ -161,7 +182,7 @@ def _report(by_user: dict, total_rows: int, skipped: int, verbose: bool) -> None
         )
 
 
-def _record_claims(session: Session, by_user: dict) -> int:
+def _record_claims(session: Session, by_user: dict[UUID, dict[str, PrefixStats]]) -> int:
     """Write each prefix as a WEAK claim on the device behind its data sources."""
     from app.models import DataSource
     from app.repositories.device_repository import DeviceRepository
@@ -178,7 +199,7 @@ def _record_claims(session: Session, by_user: dict) -> int:
                 value=prefix,
                 confidence=IdentityConfidence.WEAK,
             )
-            for data_source_id in info["data_sources"]:
+            for data_source_id in info.data_sources:
                 data_source = session.get(DataSource, data_source_id)
                 if data_source is None or data_source.device_id is None:
                     continue
