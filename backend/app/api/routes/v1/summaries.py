@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 
 from app.database import DbSession
-from app.schemas.enums import TimelineBucket, TimelineGroupBy
+from app.schemas.enums import ProviderName, TimelineBucket, TimelineGroupBy
 from app.schemas.responses.activity import (
     ActivitySummary,
     BodySummary,
@@ -16,6 +16,7 @@ from app.schemas.utils import PaginatedResponse
 from app.services import ApiKeyDep, system_info_service
 from app.services.summaries_service import summaries_service
 from app.utils.dates import DateTimeQueryParam, parse_query_datetime, parse_query_end_datetime
+from app.utils.pagination import DEFAULT_PAGE_SIZE, PageLimitQueryParam
 
 router = APIRouter()
 
@@ -28,7 +29,7 @@ def get_activity_summary(
     db: DbSession,
     _api_key: ApiKeyDep,
     cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=400)] = 50,
+    limit: PageLimitQueryParam = DEFAULT_PAGE_SIZE,
     sort_order: Annotated[str, Query(pattern="^(asc|desc)$")] = "asc",
     filter_by_priority: Annotated[
         bool,
@@ -54,7 +55,7 @@ def get_sleep_summary(
     db: DbSession,
     _api_key: ApiKeyDep,
     cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=400)] = 50,
+    limit: PageLimitQueryParam = DEFAULT_PAGE_SIZE,
     filter_by_priority: Annotated[
         bool,
         Query(description="Collapse to the highest-priority source per day. Set false to return every source."),
@@ -76,7 +77,7 @@ def get_recovery_summary(
     db: DbSession,
     _api_key: ApiKeyDep,
     cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    limit: PageLimitQueryParam = DEFAULT_PAGE_SIZE,
     filter_by_priority: Annotated[
         bool,
         Query(description="Collapse to the highest-priority source per day. Set false to return every source."),
@@ -152,6 +153,7 @@ def get_data_timeline(
     end_date: DateTimeQueryParam | None = None,
     bucket: Annotated[TimelineBucket, Query(description="Bucket width.")] = TimelineBucket.DAY,
     group_by: Annotated[TimelineGroupBy, Query(description="What each series counts.")] = TimelineGroupBy.PROVIDER,
+    provider: ProviderName | None = None,
 ) -> UserDataTimelineResponse:
     """Returns when a user has data, as counts per time bucket.
 
@@ -164,4 +166,6 @@ def get_data_timeline(
     """
     start_datetime = parse_query_datetime(start_date) if start_date is not None else None
     end_datetime = parse_query_end_datetime(end_date) if end_date is not None else None
-    return system_info_service.get_user_data_timeline(db, user_id, bucket, group_by, start_datetime, end_datetime)
+    return system_info_service.get_user_data_timeline(
+        db, user_id, bucket, group_by, start_datetime, end_datetime, provider
+    )

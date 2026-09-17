@@ -54,6 +54,7 @@ class Workout(BaseModel):
         description="Whether a raw FIT file is stored for this workout and downloadable "
         "at /users/{user_id}/events/workouts/{workout_id}/fit (Garmin only).",
     )
+    segments: list[dict] | None = None
 
 
 class Macros(BaseModel):
@@ -90,6 +91,7 @@ class SleepSession(BaseModel):
     source: SourceMetadata
     duration_seconds: int
     sleep_duration_seconds: int | None = None
+    time_in_bed_seconds: int | None = None
     efficiency_percent: float | None = None
     stages: SleepStagesSummary | None = None
     sleep_stage_intervals: list[SleepStage] | None = None

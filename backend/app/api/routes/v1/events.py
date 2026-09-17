@@ -4,7 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.database import DbSession
-from app.schemas.model_crud.activities import EventRecordQueryParams, WorkoutInclude
+from app.schemas.enums import ProviderName, WorkoutType
+from app.schemas.model_crud.activities import EventRecordQueryParams, SleepInclude, WorkoutInclude
 from app.schemas.responses.activity import (
     MenstrualCycleRecord,
     SleepSession,
@@ -14,6 +15,7 @@ from app.schemas.utils import PaginatedResponse
 from app.services import ApiKeyDep
 from app.services.event_record_service import event_record_service
 from app.utils.dates import DateTimeQueryParam, parse_query_datetime, parse_query_end_datetime
+from app.utils.pagination import DEFAULT_PAGE_SIZE, PageLimitQueryParam
 
 router = APIRouter()
 
@@ -27,8 +29,18 @@ def list_workouts(
     _api_key: ApiKeyDep,
     include: Annotated[list[WorkoutInclude], Query(default_factory=list)],
     record_type: str | None = None,
+    workout_type: Annotated[
+        WorkoutType | None,
+        Query(
+            alias="type", description="Exact normalized workout type. Unlike `record_type`, does not substring-match."
+        ),
+    ] = None,
     cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    limit: PageLimitQueryParam = DEFAULT_PAGE_SIZE,
+    provider: ProviderName | None = None,
+    source: str | None = None,
+    device_model: str | None = None,
+    data_source_id: UUID | None = None,
 ) -> PaginatedResponse[Workout]:
     """Returns workout sessions."""
     params = EventRecordQueryParams(
@@ -37,8 +49,23 @@ def list_workouts(
         cursor=cursor,
         limit=limit,
         record_type=record_type,
+        workout_type=workout_type,
+        provider=provider,
+        source=source,
+        device_model=device_model,
+        data_source_id=data_source_id,
     )
     return event_record_service.get_workouts(db, user_id, params, include=include)
+
+
+@router.get("/users/{user_id}/events/workouts/types")
+def list_workout_types(
+    user_id: UUID,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> list[str]:
+    """Returns the workout types this user actually has, for populating a filter."""
+    return event_record_service.get_workout_types(db, user_id)
 
 
 @router.get("/users/{user_id}/events/sleep")
@@ -48,8 +75,13 @@ def list_sleep_sessions(
     end_date: DateTimeQueryParam,
     db: DbSession,
     _api_key: ApiKeyDep,
+    include: Annotated[list[SleepInclude], Query(default_factory=list)],
     cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    limit: PageLimitQueryParam = DEFAULT_PAGE_SIZE,
+    provider: ProviderName | None = None,
+    source: str | None = None,
+    device_model: str | None = None,
+    data_source_id: UUID | None = None,
     filter_by_priority: Annotated[
         bool,
         Query(
@@ -64,8 +96,14 @@ def list_sleep_sessions(
         end_datetime=parse_query_end_datetime(end_date),
         cursor=cursor,
         limit=limit,
+        provider=provider,
+        source=source,
+        device_model=device_model,
+        data_source_id=data_source_id,
     )
-    return event_record_service.get_sleep_sessions(db, user_id, params, filter_by_priority=filter_by_priority)
+    return event_record_service.get_sleep_sessions(
+        db, user_id, params, filter_by_priority=filter_by_priority, include=include
+    )
 
 
 @router.get("/users/{user_id}/events/workouts/{workout_id}/fit")
@@ -101,7 +139,11 @@ def list_menstrual_cycles(
     db: DbSession,
     _api_key: ApiKeyDep,
     cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    limit: PageLimitQueryParam = DEFAULT_PAGE_SIZE,
+    provider: ProviderName | None = None,
+    source: str | None = None,
+    device_model: str | None = None,
+    data_source_id: UUID | None = None,
 ) -> PaginatedResponse[MenstrualCycleRecord]:
     """Returns menstrual cycle records."""
     params = EventRecordQueryParams(
@@ -109,6 +151,10 @@ def list_menstrual_cycles(
         end_datetime=parse_query_end_datetime(end_date),
         cursor=cursor,
         limit=limit,
+        provider=provider,
+        source=source,
+        device_model=device_model,
+        data_source_id=data_source_id,
     )
     return event_record_service.get_menstrual_cycles(db, user_id, params)
 
