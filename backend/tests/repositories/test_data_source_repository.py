@@ -123,7 +123,7 @@ class TestCanonicalBrandWins:
             # Oura relayed through Apple Health: the package id names the brand.
             (ProviderName.APPLE, "com.oura.oura", None, "Oura"),
             # Whoop relayed through Google Health Connect.
-            (ProviderName.GOOGLE, "com.whoop.android", None, "Whoop"),
+            (ProviderName.HEALTH_CONNECT, "com.whoop.android", None, "Whoop"),
             # Apple's own data inside Apple Health stays Apple.
             (ProviderName.APPLE, APPLE_HEALTH_SOURCE, "Watch7,12", "Apple"),
             # A direct provider read: the provider itself is the brand.

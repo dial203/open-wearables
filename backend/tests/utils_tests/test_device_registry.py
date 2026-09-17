@@ -16,18 +16,18 @@ P = ProviderName
 @pytest.mark.parametrize(
     ("provider", "device_model", "source", "expected"),
     [
-        # Google Health / Health Connect: Android package identifies the brand
-        (P.GOOGLE, None, "com.ouraring.oura", "Oura"),
-        (P.GOOGLE, None, "com.whoop.android", "Whoop"),
-        (P.GOOGLE, None, "com.fitbit.FitbitMobile", "Fitbit"),
-        (P.GOOGLE, None, "com.garmin.android.apps.connectmobile", "Garmin"),
-        (P.GOOGLE, None, "com.sec.android.app.shealth", "Samsung Health"),
-        (P.GOOGLE, "SM-S901U", "com.android.healthconnect.phone.jdef455", "Health Connect"),
-        # Google 24/7 stream: source is the constant, brand comes from device_model
-        (P.GOOGLE, "FITBIT", "google_health_api", "Fitbit"),
-        (P.GOOGLE, "Versa 4", "google_health_api", "Fitbit"),
-        (P.GOOGLE, "Google Pixel Watch 4 (45mm)", "google_health_api", "Google"),
-        (P.GOOGLE, "HEALTH_CONNECT", "google_health_api", "Health Connect"),
+        # Health Connect (Android SDK push): Android package identifies the brand
+        (P.HEALTH_CONNECT, None, "com.ouraring.oura", "Oura"),
+        (P.HEALTH_CONNECT, None, "com.whoop.android", "Whoop"),
+        (P.HEALTH_CONNECT, None, "com.fitbit.FitbitMobile", "Fitbit"),
+        (P.HEALTH_CONNECT, None, "com.garmin.android.apps.connectmobile", "Garmin"),
+        (P.HEALTH_CONNECT, None, "com.sec.android.app.shealth", "Samsung Health"),
+        (P.HEALTH_CONNECT, "SM-S901U", "com.android.healthconnect.phone.jdef455", "Health Connect"),
+        # Google Health API 24/7 stream: source is the constant, brand comes from device_model
+        (P.GOOGLE_HEALTH, "FITBIT", "google_health_api", "Fitbit"),
+        (P.GOOGLE_HEALTH, "Versa 4", "google_health_api", "Fitbit"),
+        (P.GOOGLE_HEALTH, "Google Pixel Watch 4 (45mm)", "google_health_api", "Google"),
+        (P.GOOGLE_HEALTH, "HEALTH_CONNECT", "google_health_api", "Health Connect"),
         # Apple HealthKit: source app name identifies the underlying brand
         (P.APPLE, "iPhone10,5", "Oura", "Oura"),
         (P.APPLE, "iPhone18,1", "WHOOP", "Whoop"),

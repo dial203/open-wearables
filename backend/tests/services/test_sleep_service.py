@@ -26,7 +26,7 @@ from app.schemas.providers.mobile_sdk import (
     SleepStateStage,
     SyncRequest,
 )
-from app.services.apple.healthkit.sleep_service import (
+from app.services.sdk.sleep_service import (
     _calculate_final_metrics,
     finish_sleep,
     handle_sleep_data,
@@ -407,8 +407,8 @@ class TestCalculateFinalMetrics:
 class TestFinishSleep:
     """Tests for finish_sleep with different stage compositions."""
 
-    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
-    @patch("app.services.apple.healthkit.sleep_service.delete_sleep_state")
+    @patch("app.services.sdk.sleep_service.event_record_service")
+    @patch("app.services.sdk.sleep_service.delete_sleep_state")
     def test_finish_sleep_with_sleeping_stages(
         self,
         mock_delete_state: MagicMock,
@@ -472,8 +472,8 @@ class TestFinishSleep:
         assert len(detail.sleep_stages) == 3
         assert all(s.stage == SleepStageType.SLEEPING for s in detail.sleep_stages)
 
-    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
-    @patch("app.services.apple.healthkit.sleep_service.delete_sleep_state")
+    @patch("app.services.sdk.sleep_service.event_record_service")
+    @patch("app.services.sdk.sleep_service.delete_sleep_state")
     def test_finish_sleep_with_detailed_stages(
         self,
         mock_delete_state: MagicMock,
@@ -544,8 +544,8 @@ class TestHandleSleepDataIntegration:
     """Integration tests for handle_sleep_data with real payload structures."""
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
-    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
-    @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
+    @patch("app.services.sdk.sleep_service.event_record_service")
+    @patch("app.services.sdk.sleep_service.get_redis_client")
     def test_handle_real_payload_sleeping_stages(
         self,
         mock_redis_func: MagicMock,
@@ -611,8 +611,8 @@ class TestHandleSleepDataIntegration:
         assert phone.device_model == "iPhone15,2"
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
-    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
-    @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
+    @patch("app.services.sdk.sleep_service.event_record_service")
+    @patch("app.services.sdk.sleep_service.get_redis_client")
     def test_handle_detailed_stages_payload(
         self,
         mock_redis_func: MagicMock,
@@ -739,8 +739,8 @@ class TestSessionsAreScopedPerDevice:
         }
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
-    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
-    @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
+    @patch("app.services.sdk.sleep_service.event_record_service")
+    @patch("app.services.sdk.sleep_service.get_redis_client")
     def test_an_earlier_source_does_not_swallow_the_watch(
         self,
         mock_redis_func: MagicMock,
@@ -821,8 +821,8 @@ class TestSessionsAreScopedPerDevice:
         assert result["applied"] == 4
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
-    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
-    @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
+    @patch("app.services.sdk.sleep_service.event_record_service")
+    @patch("app.services.sdk.sleep_service.get_redis_client")
     def test_same_name_on_two_devices_stays_separate(
         self,
         mock_redis_func: MagicMock,
@@ -877,8 +877,8 @@ class TestSessionsAreScopedPerDevice:
         assert states["Watch7,12"].light_seconds == 0
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
-    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
-    @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
+    @patch("app.services.sdk.sleep_service.event_record_service")
+    @patch("app.services.sdk.sleep_service.get_redis_client")
     def test_each_stream_resumes_its_own_stored_session(
         self,
         mock_redis_func: MagicMock,
@@ -964,8 +964,8 @@ class TestNoIntermediateRedisSaves:
     """
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
-    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
-    @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
+    @patch("app.services.sdk.sleep_service.event_record_service")
+    @patch("app.services.sdk.sleep_service.get_redis_client")
     def test_redis_set_called_once_per_batch(
         self,
         mock_redis_func: MagicMock,
@@ -1024,8 +1024,8 @@ class TestHistoricalBulkUploadMerging:
     """
 
     @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
-    @patch("app.services.apple.healthkit.sleep_service.event_record_service")
-    @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
+    @patch("app.services.sdk.sleep_service.event_record_service")
+    @patch("app.services.sdk.sleep_service.get_redis_client")
     def test_second_payload_merges_with_adjacent_db_record(
         self,
         mock_redis_func: MagicMock,

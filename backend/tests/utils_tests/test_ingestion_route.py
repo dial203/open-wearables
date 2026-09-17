@@ -19,18 +19,19 @@ from app.utils.device_registry import resolve_ingestion_route
         (ProviderName.APPLE, "Oura", IngestionRoute.AGGREGATOR),
         (ProviderName.APPLE, "Whoop", IngestionRoute.AGGREGATOR),
         (ProviderName.APPLE, "Garmin", IngestionRoute.AGGREGATOR),
-        (ProviderName.GOOGLE, "Oura", IngestionRoute.AGGREGATOR),
-        (ProviderName.GOOGLE, "Fitbit", IngestionRoute.AGGREGATOR),
+        (ProviderName.HEALTH_CONNECT, "Oura", IngestionRoute.AGGREGATOR),
+        (ProviderName.GOOGLE_HEALTH, "Fitbit", IngestionRoute.AGGREGATOR),
         (ProviderName.SAMSUNG, "Polar", IngestionRoute.AGGREGATOR),
         (ProviderName.STRAVA, "Garmin", IngestionRoute.AGGREGATOR),
         # A platform carrying its own brand is still first-party.
         (ProviderName.APPLE, "Apple", IngestionRoute.DIRECT),
-        (ProviderName.GOOGLE, "Google", IngestionRoute.DIRECT),
+        (ProviderName.GOOGLE_HEALTH, "Google", IngestionRoute.DIRECT),
+        (ProviderName.HEALTH_CONNECT, "Health Connect", IngestionRoute.DIRECT),
         (ProviderName.SAMSUNG, "Samsung", IngestionRoute.DIRECT),
         (ProviderName.STRAVA, "Strava", IngestionRoute.DIRECT),
         # Conservative: never claim "relayed" without a brand to name.
         (ProviderName.APPLE, None, IngestionRoute.DIRECT),
-        (ProviderName.GOOGLE, "", IngestionRoute.DIRECT),
+        (ProviderName.GOOGLE_HEALTH, "", IngestionRoute.DIRECT),
     ],
 )
 def test_resolve_ingestion_route(provider: ProviderName, brand: str | None, expected: IngestionRoute) -> None:

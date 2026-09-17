@@ -86,7 +86,8 @@ PROVIDER_BRANDS: dict[ProviderName, str] = {
     ProviderName.APPLE: "Apple",
     ProviderName.SAMSUNG: "Samsung",
     ProviderName.GARMIN: "Garmin",
-    ProviderName.GOOGLE: "Google",
+    ProviderName.GOOGLE_HEALTH: "Google",
+    ProviderName.HEALTH_CONNECT: "Health Connect",
     ProviderName.POLAR: "Polar",
     ProviderName.SUUNTO: "Suunto",
     ProviderName.WHOOP: "Whoop",
@@ -104,7 +105,8 @@ PROVIDER_BRANDS: dict[ProviderName, str] = {
 AGGREGATOR_PROVIDERS: frozenset[ProviderName] = frozenset(
     {
         ProviderName.APPLE,  # Apple Health / HealthKit
-        ProviderName.GOOGLE,  # Google Health / Health Connect
+        ProviderName.GOOGLE_HEALTH,  # Google Health API (cloud)
+        ProviderName.HEALTH_CONNECT,  # Android Health Connect (on-device SDK)
         ProviderName.SAMSUNG,  # Samsung Health
         ProviderName.STRAVA,  # activity platform fed by other devices
     }
