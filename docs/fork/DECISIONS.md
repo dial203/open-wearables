@@ -27,6 +27,21 @@ Template:
 > created, so they record *what* diverges and why, but not always the full
 > discussion. Entries added from here on should be written at the time of the change.
 
+## Fork tracking: generated report vs the upstream-sync skill
+
+- **Area**: tooling, docs
+- **Status**: active
+- **On conflict**: keep both; they are different halves
+- **Why**: `.ai/skills/upstream-sync/SKILL.md` (added on main) is the *procedure* plus a
+  hand-written inventory of fork-local feature areas and the kind of upstream change that
+  breaks each. `make fork-diff` generates `docs/fork/DIVERGENCE.md`, the mechanical
+  per-file view. Neither replaces the other: the inventory explains *how* an area breaks
+  and cannot be derived; the generated report catches a file that has quietly started
+  diverging and was never added to the inventory. The skill's Compare step now points at
+  `make fork-setup` / `fork-diff` so there is one remote setup rather than two, and the
+  `upstream-sync/<date>` tags give the skill's verification step a base to diff against.
+  Both were written against the same 0.9 sync, independently.
+
 ## Device registry: device / device_identity / device_history / device_link_proposal
 
 - **Area**: backend, frontend

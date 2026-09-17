@@ -22,9 +22,9 @@ from app.database import DbSession
 from app.models import DataSource
 from app.repositories.device_repository import DeviceRepository
 from app.schemas.enums import ProviderName
-from app.services.apple.healthkit.device_resolution import extract_device_info
 from app.services.devices.detection import DeviceDetectionService
 from app.services.devices.identity import claims_from_sdk_source
+from app.services.sdk.device_resolution import extract_device_info
 
 log = getLogger(__name__)
 

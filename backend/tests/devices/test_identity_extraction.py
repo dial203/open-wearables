@@ -124,9 +124,15 @@ class TestDataSourceBaseline:
         claims = claims_from_data_source(ProviderName.GARMIN, "fenix 8", "garmin")
         assert _by_kind(claims, DeviceIdentityKind.MODEL_STRING).value == "fenix 8"
 
-    def test_google_source_is_a_health_connect_package(self) -> None:
-        claims = claims_from_data_source(ProviderName.GOOGLE, None, "com.ouraring.oura")
-        assert _by_kind(claims, DeviceIdentityKind.HEALTH_CONNECT_PACKAGE).value == "com.ouraring.oura"
+    def test_android_routes_claim_the_writing_package(self) -> None:
+        """Both Android routes carry a package name, so both claim it the same way.
+
+        Upstream split the old `google` provider into GOOGLE_HEALTH (the cloud API)
+        and HEALTH_CONNECT (on-device); the writer id means the same thing on each.
+        """
+        for route in (ProviderName.HEALTH_CONNECT, ProviderName.GOOGLE_HEALTH):
+            claims = claims_from_data_source(route, None, "com.ouraring.oura")
+            assert _by_kind(claims, DeviceIdentityKind.HEALTH_CONNECT_PACKAGE).value == "com.ouraring.oura"
 
     def test_direct_provider_source_literal_is_not_claimed(self) -> None:
         """For a direct API the `source` column is the provider's own literal.

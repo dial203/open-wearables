@@ -6,12 +6,12 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-09-17 14:57 UTC |
-| Our ref | `HEAD` — 8f09630 (2026-09-17) feat(frontend): device management UI |
+| Generated | 2026-09-17 18:07 UTC |
+| Our ref | `HEAD` — 4c2577d (2026-09-17) Merge remote-tracking branch 'origin/main' into claude/ecstatic-ptolemy-o69q85 |
 | Upstream `main` | ff8527a (2026-09-17) chore: update OpenWearables to 0.9 (#1666) |
-| Last common commit | c6ef361 (2026-09-15) fix: Google Health API improvements (#1571) |
-| Commits we are ahead | 169 |
-| Upstream commits not merged | 24 |
+| Last common commit | ff8527a (2026-09-17) chore: update OpenWearables to 0.9 (#1666) |
+| Commits we are ahead | 174 |
+| Upstream commits not merged | 0 |
 | Latest sync tag | _none yet_ |
 
 ## How to use this
@@ -28,17 +28,14 @@ git diff upstream-sync/<date>..HEAD
 git show upstream/main:<path>
 
 # which of our commits touched a file
-git log --oneline c6ef36171187c900781182f1b34e7905f2a60f2d..HEAD -- <path>
+git log --oneline ff8527a52ad8a96cd1ebe8c19344295c934ae9dc..HEAD -- <path>
 ```
 
 Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md).
 
-> **24 upstream commits are not merged yet.** The table below compares against the
-> last common commit, so it does not include changes upstream has made since.
-
 ## Diverged files
 
-122 files: 55 fork-only, 67 modified.
+127 files: 59 fork-only, 68 modified.
 
 ### `backend`
 
@@ -84,8 +81,6 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/schemas/responses/activity/summaries.py` | modified | +8/-0 |
 | `backend/app/schemas/utils/metadata.py` | modified | +118/-4 |
 | `backend/app/services/apple/apple_xml/xml_service.py` | modified | +34/-17 |
-| `backend/app/services/apple/healthkit/import_service.py` | modified | +73/-3 |
-| `backend/app/services/apple/healthkit/sleep_service.py` | modified | +155/-59 |
 | `backend/app/services/device_service.py` | fork-only | — |
 | `backend/app/services/devices/__init__.py` | fork-only | — |
 | `backend/app/services/devices/detection.py` | fork-only | — |
@@ -98,6 +93,8 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/services/providers/oura/data_247.py` | modified | +135/-2 |
 | `backend/app/services/providers/polar/data_247.py` | modified | +4/-0 |
 | `backend/app/services/raw_payload_storage.py` | modified | +80/-13 |
+| `backend/app/services/sdk/import_service.py` | modified | +73/-3 |
+| `backend/app/services/sdk/sleep_service.py` | modified | +155/-59 |
 | `backend/app/services/summaries_service.py` | modified | +93/-12 |
 | `backend/app/services/timeseries_service.py` | modified | +5/-6 |
 | `backend/app/services/user_connection_service.py` | modified | +25/-1 |
@@ -111,11 +108,13 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/migrations/versions/2026_08_28_1621-92b3c62b7c00_merge_upstream_health_score_fk_rename_.py` | fork-only | — |
 | `backend/migrations/versions/2026_09_14_1522-923694d3b177_merge_upstream_0_8_into_fork.py` | fork-only | — |
 | `backend/migrations/versions/2026_09_17_1430-d3f1a8c2e5b4_device_registry.py` | fork-only | — |
+| `backend/scripts/check_patch_targets.py` | fork-only | — |
 | `backend/scripts/data_migrations/reclassify_data_source_device_type.py` | fork-only | — |
 | `backend/scripts/data_migrations/split_oura_sources_by_ring_setup.py` | fork-only | — |
 | `backend/scripts/start/app.sh` | modified | +7/-2 |
 | `backend/scripts/validate_garmin_summary_prefix.py` | fork-only | — |
 | `backend/tests/api/v1/test_devices.py` | fork-only | — |
+| `backend/tests/api/v1/test_summary_priority_defaults.py` | fork-only | — |
 | `backend/tests/constants/__init__.py` | fork-only | — |
 | `backend/tests/constants/test_sleep_stage_mapping.py` | fork-only | — |
 | `backend/tests/devices/__init__.py` | fork-only | — |
@@ -144,6 +143,8 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | File | Status | +/- |
 |---|---|---|
 | `docs/dev-guides/consuming-all-data.md` | fork-only | — |
+| `docs/dev-guides/device-registry.mdx` | fork-only | — |
+| `docs/docs.json` | modified | +1/-0 |
 ### `frontend`
 
 | File | Status | +/- |
@@ -183,6 +184,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 
 | File | Status | +/- |
 |---|---|---|
+| `.ai/skills/upstream-sync/SKILL.md` | fork-only | — |
 | `.github/workflows/build.yml` | fork-only | — |
 | `.github/workflows/pr-review.yml` | fork-only | — |
 | `.gitignore` | modified | +3/-0 |

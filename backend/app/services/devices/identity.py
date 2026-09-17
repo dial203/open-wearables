@@ -210,8 +210,16 @@ _PROVIDER_LITERALS: frozenset[str] = frozenset(
 
 # Routes whose `source` can hold a writing app's identifier at all.
 _WRITER_ID_ROUTES: frozenset[str] = frozenset(
-    {ProviderName.GOOGLE.value, ProviderName.APPLE.value, ProviderName.SAMSUNG.value}
+    {
+        ProviderName.HEALTH_CONNECT.value,
+        ProviderName.GOOGLE_HEALTH.value,
+        ProviderName.APPLE.value,
+        ProviderName.SAMSUNG.value,
+    }
 )
+
+# The Android routes, whose writer id is a package name rather than a bundle id.
+_ANDROID_ROUTES: frozenset[str] = frozenset({ProviderName.HEALTH_CONNECT.value, ProviderName.GOOGLE_HEALTH.value})
 
 
 def _is_writer_id(provider_value: str, source: str) -> bool:
@@ -248,7 +256,7 @@ def claims_from_data_source(
     if source and _is_writer_id(provider_value, source):
         kind = (
             DeviceIdentityKind.HEALTH_CONNECT_PACKAGE
-            if provider_value == ProviderName.GOOGLE.value
+            if provider_value in _ANDROID_ROUTES
             else DeviceIdentityKind.HEALTHKIT_BUNDLE
         )
         claims.append(_claim(provider, kind, source, IdentityConfidence.WEAK))

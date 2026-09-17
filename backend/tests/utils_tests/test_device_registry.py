@@ -88,8 +88,8 @@ def test_health_connect_is_not_resolved_as_garmin() -> None:
     from app.schemas.enums import ProviderName
     from app.utils.device_registry import resolve_brand
 
-    assert resolve_brand(ProviderName.GOOGLE, None, "Health Connect") == "Health Connect"
-    assert resolve_brand(ProviderName.GOOGLE, None, "healthconnect") == "Health Connect"
+    assert resolve_brand(ProviderName.HEALTH_CONNECT, None, "Health Connect") == "Health Connect"
+    assert resolve_brand(ProviderName.HEALTH_CONNECT, None, "healthconnect") == "Health Connect"
     # Garmin Connect still resolves to Garmin.
     assert resolve_brand(ProviderName.APPLE, None, "Garmin Connect") == "Garmin"
     assert resolve_brand(ProviderName.APPLE, None, "Connect") == "Garmin"
