@@ -1,0 +1,1050 @@
+import { useMemo, useState } from 'react';
+import {
+  History,
+  Link2,
+  Link2Off,
+  Loader2,
+  Pencil,
+  Plus,
+  PowerOff,
+  Power,
+  Scissors,
+  Sparkles,
+  Merge,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { LoadingSpinner } from '@/components/common/loading-spinner';
+import { ErrorState } from '@/components/common/error-state';
+import {
+  DeviceTypeIcon,
+  deviceTypeInfo,
+} from '@/components/common/device-type';
+import { deviceDisplayName } from '@/lib/utils/device';
+import {
+  useDevices,
+  useCreateDevice,
+  useUpdateDevice,
+  useRetireDevice,
+  useUnlinkDataSource,
+  useSplitDevice,
+  useMergeDevices,
+  useLinkProposals,
+  useRefreshProposals,
+  useDecideProposal,
+  useDeviceHistory,
+} from '@/hooks/api/use-devices';
+import type {
+  Device,
+  DeviceDataSource,
+} from '@/lib/api/services/device.service';
+
+const DEVICE_TYPES = [
+  'chest_strap',
+  'watch',
+  'band',
+  'ring',
+  'phone',
+  'scale',
+  'other',
+  'unknown',
+] as const;
+
+// A stable empty array, so the `?? []` fallback below does not hand useMemo a new
+// identity on every render and re-run the map build for nothing.
+const NO_DEVICES: Device[] = [];
+
+/** What to call a device on screen. The rule itself lives in lib/utils/device. */
+function deviceName(device: Device): string {
+  return deviceDisplayName(
+    { ...device, device_type: String(device.device_type) },
+    deviceTypeInfo(device.device_type).label
+  );
+}
+
+function formatWhen(value: string | null): string {
+  if (!value) return '—';
+  return new Date(value).toLocaleString();
+}
+
+export function DevicesSection({ userId }: { userId: string }) {
+  const [includeRetired, setIncludeRetired] = useState(true);
+  const { data, isLoading, error, refetch } = useDevices(
+    userId,
+    includeRetired
+  );
+  const { data: proposals } = useLinkProposals(userId);
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editing, setEditing] = useState<Device | null>(null);
+  const [splitting, setSplitting] = useState<Device | null>(null);
+  const [merging, setMerging] = useState<Device | null>(null);
+  const [historyFor, setHistoryFor] = useState<Device | 'all' | null>(null);
+
+  const refreshProposals = useRefreshProposals(userId);
+
+  const devices = data?.items ?? NO_DEVICES;
+  const byId = useMemo(() => new Map(devices.map((d) => [d.id, d])), [devices]);
+
+  if (isLoading) return <LoadingSpinner size="lg" />;
+  if (error) {
+    return (
+      <ErrorState
+        title="Could not load devices"
+        message={(error as Error).message}
+        onRetry={() => refetch()}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">Devices</h2>
+          <p className="text-sm text-muted-foreground">
+            The physical units behind this user&apos;s data. Detection groups
+            what a provider itself identifies and leaves the rest for you — an
+            unassigned source is normal, not an error.
+          </p>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={includeRetired}
+              onChange={(e) => setIncludeRetired(e.target.checked)}
+              className="accent-current"
+            />
+            Show retired
+          </label>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refreshProposals.mutate(undefined)}
+            disabled={refreshProposals.isPending}
+            className="gap-2"
+          >
+            {refreshProposals.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            Find matches
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setHistoryFor('all')}
+            className="gap-2"
+          >
+            <History className="h-4 w-4" />
+            History
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => setCreateOpen(true)}
+            className="gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            Add device
+          </Button>
+        </div>
+      </div>
+
+      {!!proposals?.items.length && (
+        <ProposalQueue
+          userId={userId}
+          devices={byId}
+          proposals={proposals.items}
+        />
+      )}
+
+      {devices.length === 0 ? (
+        <Card className="p-8 text-center text-sm text-muted-foreground">
+          No devices yet. They appear as data arrives from a provider that
+          identifies its hardware, or you can add one by hand.
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {devices.map((device) => (
+            <DeviceCard
+              key={device.id}
+              userId={userId}
+              device={device}
+              onEdit={() => setEditing(device)}
+              onSplit={() => setSplitting(device)}
+              onMerge={() => setMerging(device)}
+              onHistory={() => setHistoryFor(device)}
+            />
+          ))}
+        </div>
+      )}
+
+      <CreateDeviceDialog
+        userId={userId}
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+      />
+      <EditDeviceDialog
+        userId={userId}
+        device={editing}
+        onClose={() => setEditing(null)}
+      />
+      <SplitDeviceDialog
+        userId={userId}
+        device={splitting}
+        onClose={() => setSplitting(null)}
+      />
+      <MergeDeviceDialog
+        userId={userId}
+        device={merging}
+        candidates={devices}
+        onClose={() => setMerging(null)}
+      />
+      <HistorySheet
+        userId={userId}
+        target={historyFor}
+        onClose={() => setHistoryFor(null)}
+      />
+    </div>
+  );
+}
+
+function DeviceCard({
+  userId,
+  device,
+  onEdit,
+  onSplit,
+  onMerge,
+  onHistory,
+}: {
+  userId: string;
+  device: Device;
+  onEdit: () => void;
+  onSplit: () => void;
+  onMerge: () => void;
+  onHistory: () => void;
+}) {
+  const retire = useRetireDevice(userId);
+  const unlink = useUnlinkDataSource(userId);
+  const [showClaims, setShowClaims] = useState(false);
+
+  const strongClaims = device.identities.filter(
+    (i) => i.confidence === 'strong'
+  );
+
+  return (
+    <Card className={device.is_active ? 'p-4' : 'p-4 opacity-60'}>
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="mt-0.5 text-muted-foreground">
+          <DeviceTypeIcon deviceType={device.device_type} className="h-5 w-5" />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{deviceName(device)}</span>
+            <Badge variant="outline">
+              {deviceTypeInfo(device.device_type).label}
+            </Badge>
+            {device.label_source === 'manual' && (
+              <Badge
+                variant="secondary"
+                title="Named by hand; detection will not overwrite it"
+              >
+                named
+              </Badge>
+            )}
+            {!device.is_active && (
+              <Badge variant="outline">
+                retired {device.retired_at ? formatWhen(device.retired_at) : ''}
+              </Badge>
+            )}
+            {strongClaims.length > 0 && (
+              <Badge
+                variant="secondary"
+                title="A provider-issued identifier distinguishes this unit from an identical one"
+              >
+                identified
+              </Badge>
+            )}
+          </div>
+
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {device.brand ?? 'Unknown brand'}
+            {device.model_raw ? ` · reported as "${device.model_raw}"` : ''}
+            {device.wear_location ? ` · ${device.wear_location}` : ''}
+          </p>
+
+          <div className="mt-3 space-y-1">
+            <p className="text-xs font-medium text-muted-foreground">
+              Data sources ({device.data_sources.length})
+            </p>
+            {device.data_sources.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                None attributed yet.
+              </p>
+            ) : (
+              <ul className="space-y-1">
+                {device.data_sources.map((ds) => (
+                  <li
+                    key={ds.id}
+                    className="flex items-center gap-2 text-xs text-muted-foreground"
+                  >
+                    <Link2 className="h-3 w-3 flex-shrink-0" />
+                    <span className="truncate">
+                      {ds.provider}
+                      {ds.source ? ` · ${ds.source}` : ''}
+                      {ds.device_model ? ` · ${ds.device_model}` : ''}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        unlink.mutate({
+                          deviceId: device.id,
+                          dataSourceId: ds.id,
+                        })
+                      }
+                      disabled={unlink.isPending}
+                      className="ml-auto inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+                      title="Detach this source from the device. The data is untouched."
+                    >
+                      <Link2Off className="h-3 w-3" />
+                      Unlink
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {device.identities.length > 0 && (
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => setShowClaims((v) => !v)}
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                {showClaims ? 'Hide' : 'Show'} how it is identified (
+                {device.identities.length})
+              </button>
+              {showClaims && (
+                <ul className="mt-2 space-y-1">
+                  {device.identities.map((claim) => (
+                    <li
+                      key={`${claim.route}-${claim.id_kind}-${claim.id_value}`}
+                      className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                    >
+                      <Badge variant="outline">{claim.route}</Badge>
+                      <span>{claim.id_kind}</span>
+                      <code className="truncate rounded bg-muted/50 px-1">
+                        {claim.id_value}
+                      </code>
+                      <Badge
+                        variant={
+                          claim.confidence === 'strong'
+                            ? 'secondary'
+                            : 'outline'
+                        }
+                        title={
+                          claim.confidence === 'strong'
+                            ? 'Provider-issued and unique to this unit'
+                            : 'Names the app or the model, which identical units share'
+                        }
+                      >
+                        {claim.confidence}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-1">
+          <Button variant="ghost" size="sm" onClick={onEdit} className="gap-1">
+            <Pencil className="h-3.5 w-3.5" />
+            Edit
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onSplit}
+            disabled={device.data_sources.length < 2}
+            title={
+              device.data_sources.length < 2
+                ? 'Needs at least two data sources to split'
+                : 'Move some sources onto a separate device'
+            }
+            className="gap-1"
+          >
+            <Scissors className="h-3.5 w-3.5" />
+            Split
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onMerge} className="gap-1">
+            <Merge className="h-3.5 w-3.5" />
+            Merge
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              retire.mutate({ deviceId: device.id, retired: device.is_active })
+            }
+            disabled={retire.isPending}
+            className="gap-1"
+          >
+            {device.is_active ? (
+              <PowerOff className="h-3.5 w-3.5" />
+            ) : (
+              <Power className="h-3.5 w-3.5" />
+            )}
+            {device.is_active ? 'Retire' : 'Reactivate'}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onHistory}
+            className="gap-1"
+          >
+            <History className="h-3.5 w-3.5" />
+            History
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function ProposalQueue({
+  userId,
+  devices,
+  proposals,
+}: {
+  userId: string;
+  devices: Map<string, Device>;
+  proposals: {
+    id: string;
+    device_a_id: string;
+    device_b_id: string;
+    score: string | number;
+    evidence: Record<string, unknown> | null;
+  }[];
+}) {
+  const decide = useDecideProposal(userId);
+
+  return (
+    <Card className="border-dashed p-4">
+      <h3 className="text-sm font-medium">Possible same device</h3>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        These arrived by different routes and share no identifier, so this is a
+        guess from overlapping sessions — not a match. Linking merges them and
+        cannot be undone except by splitting; dismissing is permanent and the
+        pair will not come back.
+      </p>
+      <ul className="mt-3 space-y-3">
+        {proposals.map((proposal) => {
+          const a = devices.get(proposal.device_a_id);
+          const b = devices.get(proposal.device_b_id);
+          const evidence = proposal.evidence ?? {};
+          const overlap = evidence.overlap_fraction;
+          const compared = evidence.sessions_compared;
+          return (
+            <li
+              key={proposal.id}
+              className="flex flex-wrap items-center gap-3 rounded-md border border-border/60 p-3"
+            >
+              <div className="min-w-0 flex-1 text-sm">
+                <span className="font-medium">
+                  {a ? deviceName(a) : 'Unknown device'}
+                </span>
+                <span className="mx-2 text-muted-foreground">↔</span>
+                <span className="font-medium">
+                  {b ? deviceName(b) : 'Unknown device'}
+                </span>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  score {Number(proposal.score).toFixed(0)}
+                  {typeof compared === 'number'
+                    ? ` · ${compared} session${compared === 1 ? '' : 's'} compared`
+                    : ''}
+                  {typeof overlap === 'number'
+                    ? ` · ${Math.round(overlap * 100)}% overlap`
+                    : ''}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    decide.mutate({ proposalId: proposal.id, accepted: false })
+                  }
+                  disabled={decide.isPending}
+                >
+                  Not the same
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    decide.mutate({ proposalId: proposal.id, accepted: true })
+                  }
+                  disabled={decide.isPending}
+                >
+                  Same device
+                </Button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
+
+function DeviceTypeSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
+    >
+      {DEVICE_TYPES.map((type) => (
+        <option key={type} value={type}>
+          {deviceTypeInfo(type).label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function CreateDeviceDialog({
+  userId,
+  open,
+  onOpenChange,
+}: {
+  userId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const create = useCreateDevice(userId);
+  const [form, setForm] = useState({
+    device_type: 'unknown',
+    brand: '',
+    model_raw: '',
+    label: '',
+    wear_location: '',
+    reason: '',
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add a device</DialogTitle>
+          <DialogDescription>
+            For hardware no provider has reported yet. A name you set here is
+            kept — detection will not overwrite it.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label htmlFor="create-type">Type</Label>
+            <DeviceTypeSelect
+              value={form.device_type}
+              onChange={(v) => setForm({ ...form, device_type: v })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="create-label">Name</Label>
+            <Input
+              id="create-label"
+              value={form.label}
+              onChange={(e) => setForm({ ...form, label: e.target.value })}
+              placeholder="Sub 04 chest strap"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="create-brand">Brand</Label>
+              <Input
+                id="create-brand"
+                value={form.brand}
+                onChange={(e) => setForm({ ...form, brand: e.target.value })}
+                placeholder="Polar"
+              />
+            </div>
+            <div>
+              <Label htmlFor="create-model">Model</Label>
+              <Input
+                id="create-model"
+                value={form.model_raw}
+                onChange={(e) =>
+                  setForm({ ...form, model_raw: e.target.value })
+                }
+                placeholder="H10"
+              />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="create-wear">Wear location</Label>
+            <Input
+              id="create-wear"
+              value={form.wear_location}
+              onChange={(e) =>
+                setForm({ ...form, wear_location: e.target.value })
+              }
+              placeholder="chest"
+            />
+          </div>
+          <div>
+            <Label htmlFor="create-reason">Reason (recorded in history)</Label>
+            <Input
+              id="create-reason"
+              value={form.reason}
+              onChange={(e) => setForm({ ...form, reason: e.target.value })}
+              placeholder="criterion device for the validation arm"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={create.isPending}
+            onClick={() =>
+              create.mutate(
+                {
+                  device_type: form.device_type,
+                  brand: form.brand || null,
+                  model_raw: form.model_raw || null,
+                  label: form.label || null,
+                  wear_location: form.wear_location || null,
+                  reason: form.reason || null,
+                },
+                { onSuccess: () => onOpenChange(false) }
+              )
+            }
+          >
+            {create.isPending ? 'Creating...' : 'Create'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditDeviceDialog({
+  userId,
+  device,
+  onClose,
+}: {
+  userId: string;
+  device: Device | null;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={!!device} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        {/* Keyed by device id so opening a different device remounts the form with
+            that device's values. Seeding state from props in an effect instead would
+            cascade a render and can show the previous device's values for a frame. */}
+        {device && (
+          <EditDeviceForm
+            key={device.id}
+            userId={userId}
+            device={device}
+            onClose={onClose}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditDeviceForm({
+  userId,
+  device,
+  onClose,
+}: {
+  userId: string;
+  device: Device;
+  onClose: () => void;
+}) {
+  const update = useUpdateDevice(userId);
+  const [form, setForm] = useState({
+    label: device.label ?? '',
+    device_type: String(device.device_type),
+    wear_location: device.wear_location ?? '',
+    notes: device.notes ?? '',
+    reason: '',
+  });
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Edit device</DialogTitle>
+        <DialogDescription>
+          Brand and the reported model are not editable — they record what the
+          provider claimed the hardware was.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="space-y-3">
+        <div>
+          <Label htmlFor="edit-label">Name</Label>
+          <Input
+            id="edit-label"
+            value={form.label}
+            onChange={(e) => setForm({ ...form, label: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label htmlFor="edit-type">Type</Label>
+          <DeviceTypeSelect
+            value={form.device_type}
+            onChange={(v) => setForm({ ...form, device_type: v })}
+          />
+        </div>
+        <div>
+          <Label htmlFor="edit-wear">Wear location</Label>
+          <Input
+            id="edit-wear"
+            value={form.wear_location}
+            onChange={(e) =>
+              setForm({ ...form, wear_location: e.target.value })
+            }
+          />
+        </div>
+        <div>
+          <Label htmlFor="edit-notes">Notes</Label>
+          <Input
+            id="edit-notes"
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label htmlFor="edit-reason">Reason (recorded in history)</Label>
+          <Input
+            id="edit-reason"
+            value={form.reason}
+            onChange={(e) => setForm({ ...form, reason: e.target.value })}
+          />
+        </div>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          disabled={update.isPending}
+          onClick={() =>
+            update.mutate(
+              {
+                deviceId: device.id,
+                data: {
+                  label: form.label || null,
+                  device_type: form.device_type,
+                  wear_location: form.wear_location || null,
+                  notes: form.notes || null,
+                  reason: form.reason || null,
+                },
+              },
+              { onSuccess: onClose }
+            )
+          }
+        >
+          {update.isPending ? 'Saving...' : 'Save'}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+function SplitDeviceDialog({
+  userId,
+  device,
+  onClose,
+}: {
+  userId: string;
+  device: Device | null;
+  onClose: () => void;
+}) {
+  const split = useSplitDevice(userId);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [reason, setReason] = useState('');
+
+  const close = () => {
+    setSelected([]);
+    setReason('');
+    onClose();
+  };
+
+  const toggle = (ds: DeviceDataSource) =>
+    setSelected((prev) =>
+      prev.includes(ds.id)
+        ? prev.filter((id) => id !== ds.id)
+        : [...prev, ds.id]
+    );
+
+  const sources = device?.data_sources ?? [];
+  const wouldEmpty = sources.length > 0 && selected.length === sources.length;
+
+  return (
+    <Dialog open={!!device} onOpenChange={(open) => !open && close()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Split device</DialogTitle>
+          <DialogDescription>
+            Move the selected data sources onto a new device. Use this when two
+            identical units were grouped as one, or to undo a merge.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          {sources.map((ds) => (
+            <label
+              key={ds.id}
+              className="flex items-center gap-2 rounded-md border border-border/60 p-2 text-sm"
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(ds.id)}
+                onChange={() => toggle(ds)}
+                className="accent-current"
+              />
+              <span className="truncate">
+                {ds.provider}
+                {ds.source ? ` · ${ds.source}` : ''}
+                {ds.device_model ? ` · ${ds.device_model}` : ''}
+              </span>
+            </label>
+          ))}
+          {wouldEmpty && (
+            <p className="text-xs text-destructive">
+              Leave at least one source behind — moving all of them is a rename,
+              not a split.
+            </p>
+          )}
+          <div>
+            <Label htmlFor="split-reason">Reason (recorded in history)</Label>
+            <Input
+              id="split-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="two identical watches on one account"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>
+            Cancel
+          </Button>
+          <Button
+            disabled={
+              split.isPending || selected.length === 0 || wouldEmpty || !device
+            }
+            onClick={() =>
+              device &&
+              split.mutate(
+                {
+                  deviceId: device.id,
+                  dataSourceIds: selected,
+                  reason: reason || null,
+                },
+                { onSuccess: close }
+              )
+            }
+          >
+            {split.isPending ? 'Splitting...' : 'Split'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function MergeDeviceDialog({
+  userId,
+  device,
+  candidates,
+  onClose,
+}: {
+  userId: string;
+  device: Device | null;
+  candidates: Device[];
+  onClose: () => void;
+}) {
+  const merge = useMergeDevices(userId);
+  const [absorbId, setAbsorbId] = useState('');
+  const [reason, setReason] = useState('');
+
+  const close = () => {
+    setAbsorbId('');
+    setReason('');
+    onClose();
+  };
+
+  const others = candidates.filter((d) => d.id !== device?.id);
+
+  return (
+    <Dialog open={!!device} onOpenChange={(open) => !open && close()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Merge into {device ? deviceName(device) : ''}
+          </DialogTitle>
+          <DialogDescription>
+            The other device is removed and its data sources move here. They are
+            not combined — a direct read and an aggregator relay stay separate
+            so you can still compare them. This cannot be undone except by
+            splitting; everything needed to reverse it is kept in the history.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label htmlFor="merge-target">Device to absorb</Label>
+            <select
+              id="merge-target"
+              value={absorbId}
+              onChange={(e) => setAbsorbId(e.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="">Select a device…</option>
+              {others.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {deviceName(d)} ({d.data_sources.length} source
+                  {d.data_sources.length === 1 ? '' : 's'})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="merge-reason">Reason (recorded in history)</Label>
+            <Input
+              id="merge-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="same ring, confirmed by session overlap"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>
+            Cancel
+          </Button>
+          <Button
+            disabled={merge.isPending || !absorbId || !device}
+            onClick={() =>
+              device &&
+              merge.mutate(
+                {
+                  keepDeviceId: device.id,
+                  absorbDeviceId: absorbId,
+                  reason: reason || null,
+                },
+                { onSuccess: close }
+              )
+            }
+          >
+            {merge.isPending ? 'Merging...' : 'Merge'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function HistorySheet({
+  userId,
+  target,
+  onClose,
+}: {
+  userId: string;
+  target: Device | 'all' | null;
+  onClose: () => void;
+}) {
+  const deviceId = target && target !== 'all' ? target.id : undefined;
+  const { data, isLoading } = useDeviceHistory(userId, deviceId, !!target);
+
+  return (
+    <Sheet open={!!target} onOpenChange={(open) => !open && onClose()}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle>
+            {target && target !== 'all'
+              ? `History — ${deviceName(target)}`
+              : 'Device history'}
+          </SheetTitle>
+          <SheetDescription>
+            Every change to device attribution, newest first. Entries for a
+            device that was merged away are kept — those are the ones that
+            explain where its data went.
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="space-y-2 px-4 pb-6">
+          {isLoading && <LoadingSpinner />}
+          {!isLoading && !data?.items.length && (
+            <p className="text-sm text-muted-foreground">
+              Nothing recorded yet.
+            </p>
+          )}
+          {data?.items.map((entry) => (
+            <div
+              key={entry.id}
+              className="rounded-md border border-border/60 p-3 text-xs"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">{entry.action}</Badge>
+                {entry.field && (
+                  <span className="text-muted-foreground">{entry.field}</span>
+                )}
+                <span className="ml-auto text-muted-foreground">
+                  {formatWhen(entry.created_at)}
+                </span>
+              </div>
+              {(entry.old_value || entry.new_value) && (
+                <p className="mt-1 break-all text-muted-foreground">
+                  <span className="line-through">{entry.old_value ?? '—'}</span>
+                  {' → '}
+                  <span className="text-foreground">
+                    {entry.new_value ?? '—'}
+                  </span>
+                </p>
+              )}
+              <p className="mt-1 text-muted-foreground">
+                by {entry.actor ?? 'unknown'}
+                {entry.reason ? ` · ${entry.reason}` : ''}
+              </p>
+            </div>
+          ))}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}

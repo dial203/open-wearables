@@ -18,6 +18,7 @@ import {
   Ellipsis,
   Heart,
   Layers,
+  Watch,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -41,6 +42,7 @@ import { WorkoutSection } from '@/components/user/workout-section';
 import { ScoresSection } from '@/components/user/scores-section';
 import { WomensHealthSection } from '@/components/user/womens-health-section';
 import { CompareSection } from '@/components/user/compare-section';
+import { DevicesSection } from '@/components/user/devices-section';
 import type { DateRangeValue } from '@/components/ui/date-range-selector';
 import {
   AlertDialog,
@@ -172,6 +174,12 @@ function UserDetailPage() {
             onDateRangeChange={setSleepDateRange}
           />
         ),
+      },
+      {
+        id: 'devices',
+        label: 'Devices',
+        icon: Watch,
+        content: <DevicesSection userId={userId} />,
       },
       {
         id: 'compare',
