@@ -6,12 +6,12 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-09-17 14:16 UTC |
-| Our ref | `HEAD` — 3e949f5 (2026-09-15) Merge pull request #36 from dial203/claude/ow-repo-merge-updates-xjzzcx |
-| Upstream `main` | 89cd5db (2026-09-17) docs: fix stale Whoop strain note in coverage (#1664) |
+| Generated | 2026-09-17 14:57 UTC |
+| Our ref | `HEAD` — 8f09630 (2026-09-17) feat(frontend): device management UI |
+| Upstream `main` | ff8527a (2026-09-17) chore: update OpenWearables to 0.9 (#1666) |
 | Last common commit | c6ef361 (2026-09-15) fix: Google Health API improvements (#1571) |
-| Commits we are ahead | 164 |
-| Upstream commits not merged | 23 |
+| Commits we are ahead | 169 |
+| Upstream commits not merged | 24 |
 | Latest sync tag | _none yet_ |
 
 ## How to use this
@@ -33,19 +33,21 @@ git log --oneline c6ef36171187c900781182f1b34e7905f2a60f2d..HEAD -- <path>
 
 Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md).
 
-> **23 upstream commits are not merged yet.** The table below compares against the
+> **24 upstream commits are not merged yet.** The table below compares against the
 > last common commit, so it does not include changes upstream has made since.
 
 ## Diverged files
 
-90 files: 29 fork-only, 61 modified.
+122 files: 55 fork-only, 67 modified.
 
 ### `backend`
 
 | File | Status | +/- |
 |---|---|---|
 | `backend/AGENTS.md` | modified | +41/-0 |
+| `backend/app/api/routes/v1/__init__.py` | modified | +2/-0 |
 | `backend/app/api/routes/v1/connections.py` | modified | +31/-0 |
+| `backend/app/api/routes/v1/devices.py` | fork-only | — |
 | `backend/app/api/routes/v1/events.py` | modified | +26/-1 |
 | `backend/app/api/routes/v1/import_xml.py` | modified | +54/-1 |
 | `backend/app/api/routes/v1/summaries.py` | modified | +19/-3 |
@@ -54,30 +56,46 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/integrations/celery/core.py` | modified | +1/-0 |
 | `backend/app/integrations/celery/tasks/finalize_stale_sleep_task.py` | modified | +14/-3 |
 | `backend/app/main.py` | modified | +1/-0 |
+| `backend/app/mappings.py` | modified | +17/-0 |
+| `backend/app/models/__init__.py` | modified | +8/-0 |
+| `backend/app/models/data_source.py` | modified | +27/-1 |
+| `backend/app/models/device.py` | fork-only | — |
+| `backend/app/models/device_history.py` | fork-only | — |
+| `backend/app/models/device_identity.py` | fork-only | — |
+| `backend/app/models/device_link_proposal.py` | fork-only | — |
 | `backend/app/models/user_connection.py` | modified | +8/-1 |
 | `backend/app/models/workout_details.py` | modified | +6/-0 |
-| `backend/app/repositories/data_source_repository.py` | modified | +163/-24 |
+| `backend/app/repositories/data_source_repository.py` | modified | +213/-25 |
+| `backend/app/repositories/device_repository.py` | fork-only | — |
 | `backend/app/repositories/device_type_priority_repository.py` | modified | +10/-3 |
 | `backend/app/repositories/event_record_repository.py` | modified | +72/-26 |
 | `backend/app/repositories/health_score_repository.py` | modified | +39/-16 |
-| `backend/app/schemas/enums/__init__.py` | modified | +2/-0 |
+| `backend/app/schemas/enums/__init__.py` | modified | +16/-0 |
 | `backend/app/schemas/enums/aggregation_method.py` | modified | +1/-0 |
+| `backend/app/schemas/enums/device_registry.py` | fork-only | — |
 | `backend/app/schemas/enums/device_type.py` | modified | +42/-7 |
 | `backend/app/schemas/enums/provider.py` | modified | +13/-1 |
 | `backend/app/schemas/enums/series_types.py` | modified | +2/-0 |
 | `backend/app/schemas/model_crud/data_priority/data_source.py` | modified | +11/-2 |
+| `backend/app/schemas/model_crud/devices/__init__.py` | fork-only | — |
+| `backend/app/schemas/model_crud/devices/device.py` | fork-only | — |
 | `backend/app/schemas/providers/oura/imports.py` | modified | +12/-0 |
 | `backend/app/schemas/responses/activity/events.py` | modified | +5/-0 |
 | `backend/app/schemas/responses/activity/summaries.py` | modified | +8/-0 |
-| `backend/app/schemas/utils/metadata.py` | modified | +73/-4 |
+| `backend/app/schemas/utils/metadata.py` | modified | +118/-4 |
 | `backend/app/services/apple/apple_xml/xml_service.py` | modified | +34/-17 |
-| `backend/app/services/apple/healthkit/import_service.py` | modified | +45/-3 |
+| `backend/app/services/apple/healthkit/import_service.py` | modified | +73/-3 |
 | `backend/app/services/apple/healthkit/sleep_service.py` | modified | +155/-59 |
+| `backend/app/services/device_service.py` | fork-only | — |
+| `backend/app/services/devices/__init__.py` | fork-only | — |
+| `backend/app/services/devices/detection.py` | fork-only | — |
+| `backend/app/services/devices/identity.py` | fork-only | — |
+| `backend/app/services/devices/sdk_identities.py` | fork-only | — |
 | `backend/app/services/event_record_service.py` | modified | +40/-6 |
 | `backend/app/services/polar_rr_import_service.py` | fork-only | — |
 | `backend/app/services/priority_service.py` | modified | +5/-1 |
 | `backend/app/services/providers/garmin/data_247.py` | modified | +33/-1 |
-| `backend/app/services/providers/oura/data_247.py` | modified | +61/-1 |
+| `backend/app/services/providers/oura/data_247.py` | modified | +135/-2 |
 | `backend/app/services/providers/polar/data_247.py` | modified | +4/-0 |
 | `backend/app/services/raw_payload_storage.py` | modified | +80/-13 |
 | `backend/app/services/summaries_service.py` | modified | +93/-12 |
@@ -92,11 +110,19 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/migrations/versions/2026_08_14_1352-f1a2b3c4d5e6_merge_upstream_0_7_0_into_fork.py` | fork-only | — |
 | `backend/migrations/versions/2026_08_28_1621-92b3c62b7c00_merge_upstream_health_score_fk_rename_.py` | fork-only | — |
 | `backend/migrations/versions/2026_09_14_1522-923694d3b177_merge_upstream_0_8_into_fork.py` | fork-only | — |
+| `backend/migrations/versions/2026_09_17_1430-d3f1a8c2e5b4_device_registry.py` | fork-only | — |
 | `backend/scripts/data_migrations/reclassify_data_source_device_type.py` | fork-only | — |
 | `backend/scripts/data_migrations/split_oura_sources_by_ring_setup.py` | fork-only | — |
 | `backend/scripts/start/app.sh` | modified | +7/-2 |
+| `backend/scripts/validate_garmin_summary_prefix.py` | fork-only | — |
+| `backend/tests/api/v1/test_devices.py` | fork-only | — |
 | `backend/tests/constants/__init__.py` | fork-only | — |
 | `backend/tests/constants/test_sleep_stage_mapping.py` | fork-only | — |
+| `backend/tests/devices/__init__.py` | fork-only | — |
+| `backend/tests/devices/test_detection.py` | fork-only | — |
+| `backend/tests/devices/test_identity_extraction.py` | fork-only | — |
+| `backend/tests/devices/test_link_proposals.py` | fork-only | — |
+| `backend/tests/devices/test_registry_operations.py` | fork-only | — |
 | `backend/tests/factories.py` | modified | +10/-0 |
 | `backend/tests/providers/oura/test_ring_configuration.py` | fork-only | — |
 | `backend/tests/repositories/test_batch_data_source_device_label.py` | fork-only | — |
@@ -125,14 +151,18 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `frontend/src/components/common/device-badge.tsx` | fork-only | — |
 | `frontend/src/components/user/compare-section.tsx` | fork-only | — |
 | `frontend/src/components/user/connection-card.tsx` | modified | +75/-0 |
+| `frontend/src/components/user/devices-section.tsx` | fork-only | — |
 | `frontend/src/components/user/sleep-section.tsx` | modified | +93/-1 |
+| `frontend/src/hooks/api/use-devices.ts` | fork-only | — |
 | `frontend/src/hooks/api/use-health.ts` | modified | +38/-0 |
 | `frontend/src/lib/api/config.ts` | modified | +2/-0 |
+| `frontend/src/lib/api/services/device.service.ts` | fork-only | — |
 | `frontend/src/lib/api/services/health.service.ts` | modified | +21/-1 |
 | `frontend/src/lib/api/types.ts` | modified | +8/-0 |
-| `frontend/src/lib/query/keys.ts` | modified | +2/-0 |
+| `frontend/src/lib/query/keys.ts` | modified | +13/-0 |
+| `frontend/src/lib/utils/device.test.ts` | fork-only | — |
 | `frontend/src/lib/utils/device.ts` | fork-only | — |
-| `frontend/src/routes/_authenticated/users/$userId.tsx` | modified | +8/-0 |
+| `frontend/src/routes/_authenticated/users/$userId.tsx` | modified | +16/-0 |
 ### `mcp`
 
 | File | Status | +/- |
@@ -146,6 +176,8 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 
 | File | Status | +/- |
 |---|---|---|
+| `AGENTS.md` | modified | +24/-0 |
+| `Makefile` | modified | +9/-0 |
 | `docker-compose.prod.yml` | fork-only | — |
 ### `tooling`
 

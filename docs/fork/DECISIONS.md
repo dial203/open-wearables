@@ -27,7 +27,26 @@ Template:
 > created, so they record *what* diverges and why, but not always the full
 > discussion. Entries added from here on should be written at the time of the change.
 
-## Device attribution and the device registry
+## Device registry: device / device_identity / device_history / device_link_proposal
+
+- **Area**: backend, frontend
+- **Status**: active
+- **On conflict**: keep ours; re-apply upstream's change to `data_source` on top
+- **Why**: Upstream models a data source as roughly one-per-provider, which cannot
+  express one physical unit. Garmin reports `deviceName` only on activities; Apple and
+  Google Health are aggregators; and the same unit arriving by several routes shares
+  no identifier between them. The fork adds a registry above `data_source`
+  (`app/models/device*.py`, `app/repositories/device_repository.py`,
+  `app/services/devices/`, `app/api/routes/v1/devices.py`, migration `d3f1a8c2e5b4`)
+  with hand editing, merge/split and an append-only audit trail. Documented in
+  `docs/dev-guides/device-registry.mdx`.
+  `data_source` itself changes only by gaining a nullable `device_id` FK, so an
+  upstream change to that table should merge cleanly.
+- **Upstreamable?** Probably not as a whole — it is opinionated toward research use,
+  where knowing *which unit* produced a sample is the point. The per-route identity
+  model could be.
+
+## Device attribution helpers (pre-registry)
 
 - **Area**: backend, frontend
 - **Status**: active

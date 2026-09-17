@@ -1,0 +1,203 @@
+---
+title: "Device registry"
+description: "How Open Wearables works out which physical device produced a sample, and how to correct it."
+---
+
+## Why this exists
+
+A `data_source` is the immutable ingest fingerprint: one row per
+`(user, provider, device_model, source)`, exactly as the provider reported it. It
+cannot represent "one physical device", because no provider gives us one view of one.
+
+- **Garmin** reports `deviceName` on activities. Its wellness summaries — sleep,
+  dailies, epochs, HRV, pulse ox, body composition — carry no device field at all,
+  so a user's Garmin sleep and Garmin activities cannot be told apart by device.
+- **Apple Health and Google Health are aggregators.** They relay other makers'
+  hardware, so "the Apple connection" is not a device.
+- The **same unit arriving by several routes** shares no identifier between them.
+
+The registry sits above `data_source` and answers "which unit produced this?"
+separately from "which path did it arrive by?".
+
+## The tables
+
+| Table | What it holds |
+|---|---|
+| `device` | One physical unit. Editable: label, type, wear location, notes, active/retired. |
+| `device_identity` | One identity claim per ingest route. A device accumulates several. |
+| `device_history` | Append-only record of every attribution change. |
+| `device_link_proposal` | Cross-route candidates, scored, with their evidence. |
+
+`data_source.device_id` is a nullable FK, `ON DELETE SET NULL`. Deleting a device
+never deletes ingested data.
+
+## Identifiers are per route, never shared
+
+<Warning>
+There is **no identifier shared across ingest routes** for the same physical unit.
+Cross-route identity cannot be resolved by matching values, and nothing in the system
+tries to.
+</Warning>
+
+For one Oura ring:
+
+| Route | Identifier available | Stable per unit? |
+|---|---|---|
+| Oura API (direct) | `ring_configuration.id` | Yes — a real per-ring id |
+| Oura → Apple Health | `HKSource.bundleIdentifier` (`com.ouraring.oura`) | No — names the app |
+| Oura → Google Health | `DataOrigin.packageName` | No — names the app |
+
+So a device holds one `device_identity` row per route, and claims are only ever
+compared against claims from the same route.
+
+### Claim strength
+
+`confidence` decides what a claim may do.
+
+- **`strong`** — provider-issued, stable for the life of the unit, and different for
+  two same-model devices owned by one person. Only these group data sources on their
+  own. Today: `oura_config_id`, `healthkit_device_id`, `serial`.
+- **`weak`** — names the writing app (`com.ouraring.oura`) or the hardware model
+  (`fenix 8`, `Watch7,5`). Two identical units share it, so it supports a proposal
+  but never groups by itself.
+
+<Note>
+Apple Health **XML exports** describe `HKDevice` as `<<HKDevice: 0x280b6b840>, name:Apple Watch, ...>`.
+That leading token is the object's memory address in the exporting process — different
+on every export, identical across unrelated devices within one export. It is rejected,
+never stored as an identity.
+</Note>
+
+## The governing rule: over-split, never over-merge
+
+A wrong split is visible and reversible — an extra device appears in the list and
+someone merges it. A wrong merge silently pools two units' samples into one stream,
+produces no symptom, and may not surface until the data is in an analysis, by which
+point the samples cannot be separated again.
+
+Detection therefore:
+
+1. Groups on a **strong** claim wherever one exists.
+2. Otherwise groups on the provider's own **model string, within one route only**.
+3. **Never** groups across routes.
+4. Treats attribution as **write-once**: a data source that already belongs to a
+   device is never moved by a later sync. A conflicting claim becomes a proposal.
+5. Creates **no device at all** when the provider reports no model. Unattributed is a
+   normal resting state, not an error.
+
+## Cross-route link proposals
+
+Since no identifier is shared, "is this the same ring?" is answered from evidence:
+
+- brand and device type agreement — a **gate**, not a score; a user can own two
+  identical rings;
+- **temporal overlap of the same measurement** — the real discriminator, because one
+  ring cannot produce two genuinely different sleep sessions on the same night;
+- fewer than three shared sessions reports *insufficient* rather than scoring noise.
+
+Overlap is measured against the **rarer** device's sessions, so a 20-night ring fully
+contained in a 200-night stream reads as a match rather than as 10%.
+
+<Warning>
+There is deliberately **no score at which the system links two devices itself.** The
+evidence cannot distinguish "one ring, two routes" from "two identical rings worn on
+alternate nights". A person decides; a rejection is kept forever so the deterministic
+scorer never re-raises an answered question.
+</Warning>
+
+## Linking does not merge the data
+
+Attribution **groups** data sources; it never combines them. The same ring read from
+Oura's API and relayed through Apple Health differs in freshness, rounding and
+completeness — which the codebase already models as `ingestion_route`. Both questions
+stay answerable:
+
+- *all data from this ring* → group on `device_id`
+- *this ring, direct vs via Apple Health* → keep `data_source_id`
+
+That second one is a method comparison in its own right, and a schema that merged on
+link would destroy it.
+
+## What is editable, and what is not
+
+| Editable | Not editable |
+|---|---|
+| `label`, `device_type`, `wear_location`, `notes`, `model_display` | `brand`, `model_raw` |
+
+`brand` and `model_raw` record what the provider *claimed* the hardware was. Editing
+them in place would erase the only evidence of that claim. Correct the presentation
+with `model_display` instead.
+
+A label set by hand marks the device `label_source = manual`, and detection never
+overwrites it — a confidently wrong auto-label is worse than no label, because
+nothing about it signals that it is wrong.
+
+### Replaced units
+
+A warranty replacement reports the same brand, model and routes as the unit it
+replaced. Nothing in the provider data distinguishes them, so **retire the old device
+with an effective date**. Without it, pre- and post-swap samples pool into one device
+and the swap becomes invisible in analysis.
+
+## Consuming attribution downstream
+
+`SourceMetadata` on every sample and record carries:
+
+| Field | Meaning |
+|---|---|
+| `device_id` | The physical unit. Null when unattributed. |
+| `device_label` | The human name, when one is set and the device was joined. |
+| `data_source_id` | The ingest path — provider, sub-source, route. |
+| `ingestion_route` | `direct` or `aggregator`. |
+
+`device_label` is populated only when the caller already joined the device. This runs
+per sample on the timeseries paths, so a lazy load would turn one response into a
+query per row.
+
+## API
+
+All under `/api/v1/users/{user_id}`, developer-authenticated.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/devices` | List devices with their sources and claims |
+| `POST` | `/devices` | Create by hand |
+| `GET` | `/devices/{id}` | One device |
+| `PATCH` | `/devices/{id}` | Edit |
+| `POST` | `/devices/{id}/retire` | Retire or reactivate, with an effective date |
+| `POST` | `/devices/{id}/link` | Attribute a data source |
+| `POST` | `/devices/{id}/unlink` | Detach a data source |
+| `POST` | `/devices/{id}/merge` | Absorb another device |
+| `POST` | `/devices/{id}/split` | Move sources onto a new device |
+| `GET` | `/devices-history` | The audit trail |
+| `GET` | `/device-link-proposals` | Pending cross-route suggestions |
+| `POST` | `/device-link-proposals/refresh` | Re-score |
+| `POST` | `/device-link-proposals/{id}/decide` | Accept (merges) or reject (permanent) |
+
+Every mutation records the developer and an optional reason in `device_history`.
+History is scoped to the user, not the device, so entries for a device that was
+merged away still surface — those are exactly the ones that explain where its data went.
+
+## Known limitations
+
+**Garmin's `summaryId` prefix is recorded but not trusted.** Garmin's wellness
+endpoints carry no device field; the only per-record signal is the `summaryId`
+prefix (`x153d4d8-5d5b43c0-900` → `x153d4d8`). Whether it is stable per *device* — as
+opposed to per account — is undocumented, and assuming wrongly would merge a user's
+watch and scale with no visible symptom. It is therefore recorded as a **weak** claim,
+which groups nothing. To settle it against real data:
+
+```bash
+cd backend && uv run python scripts/validate_garmin_summary_prefix.py --verbose
+```
+
+The script reads the summary ids already stored on `event_record.external_id` and
+prints a verdict. If prefixes separate cleanly by device, set
+`GARMIN_SUMMARY_PREFIX_VALIDATED = True` in `app/services/devices/identity.py` and the
+same claims begin grouping.
+
+**Google's per-app attribution does not reach the data-source identity.** Google
+stamps every row's `data_source.source` with one constant, so apps writing through
+Health Connect are not separated at that level. Splitting it properly means rewriting
+existing Google `data_source` identities in a migration, which forks a user's history
+if done wrong. Devices still separate whenever `device_model` differs.
