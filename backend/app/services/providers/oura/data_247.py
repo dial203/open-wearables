@@ -15,7 +15,14 @@ from app.database import DbSession
 from app.models import EventRecord
 from app.repositories import EventRecordRepository, UserConnectionRepository
 from app.repositories.data_point_series_repository import WriteCounts
-from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType, daily_total_flag
+from app.schemas.enums import (
+    DeviceIdentityKind,
+    DeviceType,
+    HealthScoreCategory,
+    ProviderName,
+    SeriesType,
+    daily_total_flag,
+)
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -1314,7 +1321,10 @@ class Oura247Data(Base247DataTemplate):
         not. Operators can still assert a label for older data explicitly via
         PUT /users/{user_id}/connections/{provider}/device-label.
         """
-        model = self._derive_ring_model(self.get_ring_configuration(db, user_id))
+        raw_config = self.get_ring_configuration(db, user_id)
+        self._record_ring_identities(db, user_id, raw_config)
+
+        model = self._derive_ring_model(raw_config)
         if not model:
             return 0
         connection = self.connection_repo.get_by_user_and_provider(db, user_id, ProviderName.OURA.value)
@@ -1325,6 +1335,69 @@ class Oura247Data(Base247DataTemplate):
         db.add(connection)
         db.commit()
         return 1
+
+    def _record_ring_identities(self, db: DbSession, user_id: UUID, raw_config: dict[str, Any]) -> None:
+        """Attach each ring's ``ring_configuration.id`` to its device in the registry.
+
+        ``id`` is a genuine per-ring identifier and the strongest device signal any
+        route gives us for an Oura ring. It was already being fetched and discarded -
+        only hardware_type and design were read, to build a display label - so a user
+        who replaced a ring had no way for the two to be told apart.
+
+        Every ring in the response is recorded, not just the one set up most recently,
+        because the older entries are exactly what distinguishes a replaced ring's
+        history from its successor's.
+
+        Best effort: a failure here must not cost the sync that was running, since the
+        label below is the part callers depend on.
+        """
+        from app.repositories.device_repository import DeviceRepository
+        from app.services.devices.identity import claims_from_oura_ring_config
+
+        items = raw_config.get("data") if isinstance(raw_config, dict) else None
+        if not items:
+            return
+
+        repo = DeviceRepository()
+        try:
+            for ring in items:
+                if not isinstance(ring, dict):
+                    continue
+                for claim in claims_from_oura_ring_config(ring):
+                    device = repo.find_by_claim(db, user_id, claim)
+                    if device is not None:
+                        repo.touch_seen(db, device)
+                        continue
+                    # Only a strong claim may mint a device on its own. A weak one
+                    # (the hardware_type string) is shared by every ring of that
+                    # generation, so on its own it would merge two of them.
+                    if claim.kind is not DeviceIdentityKind.OURA_CONFIG_ID:
+                        continue
+                    created = repo.create(
+                        db,
+                        user_id=user_id,
+                        device_type=DeviceType.RING,
+                        brand="Oura",
+                        model_raw=self._ring_model_raw(ring),
+                        actor="system:oura_ring_configuration",
+                        reason="Ring reported by /v2/usercollection/ring_configuration",
+                        detected=True,
+                    )
+                    repo.add_claim(db, created, claim, actor="system:oura_ring_configuration")
+            db.commit()
+        except Exception:
+            db.rollback()
+            self.logger.exception("failed to record Oura ring identities for user %s", user_id)
+
+    @staticmethod
+    def _ring_model_raw(ring: dict[str, Any]) -> str | None:
+        """Model string for one ring entry, as Oura words it. Not normalized."""
+        try:
+            cfg = OuraRingConfigJSON(**ring)
+        except Exception:
+            return None
+        parts = [p for p in ("Oura Ring", cfg.hardware_type, cfg.design) if p]
+        return " ".join(part.replace("_", " ").title() if part != "Oura Ring" else part for part in parts)
 
     def load_and_save_all(
         self,
