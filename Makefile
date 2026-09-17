@@ -49,3 +49,12 @@ downgrade:  ## Revert the last migration
 
 reset_db:  ## Truncate all tables in the database (WARNING: deletes all data)
 	$(DOCKER_EXEC) uv run python scripts/reset_database.py
+
+fork-setup:  ## Add the upstream remote and fetch it (run once per clone)
+	python3 scripts/fork/fork_tools.py setup
+
+fork-diff:  ## Regenerate docs/fork/DIVERGENCE.md from upstream
+	python3 scripts/fork/fork_tools.py diff
+
+fork-tag:  ## Tag HEAD as an upstream sync point. Use 'make fork-tag d=2026-09-17'
+	python3 scripts/fork/fork_tools.py tag $(if $(d),--date $(d),)
