@@ -26,11 +26,17 @@ change you merely find surprising - check what it was for first (`git log -1 <sh
 ## 1. Compare
 
 ```bash
-git remote add upstream https://github.com/the-momentum/open-wearables 2>/dev/null
-git fetch upstream main --tags
+make fork-setup   # adds the upstream remote and fetches it, idempotently
 git log --oneline --no-merges HEAD..upstream/main --date=short --format='%h %ad %s'
 git diff --stat HEAD...upstream/main | tail -40
 ```
+
+`make fork-diff` regenerates `docs/fork/DIVERGENCE.md`: the last common commit, how far
+ahead and behind we are, and every diverged file marked fork-only or modified. Use it
+alongside the inventory below - the inventory says *which feature areas* break and how,
+the generated report says *which files* currently differ, so a file that has quietly
+started diverging cannot go unlisted. Run it again after the merge and commit the result,
+then `make fork-tag` to anchor the sync for `git diff upstream-sync/<date>..HEAD`.
 
 Read every commit subject before merging. Flag for the human, in the summary and the
 commit message:

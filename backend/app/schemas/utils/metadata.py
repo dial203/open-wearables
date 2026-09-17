@@ -62,6 +62,26 @@ class SourceMetadata(BaseModel):
         example="aggregator",
     )
 
+    # The physical unit, as opposed to the ingest path above. Two samples sharing a
+    # device_id came from one piece of hardware even when their provider, source and
+    # ingestion_route all differ - which is the case for a ring read from its maker's
+    # API and the same ring relayed through Apple Health. Group on device_id to pool a
+    # device's data; keep data_source_id to tell the two routes apart, since the relay
+    # changes freshness, rounding and completeness.
+    device_id: UUID | None = Field(
+        None,
+        description=(
+            "Stable id of the physical device, or null when the source is not attributed to "
+            "one. Survives a model-string change, and is shared across ingest routes once the "
+            "routes have been linked. Identical to `items[].id` from /users/{user_id}/devices."
+        ),
+    )
+    device_label: str | None = Field(
+        None,
+        description="Human-assigned name for the device, if one has been set.",
+        example="Sub 04 fenix",
+    )
+
     @classmethod
     def from_data_source(cls, data_source: Any) -> "SourceMetadata":
         """Build attribution from a DataSource row, including the join identity."""
@@ -89,6 +109,11 @@ class SourceMetadata(BaseModel):
                 if data_source.provider
                 else None
             ),
+            device_id=getattr(data_source, "device_id", None),
+            # Read through the relationship only when it is already loaded. This runs
+            # per sample on hot read paths, and a lazy load here would turn one
+            # timeseries response into a query per row.
+            device_label=_loaded_device_label(data_source),
         )
 
 
@@ -97,3 +122,23 @@ class TimeseriesMetadata(BaseModel):
     sample_count: int | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None
+
+
+def _loaded_device_label(data_source: Any) -> str | None:
+    """The attributed device's label, but only if the relationship is already loaded.
+
+    Returns None rather than emitting a query, so a caller that has not joined the
+    device gets the id (which is on the row itself) and no label, instead of an N+1.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    if getattr(data_source, "device_id", None) is None:
+        return None
+    try:
+        state = sa_inspect(data_source)
+    except Exception:
+        return None
+    if "device" in getattr(state, "unloaded", ()):
+        return None
+    device = getattr(data_source, "device", None)
+    return getattr(device, "label", None)

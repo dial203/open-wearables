@@ -90,6 +90,30 @@ When you rebase and `main` gained a migration in the meantime, `alembic heads` s
 2. Rename your file so its date is later than the last migration on `main`. Keep the `rev` id. If your dev database already ran this migration, run `make downgrade` before re-pointing and `make migrate` after; otherwise the database keeps your revision as current and never applies the migration from `main`.
 3. CI checks the chain and fails on a second head, on a changed `down_revision` in a migration already on `main`, and on a deleted or renamed migration.
 
+## This is a Fork
+
+Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open-wearables).
+This fork carries a large, long-lived delta and re-syncs periodically, so when
+something misbehaves the first question is whether the code is ours or theirs.
+
+```bash
+make fork-setup   # once per clone: adds the 'upstream' remote and fetches it
+make fork-diff    # regenerate docs/fork/DIVERGENCE.md
+make fork-tag     # after merging upstream: tag HEAD as upstream-sync/<date>
+```
+
+- **[docs/fork/DIVERGENCE.md](docs/fork/DIVERGENCE.md)** - generated. Every file that
+  differs from upstream, marked fork-only or modified. A file that is *not* listed is
+  identical to upstream, so a bug in it is upstream's and is worth reproducing against
+  a clean upstream checkout first.
+- **[docs/fork/DECISIONS.md](docs/fork/DECISIONS.md)** - hand-written. Why each
+  divergence exists and, on a sync conflict, whether to keep ours or take theirs.
+
+When you change a file that also exists upstream, add a DECISIONS.md entry. When you
+merge upstream, run `make fork-diff` and `make fork-tag` and commit both.
+The `upstream-sync/<date>` tags are the bisect anchors: `git diff upstream-sync/<date>..HEAD`
+is exactly "what have we changed since a known-good base".
+
 ## Guidelines for AI Agents
 
 1. **Read specialized docs** - See `backend/AGENTS.md` and `frontend/AGENTS.md` for patterns

@@ -1,4 +1,5 @@
-from typing import cast
+from logging import getLogger
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import CursorResult, and_, asc, delete, func
@@ -12,6 +13,11 @@ from app.repositories.repositories import CrudRepository
 from app.schemas.enums import DeviceType, ProviderName, infer_device_type_from_model, infer_device_type_from_source_name
 from app.schemas.model_crud.data_priority import DataSourceCreate, DataSourceUpdate
 from app.utils.device_registry import resolve_brand
+
+if TYPE_CHECKING:
+    from app.services.devices.identity import IdentityClaim
+
+log = getLogger(__name__)
 
 
 class DataSourceRepository(
@@ -109,6 +115,7 @@ class DataSourceRepository(
         software_version: str | None = None,
         source: str | None = None,
         original_source_name: str | None = None,
+        identity_claims: "list[IdentityClaim] | None" = None,
     ) -> DataSource:
         # Fill device_model from the connection's device_label when the provider
         # didn't report a device (e.g. Whoop, which exposes none; Oura, auto-filled
@@ -151,6 +158,7 @@ class DataSourceRepository(
                 updated = True
             if updated:
                 db_session.flush()
+            self._attribute_device(db_session, existing, identity_claims)
             return existing
 
         provider_priority_repo = ProviderPriorityRepository(ProviderPriority)
@@ -171,7 +179,41 @@ class DataSourceRepository(
         )
         result = self.create(db_session, create_payload)
         assert result is not None
+        self._attribute_device(db_session, result, identity_claims)
         return result
+
+    def _attribute_device(
+        self,
+        db_session: DbSession,
+        data_source: DataSource,
+        identity_claims: "list[IdentityClaim] | None" = None,
+    ) -> None:
+        """Point a data source at a physical device, best effort.
+
+        Attribution is an enrichment on top of ingest, not part of it. A data source
+        whose device cannot be worked out is still a perfectly good data source - it
+        just waits for a later sync that carries a signal, or for someone to link it
+        by hand - so a failure here must never cost the batch that was being written.
+        The exception is logged rather than swallowed silently.
+
+        Imported inside the function: app.services.devices.detection imports models and
+        app.utils.device_registry, and a module-level import here would close a cycle
+        through app.repositories.
+        """
+        from app.services.devices.detection import DeviceDetectionService
+
+        try:
+            DeviceDetectionService().resolve_for_data_source(db_session, data_source, identity_claims)
+        except Exception:
+            # getattr with a default, because this handler exists to guarantee that
+            # attribution cannot cost the batch - and a handler that reads attributes
+            # off the object that just failed can raise from inside the rescue, which
+            # is the one way to lose the data it was written to protect.
+            log.exception(
+                "device attribution failed for data_source %s (provider=%s); left unattributed",
+                getattr(data_source, "id", None),
+                getattr(data_source, "provider", None),
+            )
 
     # Types that name a body-worn recorder, as opposed to a handset or an app.
     _WEARABLE_TYPES: frozenset[DeviceType] = frozenset(
@@ -293,6 +335,13 @@ class DataSourceRepository(
 
             newly_inserted = db_session.query(self.model).filter(or_(*conditions)).all()
             ids_by_stored.update({(ds.user_id, ds.device_model, ds.source): ds.id for ds in newly_inserted})
+
+            # Attribute what this path created, mirroring ensure_data_source. Time
+            # series arrive through here while events arrive through the single path,
+            # so skipping it would leave one device's streams half attributed. The
+            # loop is over distinct identities, not samples, so it stays small.
+            for data_source in newly_inserted:
+                self._attribute_device(db_session, data_source)
 
             result.update(
                 {

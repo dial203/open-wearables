@@ -29,9 +29,11 @@ int_zero = Annotated[int, mapped_column(server_default=text("0"))]
 email = Annotated[str, mapped_column(String)]
 str_10 = Annotated[str, mapped_column(String(10))]
 str_32 = Annotated[str, mapped_column(String(32))]
+str_48 = Annotated[str, mapped_column(String(48))]
 str_50 = Annotated[str, mapped_column(String(50))]
 str_64 = Annotated[str, mapped_column(String(64))]
 str_100 = Annotated[str, mapped_column(String(100))]
+str_128 = Annotated[str, mapped_column(String(128))]
 str_255 = Annotated[str, mapped_column(String(255))]
 numeric_5_2 = Annotated[Decimal, mapped_column(Numeric(5, 2))]
 numeric_6_3 = Annotated[Decimal, mapped_column(Numeric(6, 3))]
@@ -45,6 +47,21 @@ FKUser = Annotated[UUID, mapped_column(ForeignKey("user.id", ondelete="CASCADE")
 FKEventRecord = Annotated[
     UUID,
     mapped_column(ForeignKey("event_record.id", ondelete="CASCADE"), primary_key=True),
+]
+FKDevice = Annotated[
+    UUID,
+    mapped_column(ForeignKey("device.id", ondelete="CASCADE")),
+]
+# Deleting a device must never delete ingested data: the samples stay, they just
+# stop being attributed to that device. Same for the history rows, which have to
+# outlive the device they describe or the audit trail is not one.
+FKDeviceOptional = Annotated[
+    UUID | None,
+    mapped_column(ForeignKey("device.id", ondelete="SET NULL"), nullable=True),
+]
+FKDataSourceOptional = Annotated[
+    UUID | None,
+    mapped_column(ForeignKey("data_source.id", ondelete="SET NULL"), nullable=True),
 ]
 FKDataSource = Annotated[
     UUID,

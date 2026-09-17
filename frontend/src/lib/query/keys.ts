@@ -140,6 +140,17 @@ export const queryKeys = {
       [...queryKeys.priorities.all, 'dataSources', userId] as const,
   },
 
+  devices: {
+    all: ['devices'] as const,
+    lists: () => [...queryKeys.devices.all, 'list'] as const,
+    list: (userId: string, includeRetired: boolean) =>
+      [...queryKeys.devices.lists(), userId, includeRetired] as const,
+    history: (userId: string, deviceId?: string) =>
+      [...queryKeys.devices.all, 'history', userId, deviceId ?? 'all'] as const,
+    proposals: (userId: string) =>
+      [...queryKeys.devices.all, 'proposals', userId] as const,
+  },
+
   archival: {
     all: ['archival'] as const,
     settings: () => [...queryKeys.archival.all, 'settings'] as const,

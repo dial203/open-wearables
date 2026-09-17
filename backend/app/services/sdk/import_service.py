@@ -425,6 +425,12 @@ class ImportService:
             sleep_incoming_by_source = sleep_result["incoming_by_source"]
             sleep_applied_by_source = sleep_result["applied_by_source"]
 
+        # Identity enrichment, after everything is stored. The claims are per source,
+        # not per sample, so a 40,000-record payload still describes two or three
+        # devices and this pass is cheap. Deliberately last: it must never be able to
+        # cost a sync that has already written its data.
+        self._record_device_identities(db_session, UUID(user_id), request)
+
         return {
             "workouts_saved": workouts_saved,
             "records_saved": records_saved,
@@ -438,6 +444,28 @@ class ImportService:
             "dropped": dropped,
             "validation_ms": validation_ms,
         }
+
+    @staticmethod
+    def _record_device_identities(db_session: DbSession, user_id: UUID, request: SDKSyncRequest) -> None:
+        """Persist the HealthKit device identifiers the SDK sends and ingest drops.
+
+        ``extract_device_info`` keeps device_model, software_version and the source
+        name; ``SourceInfo`` also carries ``deviceId``, the manufacturer, the hardware
+        and software versions and the SDK's own device type. ``deviceId`` in
+        particular is the strongest per-unit signal any route gives us for an Apple
+        Watch, and without it two identical watches on one account are
+        indistinguishable.
+        """
+        from app.services.devices.sdk_identities import record_sdk_identities
+
+        data = request.data
+        sources = [
+            record.source
+            for collection in (data.workouts or [], data.records or [], data.sleep or [])
+            for record in collection
+            if record.source is not None
+        ]
+        record_sdk_identities(db_session, user_id, request.provider, sources)
 
     def import_data_from_request(
         self,

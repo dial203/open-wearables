@@ -54,3 +54,32 @@ export function inferDeviceKind(device: string | null | undefined): DeviceKind {
   if (/phone|^sm-[sg]|^lm-|pixel(?! watch)/.test(m)) return 'phone';
   return 'other';
 }
+
+/** The fields that decide what a device is called on screen. */
+export interface DeviceNameParts {
+  label: string | null;
+  model_display: string | null;
+  model_raw: string | null;
+  brand: string | null;
+  device_type: string;
+}
+
+/**
+ * What to call a device on screen, preferring the most human name available.
+ *
+ * A person's own label wins over everything, because it is the only one that can
+ * say which of two identical units this is. `model_raw` is the provider's verbatim
+ * string and is the last resort before a generic description — showing the raw code
+ * beats guessing a friendlier name that might be wrong.
+ */
+export function deviceDisplayName(
+  device: DeviceNameParts,
+  typeLabel: string
+): string {
+  return (
+    device.label ||
+    device.model_display ||
+    device.model_raw ||
+    `${device.brand ?? 'Unknown'} ${typeLabel}`
+  );
+}
