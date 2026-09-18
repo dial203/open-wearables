@@ -275,6 +275,10 @@ def sync_historical_data(
             le=365,
         ),
     ] = DEFAULT_HISTORICAL_DAYS,
+    connection_id: Annotated[
+        UUID | None,
+        Query(description="Restrict the backfill to one of the user's accounts with this provider"),
+    ] = None,
 ) -> dict[str, Any]:
     """Trigger a historical sync of the user's data from a connected provider.
 
@@ -302,7 +306,7 @@ def sync_historical_data(
     strategy = factory.get_provider(provider.value)
 
     try:
-        result = strategy.start_historical_sync(user_id, days)
+        result = strategy.start_historical_sync(user_id, days, connection_id=connection_id)
     except UnsupportedProviderError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -313,6 +317,7 @@ def sync_historical_data(
         "success": True,
         "provider": provider.value,
         "user_id": str(user_id),
+        **({"connection_id": str(connection_id)} if connection_id else {}),
         "method": result.method,
         "task_id": result.task_id,
         "message": result.message,

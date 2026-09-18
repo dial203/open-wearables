@@ -31,6 +31,7 @@ from app.services.sync_status_service import (
     try_record_data_types,
 )
 from app.services.user_connection_service import user_connection_service
+from app.utils.connection_context import active_connection
 from app.utils.structured_logging import log_structured
 
 logger = getLogger(__name__)
@@ -193,14 +194,19 @@ def process_sdk_upload(
     with SessionLocal() as db:
         # Ensure SDK connection exists for this user (SDK-based, no OAuth tokens).
         # Goes through the service so a new/reactivated connection emits connection.created.
-        user_connection_service.ensure_sdk_connection(db, user_uuid, provider)
+        connection = user_connection_service.ensure_sdk_connection(db, user_uuid, provider)
 
         # Select the appropriate import service based on source
         import_service = _get_import_service(provider)
 
-        result = import_service.import_data_from_request(
-            db, content, content_type, user_id, batch_id=batch_id
-        ).model_dump()
+        # Bind the import to this account so every data source it creates carries
+        # the connection it arrived through. Without it a user with two accounts
+        # on the same SDK provider would have both phones' samples land on
+        # whichever connection happened to be resolved first.
+        with active_connection(connection.id):
+            result = import_service.import_data_from_request(
+                db, content, content_type, user_id, batch_id=batch_id
+            ).model_dump()
 
         # Log processing completion with results
         log_structured(

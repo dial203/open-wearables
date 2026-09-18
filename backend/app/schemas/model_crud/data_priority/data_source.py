@@ -58,6 +58,28 @@ class DataSourceResponse(BaseModel):
             "to a device clears it."
         ),
     )
+    # Denormalised from the connection so a data-source listing is readable on
+    # its own. A participant with two Garmins has two rows here that are
+    # otherwise identical down to the device model, and the account is the only
+    # thing that tells them apart.
+    account_type: str | None = Field(
+        None,
+        description=(
+            "What the connected account is for: personal, validation, reliability, "
+            "monitoring, testing, other. Null when nobody has classified it."
+        ),
+        example="validation",
+    )
+    account_label: str | None = Field(
+        None,
+        description="Name of the connected account this source arrived through.",
+        example="P01 arm A",
+    )
+    account_email: str | None = Field(
+        None,
+        description="Login e-mail of the connected account this source arrived through.",
+        example="p01.left@lab.example.edu",
+    )
     ingestion_route: IngestionRoute = Field(
         IngestionRoute.DIRECT,
         description=(

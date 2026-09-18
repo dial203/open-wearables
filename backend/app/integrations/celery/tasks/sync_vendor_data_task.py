@@ -38,6 +38,7 @@ from app.services.sync_status_service import (
     try_record_data_types,
 )
 from app.utils.config_utils import format_duration
+from app.utils.connection_context import bind_active_connection, clear_active_connection
 from app.utils.context import trace_id_var
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
@@ -83,11 +84,18 @@ def sync_vendor_data(
     end_date: str | None = None,
     providers: list[str] | None = None,
     is_historical: bool = False,
+    connection_ids: list[str] | None = None,
     _skip_linked_fan_out: bool = False,
     _linked_primary_user_id: str | None = None,
 ) -> dict[str, Any]:
     """
-    Synchronize workout/exercise/activity data from all providers the user is connected to.
+    Synchronize workout/exercise/activity data from the accounts a user is connected to.
+
+    One user may hold several accounts with the same provider (two Garmins worn
+    for a reliability study, say). Each is an independent connection with its own
+    tokens, its own sync cursor and its own data sources, and this task walks
+    them one at a time, binding every provider call in an iteration to that one
+    account.
 
     Args:
         user_id: UUID of the user to sync data for
@@ -98,11 +106,14 @@ def sync_vendor_data(
         providers: Optional list of provider names to sync (None = all active providers)
         is_historical: When True, skips updating last_synced_at so the live-sync
             cursor is not clobbered by a user-initiated historical pull.
+        connection_ids: Optional list of connection UUIDs to restrict the run to.
+            Used when only one account needs syncing - a freshly connected one,
+            for instance - so its siblings are not re-pulled alongside it.
         _skip_linked_fan_out: Internal flag set to True when this task was triggered
             by another profile's fan-out.  Prevents infinite fan-out loops.
 
     Returns:
-        dict with sync results per provider
+        dict with sync results per account
     """
     factory = ProviderFactory()
     user_connection_repo = UserConnectionRepository()
@@ -143,8 +154,20 @@ def sync_vendor_data(
         try:
             connections = user_connection_repo.get_all_active_by_user(db, user_uuid)
 
+            # Counted before any filtering, so the result keys below do not
+            # change shape depending on what a given run was restricted to: a
+            # backfill of one of two Garmin accounts still keys that account the
+            # way the periodic sync of both does.
+            accounts_per_provider: dict[str, int] = {}
+            for connection in connections:
+                accounts_per_provider[connection.provider] = accounts_per_provider.get(connection.provider, 0) + 1
+
             if providers:
                 connections = [c for c in connections if c.provider in providers]
+
+            if connection_ids:
+                wanted = set(connection_ids)
+                connections = [c for c in connections if str(c.id) in wanted]
 
             # Load provider settings once (live_sync_mode per provider).
             provider_settings = provider_settings_repo.get_all(db)
@@ -185,6 +208,20 @@ def sync_vendor_data(
 
             for connection in connections:
                 provider_name = connection.provider
+                # Everything below resolves credentials, cursors and data sources
+                # from (user, provider); binding the account here is what keeps a
+                # second Garmin's pull on its own tokens and its own data sources
+                # instead of the first one's. Rebound at the top of every
+                # iteration and cleared in the finally that closes the loop.
+                bind_active_connection(connection.id)
+                # A single account keeps the plain provider key existing
+                # consumers already read; several would collapse onto it, so
+                # those are keyed per account instead.
+                result_key = (
+                    provider_name
+                    if accounts_per_provider.get(provider_name, 1) == 1
+                    else f"{provider_name}:{connection.id}"
+                )
                 log_structured(
                     logger,
                     "info",
@@ -192,6 +229,8 @@ def sync_vendor_data(
                     provider=provider_name,
                     task="sync_vendor_data",
                     user_id=user_id,
+                    connection_id=str(connection.id),
+                    account_label=connection.account_label,
                 )
 
                 run_id = new_run_id(prefix="pull")
@@ -260,8 +299,13 @@ def sync_vendor_data(
                             primary_user_id=existing_primary,
                             metadata={"is_historical": is_historical, "linked_account": True, "skipped": True},
                         )
-                        result.providers_synced[provider_name] = ProviderSyncResult(
-                            success=True, params={"linked_account": True, "skipped": True}
+                        result.providers_synced[result_key] = ProviderSyncResult(
+                            success=True,
+                            params={
+                                "linked_account": True,
+                                "skipped": True,
+                                "connection_id": str(connection.id),
+                            },
                         )
                         continue
 
@@ -523,12 +567,18 @@ def sync_vendor_data(
                                     "end_date": end_date,
                                     "providers": [provider_name],
                                     "is_historical": is_historical,
+                                    # The linked profile may hold several accounts
+                                    # with this provider; only the one sharing this
+                                    # external account should receive the fan-out.
+                                    "connection_ids": [str(linked_conn.id)],
                                     "_skip_linked_fan_out": True,
                                     "_linked_primary_user_id": user_id,
                                 }
                             )
 
-                    result.providers_synced[provider_name] = provider_result
+                    provider_result.params["connection_id"] = str(connection.id)
+                    provider_result.params["account_label"] = connection.account_label
+                    result.providers_synced[result_key] = provider_result
                     log_structured(
                         logger,
                         "info",
@@ -625,7 +675,7 @@ def sync_vendor_data(
                             "trace_id": trace_id,
                         },
                     )
-                    result.errors[provider_name] = str(e)
+                    result.errors[result_key] = str(e)
                     continue
                 finally:
                     clear_primary_lease()
@@ -641,3 +691,7 @@ def sync_vendor_data(
             )
             result.errors["general"] = str(e)
             return result.model_dump()
+        finally:
+            # Celery reuses worker threads, so a scope left set here would be
+            # inherited by whatever task runs next on this thread.
+            clear_active_connection()

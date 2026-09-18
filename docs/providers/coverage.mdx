@@ -493,7 +493,8 @@ curl -X GET "https://api.openwearables.com/api/v1/users/{user_id}/connections" \
   -H "X-Open-Wearables-API-Key: YOUR_API_KEY"
 ```
 
-Response shows which providers are connected:
+Response shows the connected accounts — one entry per account, so a user who
+holds two accounts with one provider appears twice:
 
 ```json
 [

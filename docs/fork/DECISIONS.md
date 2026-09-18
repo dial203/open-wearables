@@ -226,3 +226,41 @@ Template:
   (which `make build` runs). A host build or `pnpm dev` still prefers live git over the
   stamp, so a stale stamp only ever affects a Docker image; `FORK_VERSION`,
   `FORK_COMMIT` and `FORK_UPDATED_AT` override both for CI.
+
+## Several provider accounts per user
+
+- **Area**: backend, frontend, docs
+- **Status**: active
+- **On conflict**: keep ours; re-apply upstream's change to `user_connection` or
+  `data_source` on top, and check whether the upstream path resolves a connection
+  from `(user_id, provider)` — if it does, it needs an account scope
+- **Why**: Upstream enforces one account per provider per user with a `UNIQUE`
+  index on `user_connection(user_id, provider)`. That is right for a consumer app
+  and wrong for device-comparison work, where one participant wears two units of
+  the same brand at once, each on its own account, and keeping the two streams
+  apart is the entire point. The fork replaces that index with two partial unique
+  indexes on the *external* account — `(user_id, provider, provider_user_id)` and
+  `(user_id, provider, lower(account_email))`, active rows only — so the same
+  login still cannot be linked twice, and adds `account_label` / `account_email`
+  so every data set is traceable to the login it came from.
+
+  `data_source`'s identity index gains `user_connection_id`. This is the
+  load-bearing half: two accounts with one provider report identical
+  `device_model` and `source`, so without it both units' samples pool into one
+  `data_source` and can never be separated again. Connection-less rows are
+  adopted only when the user holds a single account — a wrong split is visible
+  and reversible, a wrong merge is not.
+
+  `app/utils/connection_context.py` is fork-only and is what keeps this from
+  being a rewrite of every provider: the provider layer resolves credentials from
+  `(user_id, provider)` throughout, so instead of threading a connection id
+  through every signature, callers that know which account they are acting for
+  bind a `ContextVar` and `UserConnectionRepository` honours it. Any upstream
+  change that adds a new `(user_id, provider)` lookup on a sync or webhook path
+  needs the same treatment.
+
+  Known limit, deliberate: Garmin's 30-day backfill chain keeps progress in Redis
+  keyed by user, so backfills for a user's several Garmin accounts run
+  sequentially rather than concurrently — a second request is re-queued, not
+  dropped. Making it concurrent means re-keying the whole backfill state module
+  and was judged not worth the risk against the value.

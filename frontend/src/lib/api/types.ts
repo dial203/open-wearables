@@ -311,6 +311,53 @@ export interface Provider {
 export type WearableProvider =
   'fitbit' | 'garmin' | 'oura' | 'whoop' | 'strava' | 'google-fit' | 'withings';
 
+/** What a connected provider account is for. Mirrors backend AccountType. */
+export type AccountType =
+  | 'personal'
+  | 'validation'
+  | 'reliability'
+  | 'monitoring'
+  | 'testing'
+  | 'other';
+
+/** Presentation order and wording, matching the backend's own descriptions. */
+export const ACCOUNT_TYPES: {
+  value: AccountType;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: 'personal',
+    label: 'Personal',
+    description: "The participant's own everyday account",
+  },
+  {
+    value: 'validation',
+    label: 'Validation',
+    description: 'Criterion or device-comparison study',
+  },
+  {
+    value: 'reliability',
+    label: 'Reliability',
+    description: 'Test-retest or inter-device consistency',
+  },
+  {
+    value: 'monitoring',
+    label: 'Monitoring',
+    description: 'Ongoing athlete or tactical readiness monitoring',
+  },
+  {
+    value: 'testing',
+    label: 'Testing',
+    description: 'Device or integration checkout, not participant data',
+  },
+  { value: 'other', label: 'Other', description: 'Anything else' },
+];
+
+export function accountTypeLabel(type: AccountType | null | undefined): string {
+  return ACCOUNT_TYPES.find((t) => t.value === type)?.label ?? 'Unclassified';
+}
+
 export interface UserConnection {
   user_id: string;
   provider: string;
@@ -318,7 +365,35 @@ export interface UserConnection {
   provider_username?: string;
   scope?: string;
   id: string;
-  /** Manually-set or auto-derived device behind this connection (e.g. "Whoop 5.0"). */
+  /**
+   * Human name for this account. A user may hold several accounts with one
+   * provider - two Whoops worn at once for a reliability study - and this is
+   * what tells them apart on screen.
+   */
+  account_label?: string | null;
+  /**
+   * Login e-mail of the provider account. The record of which account a data
+   * set came from; captured from the provider where its API exposes one and
+   * entered by hand otherwise.
+   */
+  account_email?: string | null;
+  /** Never empty: falls back through username, e-mail and finally the id. */
+  display_label?: string;
+  /** 1-based position among this user's accounts with the same provider. */
+  account_index?: number;
+  /** How many accounts this user holds with this provider. */
+  account_count?: number;
+  /**
+   * What this account is for. Null when nobody has classified it.
+   */
+  account_type?: AccountType | null;
+  /**
+   * Device models this account has actually reported, humanised, most recent
+   * first. Derived from ingested data, not typed by anyone — an account whose
+   * provider sends device metadata labels itself.
+   */
+  observed_devices?: string[];
+  /** Manually-set device behind this connection (e.g. "Whoop 5.0"), for providers that report none. */
   device_label?: string | null;
   status: 'active' | 'revoked' | 'expired';
   last_synced_at?: string;
@@ -372,8 +447,21 @@ export interface SourceMetadata {
   /** Marketing name derived from `device`. Still describes whatever `device` named. */
   device_name: string | null;
   device_type: DeviceType | null;
+  /**
+   * Stable id of the ingest identity this sample belongs to. Includes the
+   * connected account by construction, so two accounts with the same provider
+   * and the same device model have different ids here. The right key whenever
+   * you need "one distinct source".
+   */
+  data_source_id?: string | null;
+  /**
+   * The connected provider account this sample arrived through. Resolve against
+   * GET /users/{id}/connections for its classification, name and e-mail.
+   */
+  user_connection_id?: string | null;
   /** The attributed physical unit, null when the source is not attributed to one. */
   device_id?: string | null;
+  /** Human-assigned name for that device, if one has been set. */
   device_label?: string | null;
   /**
    * What to call the unit: its label, else its hand-set model, else the provider's

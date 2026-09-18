@@ -7,12 +7,16 @@ from app.models import UserConnection
 from app.repositories.data_source_repository import DataSourceRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.enums import ProviderName, SdkConnectionOutcome
-from app.schemas.model_crud.user_management import UserConnectionCreate, UserConnectionUpdate
+from app.schemas.model_crud.user_management import (
+    UserConnectionAccountUpdate,
+    UserConnectionCreate,
+    UserConnectionUpdate,
+)
 from app.schemas.responses.upload import ConnectionsCoverage, ProviderConnectionCount
 from app.services.outgoing_webhooks.events import on_connection_created, on_connection_revoked
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.services import AppService
-from app.utils.exceptions import ResourceNotFoundError, handle_exceptions
+from app.utils.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError, handle_exceptions
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
@@ -36,22 +40,126 @@ class UserConnectionService(
         user_id: UUID,
         provider: ProviderName,
         device_label: str | None,
+        connection_id: UUID | None = None,
     ) -> UserConnection | None:
-        """Set the device label on a user's connection and relabel that
-        provider's existing device-less data sources so already-ingested data
+        """Set the device label on one connected account and relabel that
+        account's existing device-less data sources so already-ingested data
         also carries it (future data is filled by ensure_data_source).
-        Returns None when the user has no connection for the provider.
+
+        Without ``connection_id`` this addresses the user's connection for the
+        provider the way it always did - which is still unambiguous for the many
+        users who hold one account, and picks the oldest with a logged warning
+        for those who hold several.
+
+        Returns None when the account does not exist.
         """
-        connection = self.crud.get_by_user_and_provider(db_session, user_id, provider.value)
+        connection = self._resolve(db_session, user_id, provider.value, connection_id)
         if connection is None:
             return None
         connection.device_label = device_label
         connection.updated_at = datetime.now(timezone.utc)
         db_session.add(connection)
-        self.data_source_crud.set_connection_device_label(db_session, user_id, provider, device_label)
+        self.data_source_crud.set_connection_device_label(db_session, user_id, provider, device_label, connection.id)
         db_session.commit()
         db_session.refresh(connection)
         return connection
+
+    def _resolve(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        connection_id: UUID | None,
+    ) -> UserConnection | None:
+        """One account, by id when given and by (user, provider) otherwise.
+
+        An id belonging to another user or another provider resolves to None
+        rather than to some other account: addressing the wrong wearable is a
+        worse outcome than a 404.
+        """
+        if connection_id is None:
+            return self.crud.get_by_user_and_provider(db_session, user_id, provider)
+        connection = self.crud.get_by_id_for_user(db_session, user_id, connection_id)
+        if connection is None or connection.provider != provider:
+            return None
+        return connection
+
+    @handle_exceptions
+    def get_account(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        connection_id: UUID,
+    ) -> UserConnection | None:
+        """One of the user's connected accounts by id."""
+        return self.crud.get_by_id_for_user(db_session, user_id, connection_id)
+
+    @handle_exceptions
+    def get_accounts_for_provider(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        *,
+        active_only: bool = False,
+    ) -> list[UserConnection]:
+        """Every account this user holds with one provider, oldest first."""
+        return self.crud.get_all_by_user_and_provider(db_session, user_id, provider, active_only=active_only)
+
+    @handle_exceptions
+    def update_account(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        connection_id: UUID,
+        payload: UserConnectionAccountUpdate,
+        fields_set: set[str],
+    ) -> UserConnection | None:
+        """Rename an account, or correct the e-mail or device recorded for it.
+
+        ``fields_set`` is the request's own set of supplied fields, so an
+        explicit ``null`` clears a value while an omitted field is left alone.
+        The two cannot be told apart from the parsed payload, and conflating
+        them would let a rename silently drop the e-mail that says which
+        account the data came from.
+        """
+        connection = self.crud.get_by_id_for_user(db_session, user_id, connection_id)
+        if connection is None:
+            return None
+
+        if "account_email" in fields_set and payload.account_email is not None:
+            clash = self.crud.get_by_account_email(db_session, user_id, connection.provider, str(payload.account_email))
+            if clash is not None and clash.id != connection.id:
+                raise ResourceAlreadyExistsError(
+                    f"Another {connection.provider} account for this user already uses that e-mail",
+                )
+
+        updated = self.crud.update_account_metadata(
+            db_session,
+            connection,
+            account_type=payload.account_type.value if payload.account_type is not None else None,
+            account_label=payload.account_label,
+            account_email=str(payload.account_email) if payload.account_email is not None else None,
+            device_label=payload.device_label,
+            clear_account_type="account_type" in fields_set and payload.account_type is None,
+            clear_account_label="account_label" in fields_set and payload.account_label is None,
+            clear_account_email="account_email" in fields_set and payload.account_email is None,
+            clear_device_label="device_label" in fields_set and payload.device_label is None,
+        )
+
+        # A device label is also stamped onto already-ingested, device-less data
+        # so history and future samples agree on what was worn.
+        if "device_label" in fields_set and payload.device_label:
+            self.data_source_crud.set_connection_device_label(
+                db_session,
+                user_id,
+                ProviderName(connection.provider),
+                payload.device_label,
+                connection.id,
+            )
+            db_session.commit()
+
+        return updated
 
     def get_active_count_in_range(self, db_session: DbSession, start_date: datetime, end_date: datetime) -> int:
         """Get count of active connections created within a date range."""
@@ -130,20 +238,37 @@ class UserConnectionService(
         provider: str,
         oauth: BaseOAuthTemplate | None = None,
         reason: str = "user_disconnected",
+        connection_id: UUID | None = None,
     ) -> None:
-        """Disconnect a user from a provider. Raises 404 if connection not found.
+        """Disconnect a user from a provider. Raises 404 if no connection exists.
 
-        If oauth is provided, calls the provider's deregistration API before clearing tokens.
-        Deregistration failures are logged but do not block the disconnect.
+        With ``connection_id`` only that account is disconnected; without it,
+        every account the user holds with the provider is, which is what
+        "disconnect me from Garmin" has always meant and still means.
 
-        ``reason`` reaches the log line and the ``connection.revoked`` webhook.
+        Each account is deregistered and revoked on its own and gets its own
+        ``connection.revoked`` webhook: consumers key off the connection id, and
+        one event for three revoked accounts would leave two of them looking
+        connected downstream.
+
+        If oauth is provided, calls the provider's deregistration API before
+        clearing tokens. Deregistration failures are logged but do not block.
         """
-        if oauth:
-            self._deregister_from_provider(db_session, user_id, provider, oauth)
+        targets = self._disconnect_targets(db_session, user_id, provider, connection_id)
+        if not targets:
+            raise ResourceNotFoundError("connection", user_id)
 
-        updated = self.crud.disconnect(db_session, user_id, provider)
-        if updated:
-            connection = self.crud.get_by_user_and_provider(db_session, user_id, provider)
+        revoked_any = False
+        for connection in targets:
+            if oauth:
+                self._deregister_from_provider(db_session, user_id, provider, oauth, connection)
+
+            if not self.crud.disconnect(db_session, user_id, provider, connection.id):
+                # Already revoked - nothing changed, so nothing to announce.
+                continue
+
+            revoked_any = True
+            db_session.refresh(connection)
             log_structured(
                 self.logger,
                 "info",
@@ -152,56 +277,100 @@ class UserConnectionService(
                 reason=reason,
                 provider=provider,
                 user_id=str(user_id),
-                connection_id=str(connection.id) if connection else None,
+                connection_id=str(connection.id),
             )
-            if connection:
-                on_connection_revoked(
-                    user_id=user_id,
-                    provider=provider,
-                    connection_id=connection.id,
-                    reason=reason,
-                    revoked_at=connection.updated_at.isoformat(),
-                )
+            on_connection_revoked(
+                user_id=user_id,
+                provider=provider,
+                connection_id=connection.id,
+                reason=reason,
+                revoked_at=connection.updated_at.isoformat(),
+            )
+
+        if not revoked_any:
+            # Every target was already revoked. Idempotent, as before: the caller
+            # asked for a state that already holds.
             return
 
-        # Nothing updated - check if connection exists (already revoked) or not found
-        connection = self.crud.get_by_user_and_provider(db_session, user_id, provider)
-        if not connection:
-            raise ResourceNotFoundError("connection", user_id)
+    def _disconnect_targets(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        connection_id: UUID | None,
+    ) -> list[UserConnection]:
+        """The accounts a disconnect call applies to."""
+        if connection_id is None:
+            return self.crud.get_all_by_user_and_provider(db_session, user_id, provider)
+        connection = self.crud.get_by_id_for_user(db_session, user_id, connection_id)
+        if connection is None or connection.provider != provider:
+            return []
+        return [connection]
 
     @handle_exceptions
     def purge_provider_data(
-        self, db_session: DbSession, user_id: UUID, provider: str, oauth: BaseOAuthTemplate | None = None
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        oauth: BaseOAuthTemplate | None = None,
+        connection_id: UUID | None = None,
     ) -> int:
-        """Revoke the connection and delete all of the user's data for the provider.
+        """Revoke the connection(s) and delete the user's data for the provider.
 
         Runs the standard disconnect (best-effort deregistration, revoke, webhook), then
         deletes the user's data_source rows for the provider. ON DELETE CASCADE removes all
         dependent event records, series, details and health scores. Returns the number of
         data_source rows deleted. Safe to call on an already-revoked connection.
+
+        With ``connection_id`` only that account's data is deleted; the other
+        accounts the user holds with the same provider are untouched, which is
+        what makes it safe to drop one arm of a validation study without losing
+        the comparator worn beside it.
         """
-        self.disconnect(db_session, user_id, provider, oauth=oauth)
-        deleted = self.data_source_crud.delete_user_provider_data(db_session, user_id, ProviderName(provider))
-        self.logger.info("Purged %s data sources for user %s from provider %s", deleted, user_id, provider)
+        self.disconnect(db_session, user_id, provider, oauth=oauth, connection_id=connection_id)
+        if connection_id is None:
+            deleted = self.data_source_crud.delete_user_provider_data(db_session, user_id, ProviderName(provider))
+        else:
+            deleted = self.data_source_crud.delete_connection_data(db_session, user_id, connection_id)
+        self.logger.info(
+            "Purged %s data sources for user %s from provider %s (connection=%s)",
+            deleted,
+            user_id,
+            provider,
+            connection_id or "all",
+        )
         return deleted
 
     @handle_exceptions
-    def stamp_last_synced_at(self, db_session: DbSession, user_id: UUID, provider: str) -> None:
+    def stamp_last_synced_at(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        connection_id: UUID | None = None,
+    ) -> None:
         """Stamp last_synced_at=now on the user's connection for the given provider.
 
         Used after OAuth completion so the first periodic sync uses the connection
         timestamp as its live-sync cursor and won't attempt to pull all historical data.
         No-op if the connection does not exist.
         """
-        connection = self.crud.get_by_user_and_provider(db_session, user_id, provider)
+        connection = self._resolve(db_session, user_id, provider, connection_id)
         if connection:
             self.crud.update_last_synced_at(db_session, connection)
 
     def _deregister_from_provider(
-        self, db_session: DbSession, user_id: UUID, provider: str, oauth: BaseOAuthTemplate
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        oauth: BaseOAuthTemplate,
+        connection: UserConnection | None = None,
     ) -> None:
-        """Best-effort call to provider's deregistration API."""
-        connection = self.crud.get_by_user_and_provider(db_session, user_id, provider)
+        """Best-effort call to provider's deregistration API, for one account."""
+        if connection is None:
+            connection = self.crud.get_by_user_and_provider(db_session, user_id, provider)
         if not connection or not connection.access_token:
             return
 

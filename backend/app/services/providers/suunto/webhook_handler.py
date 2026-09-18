@@ -31,6 +31,7 @@ from app.services.providers.suunto.data_247 import Suunto247Data
 from app.services.providers.suunto.workouts import SuuntoWorkouts
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.raw_payload_storage import store_raw_payload
+from app.utils.connection_context import active_connection
 from app.utils.structured_logging import log_structured
 
 logger = logging.getLogger(__name__)
@@ -177,26 +178,30 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
 
         result: dict[str, Any] = {"event_type": event_type, "user_id": str(user_id)}
 
-        if event_type == "WORKOUT_CREATED":
-            result.update(self._process_workout(db, user_id, payload, trace_id))
-        elif event_type == "SUUNTO_247_SLEEP_CREATED":
-            result.update(self._process_sleep(db, user_id, payload, trace_id))
-        elif event_type == "SUUNTO_247_ACTIVITY_CREATED":
-            result.update(self._process_activity(db, user_id, payload, trace_id))
-        elif event_type == "SUUNTO_247_RECOVERY_CREATED":
-            result.update(self._process_recovery(db, user_id, payload, trace_id))
-        elif event_type == "ROUTE_CREATED":
-            result["status"] = "skipped"
-        else:
-            log_structured(
-                logger,
-                "warning",
-                "Unknown Suunto event type",
-                provider="suunto",
-                trace_id=trace_id,
-                event_type=event_type,
-            )
-            result["status"] = "unknown_event_type"
+        # Bind the Suunto account the webhook named. The processing below
+        # re-resolves a token from (user, provider), which is no longer a
+        # single account for a participant wearing two watches.
+        with active_connection(connection.id):
+            if event_type == "WORKOUT_CREATED":
+                result.update(self._process_workout(db, user_id, payload, trace_id))
+            elif event_type == "SUUNTO_247_SLEEP_CREATED":
+                result.update(self._process_sleep(db, user_id, payload, trace_id))
+            elif event_type == "SUUNTO_247_ACTIVITY_CREATED":
+                result.update(self._process_activity(db, user_id, payload, trace_id))
+            elif event_type == "SUUNTO_247_RECOVERY_CREATED":
+                result.update(self._process_recovery(db, user_id, payload, trace_id))
+            elif event_type == "ROUTE_CREATED":
+                result["status"] = "skipped"
+            else:
+                log_structured(
+                    logger,
+                    "warning",
+                    "Unknown Suunto event type",
+                    provider="suunto",
+                    trace_id=trace_id,
+                    event_type=event_type,
+                )
+                result["status"] = "unknown_event_type"
 
         self.connection_repo.update_last_synced_at(db, connection)
         db.commit()

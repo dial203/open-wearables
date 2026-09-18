@@ -93,6 +93,19 @@ class SourceMetadata(BaseModel):
         ),
         example="Muse S Athena",
     )
+    # Which connected provider account this sample arrived through. A user may
+    # hold several accounts with one provider, and then the provider alone no
+    # longer says where a sample came from - this does. Resolve it against
+    # GET /users/{user_id}/connections for the account's label and e-mail; the
+    # id is on the data_source row, so exposing it costs no extra query on a
+    # path that runs per sample.
+    user_connection_id: UUID | None = Field(
+        None,
+        description=(
+            "Id of the connected provider account this data came through, or null for "
+            "one-time imports. Identical to `id` from /users/{user_id}/connections."
+        ),
+    )
 
     @classmethod
     def from_data_source(cls, data_source: Any) -> "SourceMetadata":
@@ -121,6 +134,7 @@ class SourceMetadata(BaseModel):
                 else None
             ),
             device_id=getattr(data_source, "device_id", None),
+            user_connection_id=getattr(data_source, "user_connection_id", None),
             # device_type last: the registry's answer overrides the one inferred at
             # ingest from the provider's model string, which on a relayed stream names
             # the phone that ran the writing app. Read through the relationship only

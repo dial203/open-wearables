@@ -78,6 +78,92 @@ export function usePurgeProviderData(provider: string, userId: string) {
 }
 
 /**
+ * Rename one connected account, or correct its e-mail or device.
+ * Uses PATCH /api/v1/users/{user_id}/connections/accounts/{connection_id}
+ *
+ * Per account rather than per provider: a participant may have two Whoops, and
+ * "the Whoop connection" no longer names one of them.
+ */
+export function useUpdateConnectionAccount(
+  userId: string,
+  connectionId: string
+) {
+  return useMutation({
+    mutationFn: (patch: {
+      account_type?: string | null;
+      account_label?: string | null;
+      account_email?: string | null;
+      device_label?: string | null;
+    }) => healthService.updateConnectionAccount(userId, connectionId, patch),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.connections.all(userId),
+      });
+      toast.success('Account updated');
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : 'Failed to update account';
+      toast.error(message);
+    },
+  });
+}
+
+/**
+ * Disconnect one account, leaving the user's other accounts with the same
+ * provider connected.
+ * Uses DELETE /api/v1/users/{user_id}/connections/accounts/{connection_id}
+ */
+export function useDisconnectConnectionAccount(
+  userId: string,
+  connectionId: string,
+  accountName: string
+) {
+  return useMutation({
+    mutationFn: () =>
+      healthService.disconnectConnectionAccount(userId, connectionId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.connections.all(userId),
+      });
+      toast.success(`Disconnected ${accountName}`);
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : 'Failed to disconnect';
+      toast.error(message);
+    },
+  });
+}
+
+/**
+ * Revoke one account and delete only the data that came through it.
+ * Uses DELETE /api/v1/users/{user_id}/connections/accounts/{connection_id}/data
+ */
+export function usePurgeConnectionAccountData(
+  userId: string,
+  connectionId: string,
+  accountName: string
+) {
+  return useMutation({
+    mutationFn: () =>
+      healthService.purgeConnectionAccountData(userId, connectionId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.connections.all(userId),
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.health.all });
+      toast.success(`Deleted all data from ${accountName}`);
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : 'Failed to delete data';
+      toast.error(message);
+    },
+  });
+}
+
+/**
  * Get user connections for a user
  * Uses GET /api/v1/users/{user_id}/connections
  */

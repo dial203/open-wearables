@@ -80,9 +80,13 @@ class GoogleOAuth(BaseOAuthTemplate):
         are best-effort so a scope/permission gap never fails the whole connection.
         """
         headers = {"Authorization": f"Bearer {token_response.access_token}"}
+        email = self._fetch(self.USERINFO_URL, headers, "email", user_id)
         return {
             "user_id": self._fetch(f"{self.api_base_url}{IDENTITY_ENDPOINT}", headers, "healthUserId", user_id),
-            "username": self._fetch(self.USERINFO_URL, headers, "email", user_id),
+            "username": email,
+            # Also recorded as the account e-mail, which is what identifies this
+            # Google account among several linked to the same participant.
+            "email": email,
         }
 
     def _fetch(self, url: str, headers: dict[str, str], field: str, user_id: str) -> str | None:

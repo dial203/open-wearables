@@ -120,7 +120,7 @@ class TestGarminHistoricalSync:
         assert result.days is None  # Garmin ignores days param
         assert result.start_date is None
         assert result.end_date is None
-        mock_backfill.delay.assert_called_once_with(str(user_id))
+        mock_backfill.delay.assert_called_once_with(str(user_id), connection_id=None)
 
     @patch("app.services.providers.garmin.strategy.start_garmin_full_backfill")
     def test_ignores_days_parameter(self, mock_backfill: MagicMock) -> None:
@@ -131,7 +131,18 @@ class TestGarminHistoricalSync:
         result = GarminStrategy().start_historical_sync(user_id, days=365)
 
         assert result.days is None
-        mock_backfill.delay.assert_called_once_with(str(user_id))
+        mock_backfill.delay.assert_called_once_with(str(user_id), connection_id=None)
+
+    @patch("app.services.providers.garmin.strategy.start_garmin_full_backfill")
+    def test_names_the_account_to_backfill(self, mock_backfill: MagicMock) -> None:
+        """A user may hold several Garmin accounts; only one is backfilled at a time."""
+        mock_backfill.delay.return_value = MagicMock(id="task-456")
+        user_id = uuid4()
+        connection_id = uuid4()
+
+        GarminStrategy().start_historical_sync(user_id, days=30, connection_id=connection_id)
+
+        mock_backfill.delay.assert_called_once_with(str(user_id), connection_id=str(connection_id))
 
 
 class TestUnsupportedHistoricalSync:

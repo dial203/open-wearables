@@ -14,6 +14,7 @@ from app.schemas.sync_status import SyncSource, SyncStatus
 from app.services.providers.garmin.backfill_state import get_trace_id
 from app.services.providers.garmin.data_247 import Garmin247Data
 from app.services.sync_status_service import emit_sync_completed, new_run_id
+from app.utils.connection_context import active_connection
 from app.utils.structured_logging import log_structured
 
 logger = logging.getLogger(__name__)
@@ -32,17 +33,23 @@ def process_wellness_items(
     """Process wellness notifications for a single data type.
 
     Detects PING (items have ``callbackURL``) vs PUSH (inline data) per item.
-    Groups resolved records by user_id before calling ``process_items_batch``
+    Groups resolved records by *connection* before calling ``process_items_batch``
     to minimise DB round-trips.  All OW profiles sharing a Garmin account
     receive the data; the first connection per garmin_user_id is primary
     (WEBHOOK source), any others are secondaries (LINKED_ACCOUNT source).
 
+    The grouping key is the connection rather than the user because one user may
+    hold several Garmin accounts: keying by user would pool two watches' batches
+    into one call, and whichever account resolved first would take credit for
+    both units' data.
+
     Returns:
         {"processed": int, "saved": int, "succeeded_users": list[str]}
     """
-    user_items: dict[UUID, list[dict[str, Any]]] = {}
-    # Maps secondary user_id → primary user_id for LINKED_ACCOUNT events.
-    secondary_primary: dict[UUID, UUID] = {}
+    # (user_id, connection_id) -> notifications for that account.
+    connection_items: dict[tuple[UUID, UUID], list[dict[str, Any]]] = {}
+    # Maps a secondary (user_id, connection_id) → primary user_id for LINKED_ACCOUNT events.
+    secondary_primary: dict[tuple[UUID, UUID], UUID] = {}
 
     for notification in notifications:
         garmin_user_id: str | None = notification.get("userId")
@@ -79,21 +86,24 @@ def process_wellness_items(
 
         primary_user_id = connections[0].user_id
         for i, connection in enumerate(connections):
-            user_id = connection.user_id
-            user_items.setdefault(user_id, []).append(notification)
+            key = (connection.user_id, connection.id)
+            connection_items.setdefault(key, []).append(notification)
             if i > 0:
-                secondary_primary.setdefault(user_id, primary_user_id)
+                secondary_primary.setdefault(key, primary_user_id)
 
-    total_processed = sum(len(items) for items in user_items.values())
+    total_processed = sum(len(items) for items in connection_items.values())
     total_saved = 0
     succeeded_users: list[str] = []
 
-    for uid, items in user_items.items():
+    for (uid, connection_id), items in connection_items.items():
         trace_id = get_trace_id(uid) or request_trace_id
-        is_secondary = uid in secondary_primary
+        is_secondary = (uid, connection_id) in secondary_primary
         sync_source = SyncSource.LINKED_ACCOUNT if is_secondary else SyncSource.WEBHOOK
         try:
-            count = garmin_247.process_items_batch(db, uid, summary_type, items)
+            # Bind the account: process_items_batch re-resolves the connection
+            # from (user, provider) to stamp data sources and download FIT files.
+            with active_connection(connection_id):
+                count = garmin_247.process_items_batch(db, uid, summary_type, items)
             total_saved += count
             synced_user_ids.add(uid)
             succeeded_users.append(str(uid))
@@ -116,11 +126,12 @@ def process_wellness_items(
                 status=SyncStatus.SUCCESS,
                 message=f"Garmin live data received: {summary_type}",
                 items_processed=count,
-                primary_user_id=secondary_primary.get(uid),
+                primary_user_id=secondary_primary.get((uid, connection_id)),
                 metadata={
                     "trace_id": trace_id,
                     "summary_type": summary_type,
                     "items": len(items),
+                    "connection_id": str(connection_id),
                 },
             )
         except Exception as e:

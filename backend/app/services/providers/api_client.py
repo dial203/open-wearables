@@ -14,6 +14,7 @@ from app.database import DbSession
 from app.integrations.redis_client import get_redis_client
 from app.repositories import UserConnectionRepository
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
+from app.utils.connection_context import active_connection
 from app.utils.structured_logging import log_structured
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,12 @@ def _get_valid_token(
     """Get a valid access token, refreshing if necessary.
 
     Private function used internally by make_authenticated_request.
+
+    Which account's token this is depends on the caller: inside an
+    :func:`~app.utils.connection_context.active_connection` scope - what the sync
+    task and the webhook handlers establish - it is that account's. Outside one,
+    for a user holding several accounts with the provider, the repository picks
+    the oldest and logs it.
     """
     connection = connection_repo.get_by_user_and_provider(db, user_id, provider_name)
     if not connection:
@@ -55,10 +62,12 @@ def _get_valid_token(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Token expired and no refresh token available for {provider_name}",
             )
-        # Scope distributed lock per user/provider to avoid concurrent refresh race conditions.
-
+        # Scope the distributed lock per connection to avoid concurrent refresh
+        # races. Per account rather than per provider: two accounts on one user
+        # hold independent tokens, and a shared lock would serialise syncs that
+        # have nothing to do with each other.
         redis_client = get_redis_client()
-        lock_key = f"token_refresh_lock:{provider_name}:{user_id}"
+        lock_key = f"token_refresh_lock:{provider_name}:{user_id}:{connection.id}"
 
         with redis_client.lock(lock_key, timeout=60, blocking_timeout=10, sleep=0.2):
             # Fetch and refresh connection instance inside the lock
@@ -89,7 +98,11 @@ def _get_valid_token(
                     detail=f"Token expired and no refresh token available for {provider_name}",
                 )
 
-            token_response = oauth.refresh_access_token(db, user_id, connection.refresh_token)
+            # refresh_access_token re-resolves the connection by (user, provider);
+            # binding the scope here keeps it on the row whose refresh token we
+            # just read instead of letting it pick a different account.
+            with active_connection(connection.id):
+                token_response = oauth.refresh_access_token(db, user_id, connection.refresh_token)
             return token_response.access_token
 
     return connection.access_token

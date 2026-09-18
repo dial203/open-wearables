@@ -8,6 +8,7 @@ Tests the following endpoints:
 
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -252,7 +253,7 @@ class TestSyncHistoricalEndpoint:
         assert data["provider"] == "oura"
         assert data["task_id"] == "task-abc"
         assert data["method"] == "pull_api"
-        mock_strategy.start_historical_sync.assert_called_once_with(user.id, 90)
+        mock_strategy.start_historical_sync.assert_called_once_with(user.id, 90, connection_id=None)
 
     def test_historical_sync_passes_days_param(
         self, client: TestClient, db: Session, mock_provider_factory: MagicMock
@@ -277,7 +278,34 @@ class TestSyncHistoricalEndpoint:
         )
 
         assert response.status_code == 200
-        mock_strategy.start_historical_sync.assert_called_once_with(user.id, 30)
+        mock_strategy.start_historical_sync.assert_called_once_with(user.id, 30, connection_id=None)
+
+    def test_historical_sync_forwards_connection_id(
+        self, client: TestClient, db: Session, mock_provider_factory: MagicMock
+    ) -> None:
+        """A user with several accounts on one provider can back-fill just one."""
+        user = UserFactory()
+        api_key = ApiKeyFactory()
+        connection_id = uuid4()
+
+        mock_strategy = MagicMock()
+        mock_strategy.start_historical_sync.return_value = HistoricalSyncResult(
+            task_id="task-one-account",
+            method="pull_api",
+            message="Queued",
+            days=90,
+        )
+        mock_provider_factory.get_provider.return_value = mock_strategy
+
+        response = client.post(
+            f"/api/v1/providers/oura/users/{user.id}/sync/historical",
+            headers={"X-Open-Wearables-API-Key": api_key.plain_key},
+            params={"connection_id": str(connection_id)},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["connection_id"] == str(connection_id)
+        mock_strategy.start_historical_sync.assert_called_once_with(user.id, 90, connection_id=connection_id)
 
     def test_historical_sync_not_implemented_returns_400(
         self, client: TestClient, db: Session, mock_provider_factory: MagicMock
