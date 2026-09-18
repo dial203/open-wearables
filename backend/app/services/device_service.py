@@ -88,6 +88,10 @@ class DeviceService:
             device_type=payload.device_type,
             brand=payload.brand,
             model_raw=payload.model_raw,
+            model_display=payload.model_display,
+            brand_display=payload.brand_display,
+            serial=payload.serial,
+            firmware_version=payload.firmware_version,
             label=payload.label,
             # Anything a person typed is a manual label from the start, so detection
             # will not later overwrite it.
@@ -267,6 +271,10 @@ class DeviceService:
             brand=device.brand,
             model_raw=device.model_raw,
             model_display=device.model_display,
+            brand_display=device.brand_display,
+            host_model_raw=device.host_model_raw,
+            serial=device.serial,
+            firmware_version=device.firmware_version,
             device_type=device.device_type,
             label=device.label,
             label_source=device.label_source,

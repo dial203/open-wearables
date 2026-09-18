@@ -14,6 +14,10 @@ cannot represent "one physical device", because no provider gives us one view of
   so a user's Garmin sleep and Garmin activities cannot be told apart by device.
 - **Apple Health and Google Health are aggregators.** They relay other makers'
   hardware, so "the Apple connection" is not a device.
+- A **third-party app writing into HealthKit or Health Connect** generally passes no
+  device record, so the platform reports the *phone that ran the app*. The Muse app on
+  an iPhone sends `iPhone 17 Pro` for data a headband recorded — and so does every
+  other app on that handset.
 - The **same unit arriving by several routes** shares no identifier between them.
 
 The registry sits above `data_source` and answers "which unit produced this?"
@@ -23,7 +27,7 @@ separately from "which path did it arrive by?".
 
 | Table | What it holds |
 |---|---|
-| `device` | One physical unit. Editable: label, type, wear location, notes, active/retired. |
+| `device` | One physical unit. Editable: label, type, brand and model for display, serial, firmware, wear location, notes, active/retired. |
 | `device_identity` | One identity claim per ingest route. A device accumulates several. |
 | `device_history` | Append-only record of every attribution change. |
 | `device_link_proposal` | Cross-route candidates, scored, with their evidence. |
@@ -78,12 +82,43 @@ point the samples cannot be separated again.
 Detection therefore:
 
 1. Groups on a **strong** claim wherever one exists.
-2. Otherwise groups on the provider's own **model string, within one route only**.
+2. Otherwise groups on the provider's own **model string, within one route only** —
+   except where that string names the relaying phone (below), in which case it groups
+   on the **writing app**, within one route only.
 3. **Never** groups across routes.
 4. Treats attribution as **write-once**: a data source that already belongs to a
    device is never moved by a later sync. A conflicting claim becomes a proposal.
 5. Creates **no device at all** when the provider reports no model. Unattributed is a
    normal resting state, not an error.
+
+## Relayed streams: the model string names the phone
+
+`relaying_host_model` (`app/services/devices/identity.py`) recognises the one case
+where a provider's model string is not evidence about the device at all: an aggregator
+route, a third-party writer, and a model that infers to `phone`. It fires narrowly —
+the platform writing about its own handset (`com.apple.*`, or a writer whose name is
+itself a phone) still means the handset, and a direct route never relays.
+
+Taken at face value that string is worse than no signal. Grouping on it collapses every
+brand relayed through one phone into a single device — the over-merge this package
+exists to prevent, reached through the rule meant to prevent it. So for those sources:
+
+| Field | Value |
+|---|---|
+| grouping key | the writing app's claim (`healthkit_bundle` / `health_connect_package`) |
+| `model_raw` | **NULL** — the provider never reported this unit's hardware |
+| `host_model_raw` | the phone, as provenance |
+| `device_type` | inferred from the writing app's name, else `unknown` |
+| `label` | the writing app's name, as an **auto** label |
+
+No claim is stored for the host's model or productType: one device would own it and
+every other app's next sync would collide with it.
+
+What comes out is a starting point, not an answer. A Muse headband lands as an `eeg`
+device named "Muse" with no model, and naming it properly is a hand edit — which is the
+point. Databases created before this rule existed are corrected by
+`scripts/data_migrations/split_host_relayed_devices.py` (preview by default, `--apply`
+to write), which splits the pooled device one-per-writer and records every change.
 
 ## Cross-route link proposals
 
@@ -122,11 +157,33 @@ link would destroy it.
 
 | Editable | Not editable |
 |---|---|
-| `label`, `device_type`, `wear_location`, `notes`, `model_display` | `brand`, `model_raw` |
+| `label`, `device_type`, `wear_location`, `notes`, `model_display`, `brand_display`, `serial`, `firmware_version` | `brand`, `model_raw`, `host_model_raw` |
 
-`brand` and `model_raw` record what the provider *claimed* the hardware was. Editing
-them in place would erase the only evidence of that claim. Correct the presentation
-with `model_display` instead.
+`brand`, `model_raw` and `host_model_raw` record what the provider *claimed* the
+hardware was. Editing them in place would erase the only evidence of that claim.
+Correct the presentation with `model_display` and `brand_display`, which sit beside the
+claim and win wherever the device is named.
+
+`serial` and `firmware_version` are inventory fields no provider here reports, so they
+are a person's entry from the start. `serial` is **not** an identity claim and groups
+nothing — `DeviceIdentityKind.SERIAL` is for a serial a provider issued, and detection
+never reads the column. Firmware is worth recording because it changes a device's
+behaviour without changing any identifier, which matters when a measurement series
+spans an update.
+
+### What a device is called
+
+`display_name` on the API response derives one name, so a screen, an export and a
+response cannot disagree about which unit a sample came from:
+
+1. a label **a person set** — the only name that can distinguish two identical units;
+2. `model_display`;
+3. an **auto** label (detection names a relayed stream after the app that wrote it);
+4. `model_raw` — a raw code beats a friendlier guess that may name the wrong hardware;
+5. otherwise a description: "Muse EEG", "Unidentified headband".
+
+An auto label ranks below the hand-set model on purpose: someone who types the model
+has said something the guess did not.
 
 A label set by hand marks the device `label_source = manual`, and detection never
 overwrites it — a confidently wrong auto-label is worse than no label, because
@@ -147,6 +204,8 @@ and the swap becomes invisible in analysis.
 |---|---|
 | `device_id` | The physical unit. Null when unattributed. |
 | `device_label` | The human name, when one is set and the device was joined. |
+| `device_display_name` | What to call the unit, by the rule above. Prefer this over `device_name`, which describes whatever the provider's model string named — on a relayed stream, the phone. |
+| `device_type` | The registry's type where it knows one, otherwise the type inferred at ingest. |
 | `data_source_id` | The ingest path — provider, sub-source, route. |
 | `ingestion_route` | `direct` or `aggregator`. |
 

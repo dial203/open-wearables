@@ -34,6 +34,8 @@ ANDROID_PACKAGE_BRANDS: dict[str, str] = {
     "com.polar": "Polar",
     "com.suunto": "Suunto",
     "com.ultrahuman": "Ultrahuman",
+    "com.interaxon.muse": "Muse",
+    "com.eightsleep": "Eight Sleep",
 }
 
 # --- App / HealthKit source-name keyword -> brand --------------------------------
@@ -64,6 +66,10 @@ SOURCE_NAME_BRANDS: tuple[tuple[str, str], ...] = (
     ("corsano", "Corsano"),
     ("masimo", "Masimo"),
     ("withings", "Withings"),
+    ("muse", "Muse"),
+    ("dreem", "Dreem"),
+    ("eight sleep", "Eight Sleep"),
+    ("eightsleep", "Eight Sleep"),
 )
 
 # --- device_model keyword -> brand (google `device_model`, generic models) -------
@@ -85,6 +91,8 @@ DEVICE_MODEL_BRANDS: tuple[tuple[str, str], ...] = (
     ("suunto", "Suunto"),
     ("whoop", "Whoop"),
     ("health_connect", "Health Connect"),
+    ("muse", "Muse"),
+    ("dreem", "Dreem"),
 )
 
 # --- provider fallback (used when no source/model signal identifies a brand) -----
@@ -175,6 +183,21 @@ def resolve_brand(
                 return brand
 
     return PROVIDER_BRANDS.get(provider)
+
+
+def relayed_brand(provider: ProviderName, writer_id: str | None) -> str | None:
+    """Brand of a relayed stream, from the writing app alone.
+
+    ``resolve_brand`` falls back to the platform's own brand when nothing in the writer
+    id is recognised, which for a relayed stream would file a Muse headband under
+    "Apple". The model is no help here - it names the phone that ran the app - so an
+    unrecognised writer leaves the brand unset, which is the honest answer and the one a
+    person can correct.
+    """
+    brand = resolve_brand(provider, None, writer_id)
+    if brand is not None and brand == PROVIDER_BRANDS.get(provider):
+        return None
+    return brand
 
 
 def resolve_ingestion_route(

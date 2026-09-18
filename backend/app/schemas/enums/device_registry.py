@@ -56,6 +56,18 @@ STRONG_IDENTITY_KINDS: frozenset[DeviceIdentityKind] = frozenset(
 )
 
 
+# Kinds that name the app that wrote the data rather than the hardware. They are the
+# grouping key of last resort: used only where the route's model string describes the
+# phone that relayed the data (see services/devices/identity.relaying_host_model),
+# because there the writer is the only thing on the row that varies per device.
+WRITER_IDENTITY_KINDS: frozenset[DeviceIdentityKind] = frozenset(
+    {
+        DeviceIdentityKind.HEALTHKIT_BUNDLE,
+        DeviceIdentityKind.HEALTH_CONNECT_PACKAGE,
+    }
+)
+
+
 class LabelSource(StrEnum):
     """Where a device's label came from. A manual label is never overwritten by detection."""
 
@@ -76,6 +88,7 @@ class DeviceHistoryAction(StrEnum):
     RETIRED = "retired"
     REACTIVATED = "reactivated"
     IDENTITY_ADDED = "identity_added"
+    IDENTITY_REMOVED = "identity_removed"  # a claim that turned out to describe something else
     LINK_PROPOSED = "link_proposed"
     LINK_ACCEPTED = "link_accepted"
     LINK_REJECTED = "link_rejected"

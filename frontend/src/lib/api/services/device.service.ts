@@ -38,10 +38,24 @@ export interface DeviceDataSource {
 export interface Device {
   id: string;
   user_id: string;
+  /** Brand derived from what the provider reported. Never edited — see brand_display. */
   brand: string | null;
-  /** The provider's own model string, verbatim. Never edited. */
+  /** The provider's own model string, verbatim. Never edited — see model_display. */
   model_raw: string | null;
+  /** Hand-set or derived marketing name. Wins over model_raw wherever the device is named. */
   model_display: string | null;
+  /** Hand-set brand. Wins over brand wherever the device is named. */
+  brand_display: string | null;
+  /**
+   * The phone that relayed this device's data, as the platform reported it. Set when a
+   * third-party app wrote through HealthKit or Health Connect and the only model string
+   * on the row named the phone rather than this unit. Provenance, not this unit's model.
+   */
+  host_model_raw: string | null;
+  serial: string | null;
+  firmware_version: string | null;
+  /** Server-derived name: label, else model_display, else model_raw, else a description. */
+  display_name: string;
   device_type: DeviceType | string;
   label: string | null;
   label_source: LabelSource;
@@ -66,19 +80,33 @@ export interface DeviceCreate {
   device_type: DeviceType | string;
   brand?: string | null;
   model_raw?: string | null;
+  model_display?: string | null;
+  brand_display?: string | null;
+  serial?: string | null;
+  firmware_version?: string | null;
   label?: string | null;
   wear_location?: string | null;
   notes?: string | null;
   reason?: string | null;
 }
 
-/** Only fields that are our interpretation — never what the provider reported. */
+/**
+ * Only fields that are our interpretation — never what the provider reported.
+ *
+ * `brand`, `model_raw` and `host_model_raw` are absent on purpose: they record what the
+ * provider claimed, and editing them in place would erase the only evidence of it.
+ * `brand_display` and `model_display` sit beside the claim and win wherever the device
+ * is named, which is what makes a relayed stream nameable at all.
+ */
 export interface DeviceUpdate {
   label?: string | null;
   device_type?: DeviceType | string;
   wear_location?: string | null;
   notes?: string | null;
   model_display?: string | null;
+  brand_display?: string | null;
+  serial?: string | null;
+  firmware_version?: string | null;
   reason?: string | null;
 }
 

@@ -127,7 +127,7 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
         """Get recovery health scores for a date range with cursor-based pagination.
 
         Returns list of dicts with keys: recovery_date, provider, source, device_model,
-        device_type, record_id, recorded_at, recovery_score, resting_heart_rate,
+        device_type, device_id, record_id, recorded_at, recovery_score, resting_heart_rate,
         hrv_rmssd_milli, spo2_percentage.
         Fetches limit+1 rows so callers can detect has_more without a separate COUNT query.
         Ordering matches get_sleep_summaries: ASC by default, DESC when paginating backward.
@@ -169,6 +169,7 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
                     "source": data_source.source if data_source else None,
                     "device_model": data_source.device_model if data_source else None,
                     "device_type": data_source.device_type if data_source else None,
+                    "device_id": data_source.device_id if data_source else None,
                     "record_id": row.id,
                     "recorded_at": row.recorded_at,
                     "recovery_score": int(row.value) if row.value is not None else None,

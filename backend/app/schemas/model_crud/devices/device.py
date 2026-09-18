@@ -5,9 +5,10 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from app.schemas.enums import DeviceType, LabelSource
+from app.utils.device_naming import device_display_name
 
 
 class DeviceIdentityResponse(BaseModel):
@@ -51,7 +52,31 @@ class DeviceResponse(BaseModel):
         None,
         description="The provider's own model string, verbatim. Never normalized, never editable.",
     )
-    model_display: str | None = Field(None, description="Marketing name for model_raw, display only.")
+    model_display: str | None = Field(
+        None,
+        description="Hand-set or derived marketing name. Display only; edit this rather than model_raw.",
+    )
+    brand_display: str | None = Field(
+        None,
+        description="Hand-set brand. Display only; edit this rather than brand.",
+    )
+    host_model_raw: str | None = Field(
+        None,
+        description=(
+            "The phone that relayed this device's data, as the platform reported it. Set when a "
+            "third-party app wrote through HealthKit or Health Connect and the only model string on "
+            "the row named the phone rather than this unit. Provenance, not this device's model."
+        ),
+        examples=["iPhone 17 Pro"],
+    )
+    serial: str | None = Field(
+        None,
+        description="Hand-entered serial or asset tag. Never used to group data sources.",
+    )
+    firmware_version: str | None = Field(
+        None,
+        description="Hand-entered firmware version, for a series that spans an update.",
+    )
     device_type: DeviceType | str
     label: str | None = None
     label_source: LabelSource | str = Field(
@@ -77,6 +102,27 @@ class DeviceResponse(BaseModel):
     identities: list[DeviceIdentityResponse] = []
     data_sources: list[DeviceDataSourceResponse] = []
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def display_name(self) -> str:
+        """What to call this device on screen, derived so every consumer agrees.
+
+        A label a person set wins: it is the only name that can say which of two
+        identical units this is. Then the hand-set model, then an auto label, then the
+        provider's verbatim string - showing a raw code beats guessing a friendlier name
+        that may be wrong - and finally a brand-and-type description for a device
+        nothing has named yet.
+        """
+        return device_display_name(
+            label=self.label,
+            model_display=self.model_display,
+            model_raw=self.model_raw,
+            brand_display=self.brand_display,
+            brand=self.brand,
+            device_type=str(self.device_type),
+            label_source=str(self.label_source),
+        )
+
     model_config = {"from_attributes": True}
 
 
@@ -90,7 +136,15 @@ class DeviceCreate(BaseModel):
 
     device_type: DeviceType = DeviceType.UNKNOWN
     brand: str | None = Field(None, max_length=64)
-    model_raw: str | None = Field(None, max_length=100)
+    model_raw: str | None = Field(
+        None,
+        max_length=100,
+        description="Only meaningful on a hand-created device, where the person is the reporter.",
+    )
+    model_display: str | None = Field(None, max_length=100)
+    brand_display: str | None = Field(None, max_length=64)
+    serial: str | None = Field(None, max_length=100)
+    firmware_version: str | None = Field(None, max_length=64)
     label: str | None = Field(None, max_length=100)
     wear_location: str | None = Field(None, max_length=32)
     notes: str | None = None
@@ -100,9 +154,15 @@ class DeviceCreate(BaseModel):
 class DeviceUpdate(BaseModel):
     """Hand edits. Only fields that are our interpretation, never the provider's report.
 
-    `brand` and `model_raw` are absent on purpose: they record what the provider
-    claimed the hardware was, and editing them in place would erase the only evidence
-    of that. Correct the presentation with `model_display` instead.
+    `brand`, `model_raw` and `host_model_raw` are absent on purpose: they record what
+    the provider claimed the hardware was, and editing them in place would erase the
+    only evidence of that. Correct the presentation with `model_display` and
+    `brand_display`, which sit beside the claim rather than on top of it and win
+    wherever the device is named.
+
+    This is the endpoint for the common relayed case - a headband whose data reaches
+    Apple Health through its own app, where the platform only ever reported the phone.
+    Nothing there identifies the hardware, so everything about it is a hand edit.
     """
 
     label: str | None = Field(None, max_length=100)
@@ -110,6 +170,9 @@ class DeviceUpdate(BaseModel):
     wear_location: str | None = Field(None, max_length=32)
     notes: str | None = None
     model_display: str | None = Field(None, max_length=100)
+    brand_display: str | None = Field(None, max_length=64)
+    serial: str | None = Field(None, max_length=100)
+    firmware_version: str | None = Field(None, max_length=64)
     reason: str | None = Field(None, description="Recorded in the device's history.")
 
 

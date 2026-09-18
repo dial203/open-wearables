@@ -15,7 +15,13 @@ from sqlalchemy.orm import Session
 from app.models import DataSource, Device, DeviceIdentity, User
 from app.repositories.data_source_repository import DataSourceRepository
 from app.repositories.device_repository import DeviceRepository
-from app.schemas.enums import DeviceIdentityKind, IdentityConfidence, ProviderName
+from app.schemas.enums import (
+    DeviceIdentityKind,
+    DeviceType,
+    IdentityConfidence,
+    LabelSource,
+    ProviderName,
+)
 from app.services.devices.detection import DeviceDetectionService
 from app.services.devices.identity import IdentityClaim
 
@@ -185,3 +191,88 @@ class TestIdempotence:
         assert source is not None
         assert db.get(DataSource, source.id) is not None
         assert source.device_id is None
+
+
+class TestRelayedThroughAPhone:
+    """A third-party app relaying through HealthKit reports the phone that ran it.
+
+    Every app on one handset then reports the same model string, so grouping on it
+    pooled unrelated brands into a single device named after the phone - the exact
+    over-merge this module exists to prevent, reached through the rule meant to
+    prevent it. These pin the writer-keyed grouping that replaced it.
+    """
+
+    def test_two_apps_on_one_phone_are_two_devices(self, db: Session, user: User) -> None:
+        muse = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        oura = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Oura")
+
+        assert muse.device_id is not None
+        assert oura.device_id is not None
+        assert muse.device_id != oura.device_id
+        assert len(_devices(db, user)) == 2
+
+    def test_the_phone_is_kept_as_provenance_not_as_the_model(self, db: Session, user: User) -> None:
+        """model_raw asserts what the provider said this unit was. It said nothing."""
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        device = DeviceRepository().get(db, source.device_id)
+
+        assert device.model_raw is None
+        assert device.model_display is None
+        assert device.host_model_raw == "iPhone 17 Pro"
+        # The data source itself is untouched: it is the ingest fingerprint.
+        assert source.device_model == "iPhone 17 Pro"
+
+    def test_no_claim_describes_the_phone(self, db: Session, user: User) -> None:
+        """A host claim on one writer's device collides with the next writer's sync."""
+        _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        values = {c.id_value for c in db.query(DeviceIdentity).filter(DeviceIdentity.user_id == user.id).all()}
+        assert values == {"Muse"}
+
+    def test_the_writing_app_names_and_types_the_device(self, db: Session, user: User) -> None:
+        """A starting point, not an answer - but a better one than "Apple phone"."""
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        device = DeviceRepository().get(db, source.device_id)
+
+        assert device.brand == "Muse"
+        assert device.device_type == DeviceType.EEG.value
+        assert device.label == "Muse"
+        # Auto, so a hand-set name replaces it and then pins the device.
+        assert device.label_source == LabelSource.AUTO.value
+
+    def test_an_unrecognised_writer_gets_no_brand_rather_than_the_platform_s(self, db: Session, user: User) -> None:
+        """Naming a headband "Apple" is worse than leaving the brand for a person."""
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Elite HRV")
+        device = DeviceRepository().get(db, source.device_id)
+
+        assert device.brand is None
+        assert device.device_type == DeviceType.UNKNOWN.value
+
+    def test_apple_s_own_phone_data_still_describes_the_phone(self, db: Session, user: User) -> None:
+        """The platform writing about its own handset genuinely means the handset."""
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Michael's iPhone")
+        device = DeviceRepository().get(db, source.device_id)
+
+        assert device.model_raw == "iPhone 17 Pro"
+        assert device.host_model_raw is None
+
+    def test_a_watch_relayed_by_its_own_app_keeps_its_model(self, db: Session, user: User) -> None:
+        """Only a model naming a phone is suspect; real hardware still groups on it."""
+        first = _ensure(db, user, ProviderName.APPLE, "Apple Watch Ultra 3 49mm", "Ali's Watch")
+        second = _ensure(db, user, ProviderName.APPLE, "Apple Watch Ultra 3 49mm", "Ali's Watch (2)")
+
+        assert first.device_id == second.device_id
+        device = DeviceRepository().get(db, first.device_id)
+        assert device.model_raw == "Apple Watch Ultra 3 49mm"
+
+    def test_re_ingesting_a_relayed_source_is_idempotent(self, db: Session, user: User) -> None:
+        for _ in range(3):
+            _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+
+        assert len(_devices(db, user)) == 1
+        assert DeviceRepository().pending_proposals(db, user.id) == []
+
+    def test_health_connect_packages_split_the_same_way(self, db: Session, user: User) -> None:
+        fitbit = _ensure(db, user, ProviderName.HEALTH_CONNECT, "Pixel 9 Pro", "com.fitbit.FitbitMobile")
+        whoop = _ensure(db, user, ProviderName.HEALTH_CONNECT, "Pixel 9 Pro", "com.whoop.android")
+
+        assert fitbit.device_id != whoop.device_id
