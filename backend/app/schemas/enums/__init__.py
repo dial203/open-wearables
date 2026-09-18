@@ -10,8 +10,8 @@ from .data_granularity import (
     Resolution,
 )
 from .device_registry import (
-    GROUPING_IDENTITY_KINDS,
     STRONG_IDENTITY_KINDS,
+    WRITER_IDENTITY_KINDS,
     WRITER_MODEL_SEPARATOR,
     DeviceHistoryAction,
     DeviceIdentityKind,
@@ -56,7 +56,7 @@ __all__ = [
     "DeviceIdentityKind",
     "IdentityConfidence",
     "STRONG_IDENTITY_KINDS",
-    "GROUPING_IDENTITY_KINDS",
+    "WRITER_IDENTITY_KINDS",
     "WRITER_MODEL_SEPARATOR",
     "LabelSource",
     "DeviceHistoryAction",

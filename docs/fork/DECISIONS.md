@@ -61,6 +61,37 @@ Template:
   where knowing *which unit* produced a sample is the point. The per-route identity
   model could be.
 
+## Relayed streams are keyed on the writing app, not the phone that relayed them
+
+- **Area**: backend, frontend
+- **Status**: active
+- **On conflict**: keep ours; it only adds columns and narrows a grouping rule
+- **Why**: A third-party app writing into HealthKit or Health Connect generally passes
+  no device record, so the platform reports the phone that ran the app. Every app on one
+  handset then reports the same model string, and the registry's within-route model
+  grouping pooled all of them into a single device named after the phone — the
+  over-merge the whole package exists to prevent, reached through the rule meant to
+  prevent it. Renaming that device renamed every brand behind it, which made the
+  registry unusable for relayed data.
+  `relaying_host_model` (`app/services/devices/identity.py`) recognises that case
+  narrowly — aggregator route, third-party writer, model inferring to `phone` — and
+  detection then groups those sources on the writer's claim, keeps the handset in the
+  new `device.host_model_raw` column as provenance, and leaves `model_raw` NULL because
+  the provider never reported this unit's hardware. Over-splitting is the safe direction,
+  so the doubt resolves toward firing.
+  Everything a person then needs to identify the unit is editable beside the provider's
+  claim rather than on top of it: `brand_display` joins `model_display`, plus `serial`
+  and `firmware_version` (migration `c9d4e1f7a3b8`). `serial` is deliberately not an
+  identity claim and groups nothing. `SourceMetadata` gained `device_display_name` and
+  now takes the registry's `device_type` where it knows one, so the compare view names
+  the unit rather than the handset. Existing rows are corrected by
+  `scripts/data_migrations/split_host_relayed_devices.py`.
+  `DeviceType` gained `eeg` and `headband` (migration `b7c2d9e4f1a6`); handset model
+  codes (Pixel, Galaxy S, SM-S/G, LM-) now infer as `phone`, which is what makes the
+  Android relay case detectable at all.
+- **Upstreamable?** The host-relay rule and the handset model patterns are a plain bug
+  fix and would be. The editable display fields ride on the registry, which is not.
+
 ## Device attribution helpers (pre-registry)
 
 - **Area**: backend, frontend
@@ -137,19 +168,21 @@ Template:
   `docker-compose.prod.yml` are fork-only infrastructure. The AI review step is
   deliberately non-blocking — it must never red a PR on timeout.
 
-## Aggregator routes group on the writer, not the relaying handset
+## A relayed stream groups on the writer *and* the host, not the writer alone
 
 - **Area**: backend
 - **Status**: active
 - **On conflict**: keep ours
-- **Why**: on Apple Health, Health Connect, Google Health and Samsung Health,
-  `device_model` is the phone that synced the batch (HealthKit reports
-  `productType`), so grouping devices on it pooled every relaying app behind one
-  handset into a single device — a silent over-merge that only surfaces once the
-  samples are already mixed in an analysis. These routes key on a writer/model pair
-  instead (`DeviceIdentityKind.AGGREGATOR_WRITER_MODEL`). Touches
-  `app/services/devices/identity.py` and `detection.py`, both fork-only today; if
-  upstream grows a device registry, the pairing rule is the part to keep.
+- **Why**: `relaying_host_model()` already recognises that an aggregator's
+  `device_model` names the phone that ran the writing app, not the recorder. Keying
+  those sources on the writer alone fixes the pooling but introduces the opposite
+  error: one app's streams then group across every handset it ever synced through, so
+  an Oura app relaying from a 2017 phone and a 2024 phone reads as one ring — two
+  units merged, with no symptom, for anyone who replaced the ring in between. The key
+  is therefore the pair (`DeviceIdentityKind.AGGREGATOR_WRITER_MODEL`), which
+  over-splits instead; a person merges what is really one unit, and nothing was
+  pooled while they decided. A claim on the bare host string is never stored — every
+  app on that phone would make the same one.
 
 ## An unrecognised HealthKit writer keeps its own name
 

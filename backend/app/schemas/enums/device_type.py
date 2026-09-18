@@ -1,5 +1,6 @@
 """Device type enum and priority configuration."""
 
+import re
 from enum import StrEnum
 
 
@@ -7,6 +8,8 @@ class DeviceType(StrEnum):
     """Type of device that collected health data."""
 
     CHEST_STRAP = "chest_strap"
+    EEG = "eeg"
+    HEADBAND = "headband"
     WATCH = "watch"
     BAND = "band"
     PHONE = "phone"
@@ -18,9 +21,20 @@ class DeviceType(StrEnum):
 
 # System-wide default device type priority (lower = higher priority)
 # Used when user hasn't set custom priorities.
-# Chest straps rank first: an ECG chest strap is the reference standard for heart
-# rate / beat-to-beat data, ahead of optical wrist and finger sensors.
+# EEG ranks first and chest straps second: EEG is the reference standard for sleep
+# staging and an ECG chest strap for beat-to-beat heart rate, both ahead of the
+# optical wrist and finger sensors that infer the same quantities.
+#
+# The numbers below the two new types are deliberately left as they were rather than
+# renumbered. DeviceTypePriorityRepository.initialize_defaults is additive: it inserts
+# only the types missing from an already-seeded database and never rewrites a row an
+# operator may have customised. Renumbering here would therefore apply to fresh
+# databases only, and a new type inserted at a number an existing row already holds
+# would tie with it, with nothing to break the tie. EEG takes 0 (above chest_strap)
+# and HEADBAND takes 8 (below the types whose modality is known, above unknown) so
+# both slot in correctly whether or not the table was seeded before they existed.
 DEFAULT_DEVICE_TYPE_PRIORITY: dict[DeviceType, int] = {
+    DeviceType.EEG: 0,
     DeviceType.CHEST_STRAP: 1,
     DeviceType.WATCH: 2,
     DeviceType.BAND: 3,
@@ -28,6 +42,9 @@ DEFAULT_DEVICE_TYPE_PRIORITY: dict[DeviceType, int] = {
     DeviceType.PHONE: 5,
     DeviceType.SCALE: 6,
     DeviceType.OTHER: 7,
+    # A headband whose sensing modality we cannot name says nothing about signal
+    # quality on its own, so it ranks below every type that does and above unknown.
+    DeviceType.HEADBAND: 8,
     DeviceType.UNKNOWN: 99,
 }
 
@@ -38,6 +55,21 @@ _CHEST_STRAP_TOKENS: frozenset[str] = frozenset({"h9", "h10", "h7", "hrm", "hrm-
 # Optical ARM bands that are not chest straps — matched before the generic
 # keyword pass so they land on BAND rather than falling through.
 _ARM_BAND_KEYWORDS: tuple[str, ...] = ("verity sense", "oh1", "rhythm+", "rhythm 24")
+
+# Consumer EEG wearables, by product family. Named explicitly rather than inferred
+# from the word "headband": the modality is what earns EEG its priority, and a
+# headband can just as easily be an optical forehead sensor.
+_EEG_KEYWORDS: tuple[str, ...] = ("muse s", "muse 2", "muse-", "dreem", "frenz", "elemind", "somnee")
+
+# Whole tokens rather than substrings, so "eeg" cannot be hit inside an unrelated word.
+_EEG_TOKENS: frozenset[str] = frozenset({"muse", "eeg"})
+
+# Handset model codes, which name no body part and would otherwise fall through to
+# OTHER. This matters beyond iconography: a relayed stream is recognised as relayed by
+# its model naming a phone, and a Pixel or Galaxy handset that reads as OTHER leaves
+# every Android app on it grouped as one device. Matched only after the wearable
+# keywords below, so "Galaxy Watch" and "Galaxy Ring" are already claimed.
+_PHONE_MODEL_RE = re.compile(r"^sm-[sgnaf]\d|^lm-|\bpixel(?! watch)\b|\bgalaxy (s|note|z|a)\d")
 
 
 def infer_device_type_from_model(device_model: str | None) -> DeviceType:
@@ -72,6 +104,13 @@ def infer_device_type_from_model(device_model: str | None) -> DeviceType:
     if any(k in model_lower for k in _ARM_BAND_KEYWORDS):
         return DeviceType.BAND
 
+    # EEG before the generic keyword pass below: "Muse S Headband" would otherwise be
+    # swallowed by the "band" substring and filed as a wrist band.
+    if any(k in model_lower for k in _EEG_KEYWORDS) or tokens & _EEG_TOKENS:
+        return DeviceType.EEG
+    if "headband" in model_lower or "head band" in model_lower:
+        return DeviceType.HEADBAND
+
     # Common keywords
     if "watch" in model_lower:
         return DeviceType.WATCH
@@ -79,7 +118,7 @@ def infer_device_type_from_model(device_model: str | None) -> DeviceType:
         return DeviceType.BAND
     if "ring" in model_lower or "oura" in model_lower:
         return DeviceType.RING
-    if "phone" in model_lower:
+    if "phone" in model_lower or _PHONE_MODEL_RE.search(model_lower):
         return DeviceType.PHONE
     if "scale" in model_lower or "index" in model_lower:
         return DeviceType.SCALE

@@ -44,10 +44,37 @@ class Device(BaseDbModel):
     # The strongest raw model string seen for this device, exactly as a provider sent
     # it. Never normalized in place: it is the experimental record of what hardware
     # produced the samples, and display normalization belongs in model_display.
+    #
+    # NULL on a device detected from a relayed stream whose only model string named the
+    # phone that relayed it (see host_model_raw). The provider never reported this
+    # unit's hardware, and writing the host's model here would assert that it did.
     model_raw: Mapped[str_100 | None]
     # Marketing name for model_raw where we can name it, else NULL and callers fall
-    # back to model_raw. Display only.
+    # back to model_raw. Display only, and the field to correct by hand when a
+    # provider's model string is wrong or absent.
     model_display: Mapped[str_100 | None]
+    # Hand-set brand, for the same reason model_display exists: a relayed stream often
+    # resolves to the platform's brand rather than the maker's, and brand itself is the
+    # record of what was derived from the provider's report. Display only.
+    brand_display: Mapped[str_64 | None]
+
+    # Hand-entered inventory fields. No provider in the system reports either, so both
+    # are always a person's assertion about hardware in front of them.
+    #
+    # serial is NOT an identity claim and groups nothing: DeviceIdentityKind.SERIAL is
+    # for a serial a provider issued, and detection never reads this column. Firmware
+    # is worth recording because it changes a device's behaviour without changing any
+    # identifier - a validation run spanning a firmware update is comparing two things.
+    serial: Mapped[str_100 | None]
+    firmware_version: Mapped[str_64 | None]
+
+    # The aggregator's host, for a device whose data reached us relayed: the phone that
+    # ran the writing app, exactly as the platform reported it. A third-party app
+    # writing into HealthKit generally passes no HKDevice, so the only model string on
+    # those rows names the phone. That is real provenance and worth keeping, but it is
+    # not this device's model, and keeping it in its own column is what stops every app
+    # on one phone being grouped as that phone.
+    host_model_raw: Mapped[str_100 | None]
 
     # DeviceType value. Stored as a string rather than the `devicetype` PG enum that
     # device_type_priority uses, matching data_source.device_type: adding a type is

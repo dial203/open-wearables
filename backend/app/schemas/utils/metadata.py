@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, computed_field
 
 from app.constants.devices_map import resolve_device_name
 from app.schemas.enums import DeviceType, Resolution
+from app.utils.device_naming import device_display_name
 
 
 class SourceMetadata(BaseModel):
@@ -81,6 +82,17 @@ class SourceMetadata(BaseModel):
         description="Human-assigned name for the device, if one has been set.",
         example="Sub 04 fenix",
     )
+    device_display_name: str | None = Field(
+        None,
+        description=(
+            "What to call the physical unit: its label, else its hand-set model, else the "
+            "provider's model string. Null when the source is not attributed to a device. "
+            "Prefer this over `device_name`, which can only ever describe what the provider "
+            "reported - on a relayed stream that is the phone that ran the writing app, not "
+            "the hardware that recorded the data."
+        ),
+        example="Muse S Athena",
+    )
 
     @classmethod
     def from_data_source(cls, data_source: Any) -> "SourceMetadata":
@@ -103,17 +115,18 @@ class SourceMetadata(BaseModel):
             ingestion_provider=provider if provider else None,
             source_tag=data_source.source,
             original_source_name=data_source.original_source_name,
-            device_type=data_source.device_type,
             ingestion_route=(
                 resolve_ingestion_route(data_source.provider, data_source.original_source_name).value
                 if data_source.provider
                 else None
             ),
             device_id=getattr(data_source, "device_id", None),
-            # Read through the relationship only when it is already loaded. This runs
-            # per sample on hot read paths, and a lazy load here would turn one
-            # timeseries response into a query per row.
-            device_label=_loaded_device_label(data_source),
+            # device_type last: the registry's answer overrides the one inferred at
+            # ingest from the provider's model string, which on a relayed stream names
+            # the phone that ran the writing app. Read through the relationship only
+            # when it is already loaded - this runs per sample on hot read paths, and a
+            # lazy load here would turn one timeseries response into a query per row.
+            **{"device_type": data_source.device_type, **_loaded_device_fields(data_source)},
         )
 
 
@@ -124,21 +137,54 @@ class TimeseriesMetadata(BaseModel):
     end_time: datetime | None = None
 
 
-def _loaded_device_label(data_source: Any) -> str | None:
-    """The attributed device's label, but only if the relationship is already loaded.
+def _loaded_device_fields(data_source: Any) -> dict[str, Any]:
+    """The attributed device's names, but only if the relationship is already loaded.
 
-    Returns None rather than emitting a query, so a caller that has not joined the
-    device gets the id (which is on the row itself) and no label, instead of an N+1.
+    Returns nothing rather than emitting a query, so a caller that has not joined the
+    device gets the id (which is on the row itself) and no names, instead of an N+1.
     """
     from sqlalchemy import inspect as sa_inspect
 
     if getattr(data_source, "device_id", None) is None:
-        return None
+        return {}
     try:
         state = sa_inspect(data_source)
     except Exception:
-        return None
+        return {}
     if "device" in getattr(state, "unloaded", ()):
-        return None
+        return {}
     device = getattr(data_source, "device", None)
-    return getattr(device, "label", None)
+    if device is None:
+        return {}
+    return device_metadata_fields(device)
+
+
+def device_metadata_fields(device: Any) -> dict[str, Any]:
+    """The attribution fields a Device contributes to SourceMetadata.
+
+    Shared with the aggregate read paths, which cannot use the ORM relationship: they
+    group over raw columns and resolve device_id against a map loaded once per request.
+
+    ``device_type`` is overridden here because the registry's answer is the better one.
+    The data source's type was inferred from whatever model string the provider sent,
+    which on a relayed stream is the phone that ran the writing app - so an EEG
+    headband's rows are typed ``phone`` until someone says otherwise. The registry is
+    where that correction lives. ``unknown`` never overrides anything, since it would
+    replace a guess with nothing.
+    """
+    device_type = getattr(device, "device_type", None)
+    fields: dict[str, Any] = {
+        "device_label": getattr(device, "label", None),
+        "device_display_name": device_display_name(
+            label=getattr(device, "label", None),
+            model_display=getattr(device, "model_display", None),
+            model_raw=getattr(device, "model_raw", None),
+            brand_display=getattr(device, "brand_display", None),
+            brand=getattr(device, "brand", None),
+            device_type=device_type,
+            label_source=getattr(device, "label_source", None),
+        ),
+    }
+    if device_type and device_type != DeviceType.UNKNOWN.value:
+        fields["device_type"] = device_type
+    return fields

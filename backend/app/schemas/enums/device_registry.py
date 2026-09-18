@@ -66,20 +66,22 @@ STRONG_IDENTITY_KINDS: frozenset[DeviceIdentityKind] = frozenset(
     }
 )
 
-# The weak claims that may group data sources *within one route*, most specific
-# first. Detection takes the first kind a data source carries and ignores the rest:
-# a row with an AGGREGATOR_WRITER_MODEL claim must never also group on the bare
-# model string, or the pooling that claim exists to prevent comes back through the
-# other key. Ordered, so it is a tuple rather than a set.
-GROUPING_IDENTITY_KINDS: tuple[DeviceIdentityKind, ...] = (
-    DeviceIdentityKind.AGGREGATOR_WRITER_MODEL,
-    DeviceIdentityKind.MODEL_STRING,
-)
-
 # Separator inside an AGGREGATOR_WRITER_MODEL value. Two pipes, because a writer
 # name is free text ("JOSHUA A's Apple Watch") and a model string is a vendor code
 # ("iPhone15,3"); neither has ever been seen to contain this.
 WRITER_MODEL_SEPARATOR = "||"
+
+
+# Kinds that name the app that wrote the data rather than the hardware. They are the
+# grouping key of last resort: used only where the route's model string describes the
+# phone that relayed the data (see services/devices/identity.relaying_host_model),
+# because there the writer is the only thing on the row that varies per device.
+WRITER_IDENTITY_KINDS: frozenset[DeviceIdentityKind] = frozenset(
+    {
+        DeviceIdentityKind.HEALTHKIT_BUNDLE,
+        DeviceIdentityKind.HEALTH_CONNECT_PACKAGE,
+    }
+)
 
 
 class LabelSource(StrEnum):
@@ -102,6 +104,7 @@ class DeviceHistoryAction(StrEnum):
     RETIRED = "retired"
     REACTIVATED = "reactivated"
     IDENTITY_ADDED = "identity_added"
+    IDENTITY_REMOVED = "identity_removed"  # a claim that turned out to describe something else
     LINK_PROPOSED = "link_proposed"
     LINK_ACCEPTED = "link_accepted"
     LINK_REJECTED = "link_rejected"

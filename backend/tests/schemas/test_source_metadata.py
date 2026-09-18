@@ -155,3 +155,47 @@ class TestDeviceAttribution:
         # Joined explicitly, the label comes through.
         _ = fresh.device
         assert SourceMetadata.from_data_source(fresh).device_label == "Sub 04 fenix"
+
+
+class TestRelayedAttribution:
+    """What a sample says its device was, once the registry knows better than ingest.
+
+    A third-party app relaying through HealthKit reports the phone that ran it, so the
+    model string and the type inferred from it both describe the handset. Everything a
+    consumer should show about the unit therefore has to come from the device.
+    """
+
+    def _device(self, **overrides: object) -> object:
+        from types import SimpleNamespace
+
+        fields = {
+            "label": "Muse",
+            "label_source": "auto",
+            "model_display": None,
+            "model_raw": None,
+            "brand_display": None,
+            "brand": "Muse",
+            "device_type": "eeg",
+        }
+        fields.update(overrides)
+        return SimpleNamespace(**fields)
+
+    def test_the_registry_name_and_type_win_over_the_relayed_model(self) -> None:
+        from app.schemas.utils.metadata import device_metadata_fields
+
+        fields = device_metadata_fields(self._device(model_display="Muse S Athena"))
+        assert fields["device_display_name"] == "Muse S Athena"
+        assert fields["device_type"] == "eeg"
+        assert fields["device_label"] == "Muse"
+
+    def test_an_unknown_type_does_not_overwrite_the_ingest_inference(self) -> None:
+        """Replacing a guess with nothing is a loss, not a correction."""
+        from app.schemas.utils.metadata import device_metadata_fields
+
+        assert "device_type" not in device_metadata_fields(self._device(device_type="unknown"))
+
+    def test_a_device_nothing_has_named_is_described_rather_than_left_blank(self) -> None:
+        from app.schemas.utils.metadata import device_metadata_fields
+
+        fields = device_metadata_fields(self._device(label=None, brand=None, device_type="headband"))
+        assert fields["device_display_name"] == "Unidentified headband"

@@ -96,6 +96,10 @@ class DeviceRepository:
         brand: str | None = None,
         model_raw: str | None = None,
         model_display: str | None = None,
+        brand_display: str | None = None,
+        serial: str | None = None,
+        firmware_version: str | None = None,
+        host_model_raw: str | None = None,
         label: str | None = None,
         label_source: LabelSource = LabelSource.AUTO,
         wear_location: str | None = None,
@@ -111,6 +115,10 @@ class DeviceRepository:
             brand=brand,
             model_raw=model_raw,
             model_display=model_display,
+            brand_display=brand_display,
+            serial=serial,
+            firmware_version=firmware_version,
+            host_model_raw=host_model_raw,
             device_type=getattr(device_type, "value", device_type),
             label=label,
             label_source=label_source.value,
@@ -130,15 +138,34 @@ class DeviceRepository:
             action=DeviceHistoryAction.DETECTED if detected else DeviceHistoryAction.CREATED,
             actor=actor,
             reason=reason,
-            meta={"brand": brand, "model_raw": model_raw, "device_type": device.device_type},
+            meta={
+                "brand": brand,
+                "model_raw": model_raw,
+                "host_model_raw": host_model_raw,
+                "device_type": device.device_type,
+            },
         )
         return device
 
-    # Fields a person may edit. device_type is here and brand/model_raw are not:
-    # brand and model_raw are the record of what the provider reported, and editing
-    # them in place would erase the only evidence of what the hardware actually
-    # claimed to be. A misread type is our inference and is ours to correct.
-    EDITABLE_FIELDS = ("label", "device_type", "wear_location", "notes", "model_display")
+    # Fields a person may edit. Everything here is either our own inference or a
+    # person's own record; nothing here is what a provider reported.
+    #
+    # brand, model_raw and host_model_raw are absent on purpose. They are the record of
+    # what the provider claimed, and editing them in place would erase the only
+    # evidence of what the hardware said it was - the correction belongs beside the
+    # claim, not on top of it, which is what brand_display and model_display are for.
+    # A misread type is our inference and is ours to correct. serial and firmware are
+    # a person's own entry from the start, since no provider here reports either.
+    EDITABLE_FIELDS = (
+        "label",
+        "device_type",
+        "wear_location",
+        "notes",
+        "model_display",
+        "brand_display",
+        "serial",
+        "firmware_version",
+    )
 
     def update_fields(
         self,
@@ -381,6 +408,10 @@ class DeviceRepository:
                     "brand": absorb.brand,
                     "model_raw": absorb.model_raw,
                     "model_display": absorb.model_display,
+                    "brand_display": absorb.brand_display,
+                    "serial": absorb.serial,
+                    "firmware_version": absorb.firmware_version,
+                    "host_model_raw": absorb.host_model_raw,
                     "device_type": absorb.device_type,
                     "label": absorb.label,
                     "label_source": absorb.label_source,
@@ -453,6 +484,10 @@ class DeviceRepository:
             brand=device.brand,
             model_raw=device.model_raw,
             model_display=device.model_display,
+            brand_display=device.brand_display,
+            host_model_raw=device.host_model_raw,
+            # serial and firmware are not inherited: they identify one physical unit,
+            # and a split exists because the sources turned out to be two.
             actor=actor,
             reason=reason or f"Split from device {device.id}",
         )

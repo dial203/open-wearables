@@ -14,6 +14,10 @@ cannot represent "one physical device", because no provider gives us one view of
   so a user's Garmin sleep and Garmin activities cannot be told apart by device.
 - **Apple Health and Google Health are aggregators.** They relay other makers'
   hardware, so "the Apple connection" is not a device.
+- A **third-party app writing into HealthKit or Health Connect** generally passes no
+  device record, so the platform reports the *phone that ran the app*. The Muse app on
+  an iPhone sends `iPhone 17 Pro` for data a headband recorded — and so does every
+  other app on that handset.
 - The **same unit arriving by several routes** shares no identifier between them.
 
 The registry sits above `data_source` and answers "which unit produced this?"
@@ -23,7 +27,7 @@ separately from "which path did it arrive by?".
 
 | Table | What it holds |
 |---|---|
-| `device` | One physical unit. Editable: label, type, wear location, notes, active/retired. |
+| `device` | One physical unit. Editable: label, type, brand and model for display, serial, firmware, wear location, notes, active/retired. |
 | `device_identity` | One identity claim per ingest route. A device accumulates several. |
 | `device_history` | Append-only record of every attribution change. |
 | `device_link_proposal` | Cross-route candidates, scored, with their evidence. |
@@ -68,44 +72,44 @@ on every export, identical across unrelated devices within one export. It is rej
 never stored as an identity.
 </Note>
 
-## The model string does not name the device on an aggregator route
+## The grouping key on a relay route is the writer *and* the host
 
-This is the one rule that is route-dependent rather than provider-dependent, and
-getting it wrong produced the worst over-merge the registry has seen.
+A third-party app writing into HealthKit or Health Connect generally passes no device
+record of its own, so the platform reports the phone that ran the app. A Muse headband,
+an Oura ring and a WHOOP band relaying through one iPhone therefore all arrive with the
+same `device_model`. `relaying_host_model()` recognises that case — relay route,
+third-party writer, model naming a phone — and the device it produces keeps the handset
+in `device.host_model_raw` rather than in `model_raw`.
 
-Apple Health reports `HKDevice.productType` — **the handset that synced the batch**,
-not the device that recorded the sample. So a Muse headband, an Oura ring, a WHOOP
-band and a sleep-scoring app relaying through one iPhone all arrive with
-`device_model = "iPhone15,3"`. Grouping on that model pooled every one of them into a
-single device: one real account had ~30 data sources and ~2,500 sleep sessions from
-nine brands reading as one unit. Health Connect and Google Health pair a `DataOrigin`
-package with the phone's model the same way.
-
-On these four routes — `apple`, `health_connect`, `google_health`, `samsung` — the
-grouping key is therefore the **writer/model pair**, stored as a
-`aggregator_writer_model` claim:
+Grouping those sources on the **writer alone** would be the obvious next step, and it is
+wrong in one specific way: one app's streams would then group across every handset it
+ever synced through. An Oura app relaying from a 2017 phone and a 2024 phone reads as
+one ring — and for a person who replaced the ring in between, that is two units merged
+with no symptom. So the key is the pair, stored as an `aggregator_writer_model` claim:
 
 | Route | `source` | `device_model` | Grouping claim |
 |---|---|---|---|
-| apple | `Muse` | `iPhone15,3` | `Muse\|\|iPhone15,3` |
-| apple | `Oura` | `iPhone15,3` | `Oura\|\|iPhone15,3` |
-| apple | `apple_health_xml` | `Watch7,5` | `Watch7,5` (model only — the XML importer's own stamp is not a writer) |
-| garmin | `garmin` | `fenix 8` | `fenix 8` (model only — here it really is the device) |
+| apple | `Muse` | `iPhone 17 Pro` | `Muse\|\|iPhone 17 Pro` |
+| apple | `Oura` | `iPhone 17 Pro` | `Oura\|\|iPhone 17 Pro` |
+| apple | `Oura` | `iPhone 12 Mini` | `Oura\|\|iPhone 12 Mini` (a second device, deliberately) |
+| apple | `apple_health_xml` | `Watch7,5` | `Watch7,5` — the XML importer's own stamp is not a writer |
+| apple | `Ali's Watch` | `Apple Watch Ultra 3` | `Apple Watch Ultra 3` — a model naming real hardware still groups on its own |
+| garmin | `garmin` | `fenix 8` | `fenix 8` — a direct route never relays |
 
-The pair over-splits: one headband synced by two phones reads as two devices. That is
-the safe direction — a person sees both and merges them, and nothing was pooled while
-they decided.
+The pair over-splits, which is the recoverable direction: a person sees two devices and
+merges them, and nothing was pooled while they decided. `POST
+/device-link-proposals/refresh` scores the candidates.
 
-<Note>
-`device_model` is still stored verbatim; it is the record of what the provider
-claimed, and an aggregator sometimes does report real hardware (`Oura Ring Gen3`).
-It just no longer *names* the device: a relayed device takes an auto label from the
-writing app, so a Muse headband does not introduce itself as "iPhone 14 Pro Max".
-</Note>
+<Warning>
+A claim on the bare host string must never exist. Every app on that phone would make
+the same one, so the first to sync would own it and every later sync would collide with
+it. The pair names the host only ever bound to one writer, which no other app can
+produce.
+</Warning>
 
 Existing rows are regrouped by
-`backend/scripts/data_migrations/repair_aggregator_device_pooling.py`, which previews
-by default and writes with `--apply`.
+`backend/scripts/data_migrations/split_host_relayed_devices.py`, which previews by
+default and writes with `--apply`.
 
 ## A detach has to survive the next sync
 
@@ -128,12 +132,43 @@ point the samples cannot be separated again.
 Detection therefore:
 
 1. Groups on a **strong** claim wherever one exists.
-2. Otherwise groups on the provider's own **model string, within one route only**.
+2. Otherwise groups on the provider's own **model string, within one route only** —
+   except where that string names the relaying phone (below), in which case it groups
+   on the **writing app**, within one route only.
 3. **Never** groups across routes.
 4. Treats attribution as **write-once**: a data source that already belongs to a
    device is never moved by a later sync. A conflicting claim becomes a proposal.
 5. Creates **no device at all** when the provider reports no model. Unattributed is a
    normal resting state, not an error.
+
+## Relayed streams: the model string names the phone
+
+`relaying_host_model` (`app/services/devices/identity.py`) recognises the one case
+where a provider's model string is not evidence about the device at all: an aggregator
+route, a third-party writer, and a model that infers to `phone`. It fires narrowly —
+the platform writing about its own handset (`com.apple.*`, or a writer whose name is
+itself a phone) still means the handset, and a direct route never relays.
+
+Taken at face value that string is worse than no signal. Grouping on it collapses every
+brand relayed through one phone into a single device — the over-merge this package
+exists to prevent, reached through the rule meant to prevent it. So for those sources:
+
+| Field | Value |
+|---|---|
+| grouping key | the writing app's claim (`healthkit_bundle` / `health_connect_package`) |
+| `model_raw` | **NULL** — the provider never reported this unit's hardware |
+| `host_model_raw` | the phone, as provenance |
+| `device_type` | inferred from the writing app's name, else `unknown` |
+| `label` | the writing app's name, as an **auto** label |
+
+No claim is stored for the host's model or productType: one device would own it and
+every other app's next sync would collide with it.
+
+What comes out is a starting point, not an answer. A Muse headband lands as an `eeg`
+device named "Muse" with no model, and naming it properly is a hand edit — which is the
+point. Databases created before this rule existed are corrected by
+`scripts/data_migrations/split_host_relayed_devices.py` (preview by default, `--apply`
+to write), which splits the pooled device one-per-writer and records every change.
 
 ## Cross-route link proposals
 
@@ -172,11 +207,33 @@ link would destroy it.
 
 | Editable | Not editable |
 |---|---|
-| `label`, `device_type`, `wear_location`, `notes`, `model_display` | `brand`, `model_raw` |
+| `label`, `device_type`, `wear_location`, `notes`, `model_display`, `brand_display`, `serial`, `firmware_version` | `brand`, `model_raw`, `host_model_raw` |
 
-`brand` and `model_raw` record what the provider *claimed* the hardware was. Editing
-them in place would erase the only evidence of that claim. Correct the presentation
-with `model_display` instead.
+`brand`, `model_raw` and `host_model_raw` record what the provider *claimed* the
+hardware was. Editing them in place would erase the only evidence of that claim.
+Correct the presentation with `model_display` and `brand_display`, which sit beside the
+claim and win wherever the device is named.
+
+`serial` and `firmware_version` are inventory fields no provider here reports, so they
+are a person's entry from the start. `serial` is **not** an identity claim and groups
+nothing — `DeviceIdentityKind.SERIAL` is for a serial a provider issued, and detection
+never reads the column. Firmware is worth recording because it changes a device's
+behaviour without changing any identifier, which matters when a measurement series
+spans an update.
+
+### What a device is called
+
+`display_name` on the API response derives one name, so a screen, an export and a
+response cannot disagree about which unit a sample came from:
+
+1. a label **a person set** — the only name that can distinguish two identical units;
+2. `model_display`;
+3. an **auto** label (detection names a relayed stream after the app that wrote it);
+4. `model_raw` — a raw code beats a friendlier guess that may name the wrong hardware;
+5. otherwise a description: "Muse EEG", "Unidentified headband".
+
+An auto label ranks below the hand-set model on purpose: someone who types the model
+has said something the guess did not.
 
 A label set by hand marks the device `label_source = manual`, and detection never
 overwrites it — a confidently wrong auto-label is worse than no label, because
@@ -197,6 +254,8 @@ and the swap becomes invisible in analysis.
 |---|---|
 | `device_id` | The physical unit. Null when unattributed. |
 | `device_label` | The human name, when one is set and the device was joined. |
+| `device_display_name` | What to call the unit, by the rule above. Prefer this over `device_name`, which describes whatever the provider's model string named — on a relayed stream, the phone. |
+| `device_type` | The registry's type where it knows one, otherwise the type inferred at ingest. |
 | `data_source_id` | The ingest path — provider, sub-source, route. |
 | `ingestion_route` | `direct` or `aggregator`. |
 
@@ -253,6 +312,11 @@ existing Google `data_source` identities in a migration, which forks a user's hi
 if done wrong. Devices still separate whenever `device_model` differs.
 
 **A writer relaying through two phones is two devices.** Deliberate: see the
-writer/model pair above. The evidence cannot separate "one headband, two handsets"
-from "two headbands", so a person decides. `POST /device-link-proposals/refresh`
-scores the candidates.
+writer/host pair above. The evidence cannot separate "one headband, two handsets"
+from "two headbands", so a person decides.
+
+**An app writing under a *watch* model stays on the watch.** A sleep-scoring app
+deriving nights from an Apple Watch reports that watch's model, and nothing in the
+source name separates "SleepWatch" from the watch's own "Ali's Watch". Only a model
+naming a phone is treated as a relay host. Splitting those properly needs the writer's
+bundle id, which the SDK route carries and the XML export does not.

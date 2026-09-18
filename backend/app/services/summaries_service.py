@@ -48,12 +48,46 @@ from app.schemas.utils import (
     SourceMetadata,
     TimeseriesMetadata,
 )
+from app.schemas.utils.metadata import device_metadata_fields
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import (
     decode_activity_cursor,
     encode_activity_cursor,
     encode_cursor,
 )
+
+
+def _device_fields_by_id(db: DbSession, user_id: UUID, rows: list[dict]) -> dict[UUID, dict]:
+    """Attribution fields for every device the rows reference, in one query.
+
+    These summaries are aggregates over raw columns rather than ORM rows, so the
+    relationship SourceMetadata.from_data_source reads is not available here. A user
+    owns a handful of devices, so one query up front is cheaper than a join carried
+    through the group by, and far cheaper than resolving per row.
+    """
+    # Imported here rather than at module scope: device_repository reaches into
+    # app.services.devices for the identity claim type, so a top-level import would
+    # close a cycle through this package's __init__.
+    from app.repositories.device_repository import DeviceRepository
+
+    device_ids = {row["device_id"] for row in rows if row.get("device_id")}
+    if not device_ids:
+        return {}
+    devices = DeviceRepository().list_for_user(db, user_id)
+    return {d.id: device_metadata_fields(d) for d in devices if d.id in device_ids}
+
+
+def _attribution(row: dict, device_fields: dict[UUID, dict]) -> dict:
+    """The device half of a row's SourceMetadata, registry first.
+
+    The row's own ``device_type`` was inferred from the provider's model string, which
+    on a relayed stream names the phone that ran the writing app. Where the registry
+    knows better it says so, and device_metadata_fields overwrites the inference.
+    """
+    fields: dict = {"device_type": row.get("device_type"), "device_id": row.get("device_id")}
+    fields.update(device_fields.get(row.get("device_id")) or {})
+    return fields
+
 
 # Activity summary constants
 DEFAULT_MAX_HR = 190  # Assumes ~30 years old when birth_date unavailable
@@ -340,6 +374,8 @@ class SummariesService:
         if has_more:
             results = results[:limit]
 
+        device_fields = _device_fields_by_id(db_session, user_id, results)
+
         # Generate cursors
         next_cursor: str | None = None
         previous_cursor: str | None = None
@@ -416,7 +452,7 @@ class SummariesService:
                     provider=result.get("provider") or "unknown",
                     source=result.get("source"),
                     device=result.get("device_model"),
-                    device_type=result.get("device_type"),
+                    **_attribution(result, device_fields),
                 ),
                 start_time=start_time,
                 end_time=end_time,
@@ -491,6 +527,8 @@ class SummariesService:
                 first_result = results[0]
                 previous_cursor = encode_cursor(first_result["recorded_at"], first_result["record_id"], "prev")
 
+        device_fields = _device_fields_by_id(db_session, user_id, results)
+
         data = [
             RecoverySummary(
                 date=r["recovery_date"],
@@ -498,7 +536,7 @@ class SummariesService:
                     provider=r.get("provider") or "unknown",
                     source=r.get("source"),
                     device=r.get("device_model"),
-                    device_type=r.get("device_type"),
+                    **_attribution(r, device_fields),
                 ),
                 sleep_duration_seconds=None,
                 sleep_efficiency_percent=None,

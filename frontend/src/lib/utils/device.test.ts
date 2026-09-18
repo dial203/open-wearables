@@ -3,6 +3,7 @@ import {
   deviceDisplayName,
   humanizeDeviceModel,
   inferDeviceKind,
+  sourceDeviceName,
 } from './device';
 
 const base = {
@@ -58,6 +59,58 @@ describe('deviceDisplayName', () => {
     expect(
       deviceDisplayName({ ...base, label: '', model_raw: 'fenix 8' }, 'Watch')
     ).toBe('fenix 8');
+  });
+
+  it('prefers a hand-set model over a label detection guessed', () => {
+    // Detection names a relayed stream after the app that wrote it. Someone who then
+    // types the model has said something the guess did not.
+    expect(
+      deviceDisplayName(
+        {
+          ...base,
+          label: 'Muse',
+          label_source: 'auto',
+          model_display: 'Muse S Athena',
+          device_type: 'eeg',
+        },
+        'EEG'
+      )
+    ).toBe('Muse S Athena');
+
+    // ...but an auto label still beats no name at all.
+    expect(
+      deviceDisplayName(
+        { ...base, label: 'Muse', label_source: 'auto', device_type: 'eeg' },
+        'EEG'
+      )
+    ).toBe('Muse');
+  });
+
+  it('prefers a hand-set brand in the fallback description', () => {
+    expect(
+      deviceDisplayName(
+        { ...base, brand: 'Apple', brand_display: 'Muse', device_type: 'eeg' },
+        'EEG'
+      )
+    ).toBe('Muse EEG');
+  });
+});
+
+describe('sourceDeviceName', () => {
+  it('prefers the registry name over the provider model string', () => {
+    // On a relayed stream `device_name` describes the phone that ran the writing app.
+    expect(
+      sourceDeviceName({
+        device_display_name: 'Muse S Athena',
+        device_name: 'iPhone 17 Pro',
+      })
+    ).toBe('Muse S Athena');
+  });
+
+  it('falls back to the provider model string, then to nothing', () => {
+    expect(sourceDeviceName({ device_name: 'fenix 8' })).toBe('fenix 8');
+    expect(sourceDeviceName({ device_display_name: '  ' })).toBeNull();
+    expect(sourceDeviceName(null)).toBeNull();
   });
 });
 

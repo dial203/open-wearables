@@ -16,7 +16,13 @@ from sqlalchemy.orm import Session
 from app.models import DataSource, Device, DeviceIdentity, User
 from app.repositories.data_source_repository import DataSourceRepository
 from app.repositories.device_repository import DeviceRepository
-from app.schemas.enums import DeviceIdentityKind, IdentityConfidence, ProviderName
+from app.schemas.enums import (
+    DeviceIdentityKind,
+    DeviceType,
+    IdentityConfidence,
+    LabelSource,
+    ProviderName,
+)
 from app.services.devices.detection import DeviceDetectionService
 from app.services.devices.identity import IdentityClaim
 
@@ -188,76 +194,120 @@ class TestIdempotence:
         assert source.device_id is None
 
 
-class TestAggregatorRelaysAreNotPooled:
-    """The model string on an aggregator route names the phone, not the recorder.
+class TestRelayedThroughAPhone:
+    """A third-party app relaying through HealthKit reports the phone that ran it.
 
-    HealthKit reports ``productType``, so a Muse headband, an Oura ring and a WHOOP
-    band relayed through one iPhone all arrive stamped "iPhone15,3". Grouping on that
-    pooled every app behind one phone into a single device - a silent over-merge, and
-    the one this class pins shut.
+    Every app on one handset then reports the same model string, so grouping on it
+    pooled unrelated brands into a single device named after the phone - the exact
+    over-merge this module exists to prevent, reached through the rule meant to
+    prevent it. These pin the writer-keyed grouping that replaced it.
     """
 
-    def test_two_writers_behind_one_phone_are_two_devices(self, db: Session, user: User) -> None:
-        muse = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "Muse")
-        oura = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "Oura")
+    def test_two_apps_on_one_phone_are_two_devices(self, db: Session, user: User) -> None:
+        muse = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        oura = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Oura")
 
         assert muse.device_id is not None
         assert oura.device_id is not None
         assert muse.device_id != oura.device_id
         assert len(_devices(db, user)) == 2
 
-    def test_one_writer_across_two_phones_over_splits(self, db: Session, user: User) -> None:
-        """Deliberately two devices, not one.
+    def test_the_phone_is_kept_as_provenance_not_as_the_model(self, db: Session, user: User) -> None:
+        """model_raw asserts what the provider said this unit was. It said nothing."""
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        device = DeviceRepository().get(db, source.device_id)
 
-        The same headband synced by an old phone and a new one shares no identifier,
-        and the pair cannot tell "one unit, two handsets" from "two units". A person
-        merges them; nothing was pooled while they decided.
+        assert device.model_raw is None
+        assert device.model_display is None
+        assert device.host_model_raw == "iPhone 17 Pro"
+        # The data source itself is untouched: it is the ingest fingerprint.
+        assert source.device_model == "iPhone 17 Pro"
+
+    def test_no_claim_describes_the_phone(self, db: Session, user: User) -> None:
+        """A host claim on one writer's device collides with the next writer's sync.
+
+        The grouping key names the host, but only ever bound to the writer that relayed
+        through it, so it is a value no other app can produce. What must not exist is a
+        claim on the bare host string, which every app on that phone would also make.
         """
-        old_phone = _ensure(db, user, ProviderName.APPLE, "iPhone10,5", "Muse")
-        new_phone = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "Muse")
+        _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        values = {c.id_value for c in db.query(DeviceIdentity).filter(DeviceIdentity.user_id == user.id).all()}
+
+        assert "iPhone 17 Pro" not in values
+        assert values == {"Muse", "Muse||iPhone 17 Pro"}
+
+    def test_the_writing_app_names_and_types_the_device(self, db: Session, user: User) -> None:
+        """A starting point, not an answer - but a better one than "Apple phone"."""
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        device = DeviceRepository().get(db, source.device_id)
+
+        assert device.brand == "Muse"
+        assert device.device_type == DeviceType.EEG.value
+        assert device.label == "Muse"
+        # Auto, so a hand-set name replaces it and then pins the device.
+        assert device.label_source == LabelSource.AUTO.value
+
+    def test_an_unrecognised_writer_gets_no_brand_rather_than_the_platform_s(self, db: Session, user: User) -> None:
+        """Naming a headband "Apple" is worse than leaving the brand for a person."""
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Elite HRV")
+        device = DeviceRepository().get(db, source.device_id)
+
+        assert device.brand is None
+        assert device.device_type == DeviceType.UNKNOWN.value
+
+    def test_apple_s_own_phone_data_still_describes_the_phone(self, db: Session, user: User) -> None:
+        """The platform writing about its own handset genuinely means the handset."""
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Michael's iPhone")
+        device = DeviceRepository().get(db, source.device_id)
+
+        assert device.model_raw == "iPhone 17 Pro"
+        assert device.host_model_raw is None
+
+    def test_a_watch_relayed_by_its_own_app_keeps_its_model(self, db: Session, user: User) -> None:
+        """Only a model naming a phone is suspect; real hardware still groups on it."""
+        first = _ensure(db, user, ProviderName.APPLE, "Apple Watch Ultra 3 49mm", "Ali's Watch")
+        second = _ensure(db, user, ProviderName.APPLE, "Apple Watch Ultra 3 49mm", "Ali's Watch (2)")
+
+        assert first.device_id == second.device_id
+        device = DeviceRepository().get(db, first.device_id)
+        assert device.model_raw == "Apple Watch Ultra 3 49mm"
+
+    def test_re_ingesting_a_relayed_source_is_idempotent(self, db: Session, user: User) -> None:
+        for _ in range(3):
+            _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+
+        assert len(_devices(db, user)) == 1
+        assert DeviceRepository().pending_proposals(db, user.id) == []
+
+    def test_health_connect_packages_split_the_same_way(self, db: Session, user: User) -> None:
+        fitbit = _ensure(db, user, ProviderName.HEALTH_CONNECT, "Pixel 9 Pro", "com.fitbit.FitbitMobile")
+        whoop = _ensure(db, user, ProviderName.HEALTH_CONNECT, "Pixel 9 Pro", "com.whoop.android")
+
+        assert fitbit.device_id != whoop.device_id
+
+
+class TestOneWriterAcrossTwoHosts:
+    """The grouping key is the writer *and* the host, not the writer alone.
+
+    Keyed on the writer alone, one app's streams group across every handset it ever
+    synced through: an Oura app relaying through a 2017 phone and a 2024 phone reads
+    as one ring, and for someone who replaced the ring in between that is two units
+    merged with no symptom. The pair over-splits instead, which a person can undo.
+    """
+
+    def test_the_same_app_on_two_phones_is_two_devices(self, db: Session, user: User) -> None:
+        old_phone = _ensure(db, user, ProviderName.APPLE, "iPhone 12 Mini", "Oura")
+        new_phone = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Oura")
 
         assert old_phone.device_id != new_phone.device_id
 
-    def test_the_same_writer_and_phone_stay_one_device(self, db: Session, user: User) -> None:
-        """Re-syncing must be idempotent - the pair is a stable key, not a new one."""
-        first = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "Muse")
-        again = DataSourceRepository().ensure_data_source(
-            db,
-            user_id=user.id,
-            provider=ProviderName.APPLE,
-            device_model="iPhone15,3",
-            source="Muse",
-        )
+    def test_the_same_app_on_one_phone_stays_one_device(self, db: Session, user: User) -> None:
+        """Re-syncing must be idempotent: the pair is a stable key, not a new one."""
+        first = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        again = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+
         assert first.id == again.id
         assert len(_devices(db, user)) == 1
-
-    def test_an_app_writing_under_a_watch_splits_off_the_watch(self, db: Session, user: User) -> None:
-        """SleepWatch derives sleep from an Apple Watch; it is not the watch.
-
-        Keeping them on one device would let a watch-vs-headband comparison silently
-        include a third party's derived staging.
-        """
-        watch = _ensure(db, user, ProviderName.APPLE, "Watch7,5", "Michael's Apple Watch")
-        app = _ensure(db, user, ProviderName.APPLE, "Watch7,5", "SleepWatch")
-
-        assert watch.device_id != app.device_id
-
-    def test_a_relayed_device_is_named_after_its_writer(self, db: Session, user: User) -> None:
-        """Display must not call a Muse headband "iPhone 14 Pro Max"."""
-        muse = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "Muse")
-        device = DeviceRepository().get(db, muse.device_id)
-
-        assert device.label == "Muse"
-        # The provider's own string is still recorded verbatim; it just does not name
-        # the device on screen.
-        assert device.model_raw == "iPhone15,3"
-
-    def test_a_direct_route_still_groups_on_the_model_alone(self, db: Session, user: User) -> None:
-        """Nothing changes where the model really does name the recorder."""
-        activities = _ensure(db, user, ProviderName.GARMIN, "fenix 8", "garmin")
-        wellness = _ensure(db, user, ProviderName.GARMIN, "fenix 8", "connect")
-
-        assert activities.device_id == wellness.device_id
 
     def test_the_xml_import_literal_is_not_treated_as_a_writer(self, db: Session, user: User) -> None:
         """`apple_health_xml` is the importer's stamp, identical on every row it writes.
@@ -269,7 +319,7 @@ class TestAggregatorRelaysAreNotPooled:
         phone = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "apple_health_xml")
 
         assert watch.device_id != phone.device_id
-        values = {claim.id_value for claim in db.query(DeviceIdentity).filter(DeviceIdentity.user_id == user.id).all()}
+        values = {c.id_value for c in db.query(DeviceIdentity).filter(DeviceIdentity.user_id == user.id).all()}
         assert "apple_health_xml" not in values
 
 

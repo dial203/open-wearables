@@ -1,7 +1,7 @@
 """data_source.attribution_locked_at: a detach that survives the next sync
 
 Revision ID: f5a2c7b31e88
-Revises: d3f1a8c2e5b4
+Revises: c9d4e1f7a3b8
 
 One nullable timestamp. Detection skips a data source that carries it, and linking
 the source to a device again clears it.
@@ -23,7 +23,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "f5a2c7b31e88"
-down_revision: Union[str, None] = "d3f1a8c2e5b4"
+down_revision: Union[str, None] = "c9d4e1f7a3b8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

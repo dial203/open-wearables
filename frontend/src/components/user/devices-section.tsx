@@ -62,6 +62,8 @@ import type { DataSource } from '@/lib/api/services/priority.service';
 
 const DEVICE_TYPES = [
   'chest_strap',
+  'eeg',
+  'headband',
   'watch',
   'band',
   'ring',
@@ -76,11 +78,19 @@ const DEVICE_TYPES = [
 const NO_DEVICES: Device[] = [];
 const NO_SOURCES: DataSource[] = [];
 
-/** What to call a device on screen. The rule itself lives in lib/utils/device. */
+/**
+ * What to call a device on screen.
+ *
+ * The server derives the same name into `display_name`; the local rule (lib/utils/device)
+ * is the fallback for a response served before that field existed.
+ */
 function deviceName(device: Device): string {
-  return deviceDisplayName(
-    { ...device, device_type: String(device.device_type) },
-    deviceTypeInfo(device.device_type).label
+  return (
+    device.display_name ||
+    deviceDisplayName(
+      { ...device, device_type: String(device.device_type) },
+      deviceTypeInfo(device.device_type).label
+    )
   );
 }
 
@@ -471,9 +481,17 @@ function DeviceCard({
           </div>
 
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {device.brand ?? 'Unknown brand'}
+            {device.brand_display ?? device.brand ?? 'Unknown brand'}
             {device.model_raw ? ` · reported as "${device.model_raw}"` : ''}
+            {/* The provider only ever described the phone that relayed this, so
+                everything naming the unit itself was typed by a person. Saying so is
+                what stops the name reading as something a provider confirmed. */}
+            {device.host_model_raw
+              ? ` · relayed by ${device.host_model_raw}`
+              : ''}
             {device.wear_location ? ` · ${device.wear_location}` : ''}
+            {device.serial ? ` · s/n ${device.serial}` : ''}
+            {device.firmware_version ? ` · fw ${device.firmware_version}` : ''}
           </p>
 
           <div className="mt-3 space-y-1">
@@ -738,6 +756,8 @@ function CreateDeviceDialog({
     device_type: 'unknown',
     brand: '',
     model_raw: '',
+    serial: '',
+    firmware_version: '',
     label: '',
     wear_location: '',
     reason: '',
@@ -792,6 +812,26 @@ function CreateDeviceDialog({
               />
             </div>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="create-serial">Serial / asset tag</Label>
+              <Input
+                id="create-serial"
+                value={form.serial}
+                onChange={(e) => setForm({ ...form, serial: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="create-firmware">Firmware</Label>
+              <Input
+                id="create-firmware"
+                value={form.firmware_version}
+                onChange={(e) =>
+                  setForm({ ...form, firmware_version: e.target.value })
+                }
+              />
+            </div>
+          </div>
           <div>
             <Label htmlFor="create-wear">Wear location</Label>
             <Input
@@ -825,6 +865,8 @@ function CreateDeviceDialog({
                   device_type: form.device_type,
                   brand: form.brand || null,
                   model_raw: form.model_raw || null,
+                  serial: form.serial || null,
+                  firmware_version: form.firmware_version || null,
                   label: form.label || null,
                   wear_location: form.wear_location || null,
                   reason: form.reason || null,
@@ -882,6 +924,10 @@ function EditDeviceForm({
   const [form, setForm] = useState({
     label: device.label ?? '',
     device_type: String(device.device_type),
+    brand_display: device.brand_display ?? '',
+    model_display: device.model_display ?? '',
+    serial: device.serial ?? '',
+    firmware_version: device.firmware_version ?? '',
     wear_location: device.wear_location ?? '',
     notes: device.notes ?? '',
     reason: '',
@@ -892,8 +938,10 @@ function EditDeviceForm({
       <DialogHeader>
         <DialogTitle>Edit device</DialogTitle>
         <DialogDescription>
-          Brand and the reported model are not editable — they record what the
-          provider claimed the hardware was.
+          Brand and model here are what this device is called everywhere. They
+          sit beside what the provider reported rather than replacing it — the
+          original claim stays on the device as evidence of what the hardware
+          said it was.
         </DialogDescription>
       </DialogHeader>
       <div className="space-y-3">
@@ -903,6 +951,7 @@ function EditDeviceForm({
             id="edit-label"
             value={form.label}
             onChange={(e) => setForm({ ...form, label: e.target.value })}
+            placeholder="Sub 04 headband"
           />
         </div>
         <div>
@@ -911,6 +960,50 @@ function EditDeviceForm({
             value={form.device_type}
             onChange={(v) => setForm({ ...form, device_type: v })}
           />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="edit-brand">Brand</Label>
+            <Input
+              id="edit-brand"
+              value={form.brand_display}
+              onChange={(e) =>
+                setForm({ ...form, brand_display: e.target.value })
+              }
+              placeholder={device.brand ?? 'Muse'}
+            />
+          </div>
+          <div>
+            <Label htmlFor="edit-model">Model</Label>
+            <Input
+              id="edit-model"
+              value={form.model_display}
+              onChange={(e) =>
+                setForm({ ...form, model_display: e.target.value })
+              }
+              placeholder={device.model_raw ?? 'S Athena'}
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="edit-serial">Serial / asset tag</Label>
+            <Input
+              id="edit-serial"
+              value={form.serial}
+              onChange={(e) => setForm({ ...form, serial: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="edit-firmware">Firmware</Label>
+            <Input
+              id="edit-firmware"
+              value={form.firmware_version}
+              onChange={(e) =>
+                setForm({ ...form, firmware_version: e.target.value })
+              }
+            />
+          </div>
         </div>
         <div>
           <Label htmlFor="edit-wear">Wear location</Label>
@@ -952,6 +1045,10 @@ function EditDeviceForm({
                 data: {
                   label: form.label || null,
                   device_type: form.device_type,
+                  brand_display: form.brand_display || null,
+                  model_display: form.model_display || null,
+                  serial: form.serial || null,
+                  firmware_version: form.firmware_version || null,
                   wear_location: form.wear_location || null,
                   notes: form.notes || null,
                   reason: form.reason || null,
