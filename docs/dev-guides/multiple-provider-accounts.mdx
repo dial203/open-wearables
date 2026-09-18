@@ -1,0 +1,186 @@
+---
+title: "Several accounts per provider"
+description: "How one user can hold more than one Garmin, Whoop or Oura account, how each account's data stays separate, and how to label and trace them."
+---
+
+## Why this exists
+
+Open Wearables used to allow one account per provider per user: a `UNIQUE`
+index on `(user_id, provider)` in `user_connection`. For a consumer app that
+is the right model — a person has one Whoop login.
+
+It is the wrong model for validation and reliability work. A participant in a
+device-comparison study wears two units of the same brand at once, each signed
+into its own account, and the whole point of the study is to keep the two data
+streams apart and compare them. Under the old model the second account could
+not be connected at all.
+
+Now a user may hold as many accounts with one provider as they need. Each is an
+independent connection with its own tokens, its own sync cursor, its own data
+sources and its own label and login e-mail.
+
+## What identifies an account
+
+| Field | What it is |
+|---|---|
+| `account_label` | The human name. Yours to set: `"P01 left wrist"`, `"Sub 14 — comparator"`. |
+| `account_email` | The login e-mail of the provider account. The provenance record: it is what ties a data set back to the account it came from. |
+| `device_label` | The hardware behind the account, for providers whose API reports none (Whoop, Oura). Unchanged from before, but now per account. |
+| `provider_user_id` | The provider's own identifier for the account. Set automatically where the API exposes one. |
+| `display_label` | Read-only, computed. `account_label`, else `provider_username`, else `account_email`, else a short form of the id — so an account is never unlabelled on screen. |
+
+### Where the e-mail comes from
+
+Whoop, Oura and Google Health expose the account e-mail through their APIs, and
+it is captured automatically on connect. **Garmin, Polar, Suunto, Strava,
+Withings, Fitbit and Ultrahuman do not** — for those, pass it when you start
+the OAuth flow, or set it afterwards through the API or the dashboard.
+
+Where a provider reports an e-mail it overwrites whatever was typed at connect
+time: the provider's value is authoritative about which login just authorised.
+
+## Connecting a second account
+
+The authorize endpoint decides, when the flow *starts*, whether this is a
+reconnect or an addition. It has to: the provider's callback carries nothing
+but an authorization code and the state we put there, so a callback cannot work
+it out on its own.
+
+```http
+GET /api/v1/oauth/{provider}/authorize
+  ?user_id=<uuid>
+  &new_account=true
+  &account_label=P01%20left%20wrist
+  &account_email=p01.left%40lab.example.edu
+  &redirect_uri=<your callback>
+```
+
+| Parameter | Effect |
+|---|---|
+| *(none of the below)* | Unchanged behaviour: creates the first account, or re-authorizes the one that exists. |
+| `new_account=true` | Adds another account beside the ones already linked. |
+| `connection_id=<uuid>` | Re-authorizes that specific account, and refuses to touch any other. |
+| `account_label`, `account_email` | Recorded on whichever account the callback resolves. |
+
+`connection_id` and `new_account` are mutually exclusive.
+
+<Warning>
+When the provider asks the person to sign in, they must sign in to the **other**
+account. Signing in to one already linked re-authorizes it — the callback
+recognises it by its `provider_user_id` — rather than creating a duplicate.
+That is deliberate: two rows for one login would double-count every sample.
+</Warning>
+
+### What is still unique
+
+The same external account cannot be linked twice to the same user. Two partial
+unique indexes enforce it, both limited to active rows so a revoked connection
+never blocks reconnecting:
+
+- `(user_id, provider, provider_user_id)` where the provider reports a user id.
+- `(user_id, provider, lower(account_email))` for the providers that do not.
+
+Two *different* users sharing one external account is unaffected — that is the
+linked-profiles feature, and it still fans out as before.
+
+## Reading and managing accounts
+
+`GET /users/{user_id}/connections` returns one entry per account, so it can
+contain several entries for one provider. Each carries `display_label`,
+`account_index` (1-based, oldest first, stable) and `account_count`.
+
+Anything that has to name *one* of several accounts goes through the
+per-account routes:
+
+| Route | Does |
+|---|---|
+| `GET /users/{user_id}/connections/accounts/{connection_id}` | One account. |
+| `PATCH /users/{user_id}/connections/accounts/{connection_id}` | Rename it, or correct its e-mail or device. Fields absent from the body are left alone; an explicit `null` clears one. |
+| `DELETE /users/{user_id}/connections/accounts/{connection_id}` | Disconnect that account only. |
+| `DELETE /users/{user_id}/connections/accounts/{connection_id}/data` | Revoke it and delete only the data that came through it. |
+
+The provider-scoped routes still work and mean **this provider, all of it** —
+`DELETE /users/{id}/connections/garmin` disconnects every Garmin account the
+user has. That is the right reading of "disconnect me from Garmin", but it is
+not what you want when dropping one arm of a study.
+
+## How the data stays separate
+
+This is the part that matters for analysis, and the part that cannot be
+repaired after the fact.
+
+`data_source`'s identity is now
+`(user_id, provider, device_model, source, user_connection_id)`. Without the
+connection in the key, two Garmin accounts reporting the same `device_model`
+and the same `source` — which is exactly what two identical watches do — would
+share one `data_source`, and their samples would be indistinguishable
+afterwards.
+
+Every sample's `source` metadata carries `user_connection_id`, and
+`GET /users/{user_id}/data-sources` carries `account_label` and
+`account_email` alongside it, so a data set can always be traced back to the
+account it came from.
+
+### Rows that predate the connection
+
+A `data_source` with no `user_connection_id` — a one-time XML import, or a row
+from before this column existed — is adopted by an account on the next sync,
+**but only when the user holds a single account with that provider**. With two,
+there is no way to tell which of them those rows came from, so a new data source
+is created instead and the old one is left alone.
+
+That asymmetry is deliberate. A wrong split is visible in the data-source list
+and can be corrected; a wrong merge pools two units' samples into one stream and
+cannot be undone, and may not be noticed until it is in an analysis.
+
+## Sync
+
+The pull sync walks a user's accounts one at a time and binds each one for the
+duration of its iteration, so every provider call it makes — token refresh,
+fetch, data-source resolution — acts for that account. The webhook handlers do
+the same after resolving which account an inbound notification belongs to.
+
+`sync_vendor_data` takes `connection_ids` to restrict a run to named accounts;
+`POST /providers/{provider}/users/{user_id}/sync/historical` takes
+`connection_id` for the same reason.
+
+Its result dictionary is keyed by provider when the user holds one account with
+it, and by `"{provider}:{connection_id}"` when they hold several — so existing
+consumers reading `providers_synced["garmin"]` are unaffected until a second
+Garmin appears, at which point collapsing both onto one key would have been a
+silent loss.
+
+<Note>
+**Garmin historical backfill runs one account at a time per user.** Its
+30-day chain keeps progress state in Redis keyed by user, so two concurrent
+runs would overwrite each other's window and type tracking. A backfill
+requested while another is in flight is re-queued (up to 12 attempts, 15
+minutes apart) rather than dropped, so the second account's history is
+fetched once the first finishes. Live sync and webhooks are unaffected and
+run per account concurrently.
+</Note>
+
+## For contributors: the account scope
+
+Most of `app/services/providers` resolves credentials from `(user_id,
+provider)` — written when that named exactly one row. Rewriting every signature
+to carry a connection id would have touched every provider and every call site
+behind it, so instead `app/utils/connection_context.py` holds a `ContextVar`:
+the caller that knows which account it is acting for declares it once, and
+`UserConnectionRepository` honours it.
+
+```python
+from app.utils.connection_context import active_connection
+
+with active_connection(connection.id):
+    strategy.data_247.load_and_save_all(db, user_id, ...)
+```
+
+Outside such a scope, `get_by_user_and_provider` returns the **oldest** account
+and logs a warning — deterministic, and loud enough to find. If you add a code
+path that acts on a specific account, bind it; if you see that warning in logs,
+something is guessing.
+
+A Celery worker reuses its threads, so an imperatively-bound scope
+(`bind_active_connection`) must always be cleared in a `finally` covering the
+whole task.

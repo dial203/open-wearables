@@ -142,6 +142,7 @@
               "dev-guides/integration-guide",
               "dev-guides/how-to-add-new-provider",
               "dev-guides/device-registry",
+              "dev-guides/multiple-provider-accounts",
               "dev-guides/data-migrations",
               "dev-guides/ngrok-setup"
             ]
