@@ -505,12 +505,19 @@ curl "http://localhost:8000/api/v1/oauth/garmin/authorize?user_id=USER_ID&redire
 
 ### Check Connection Status
 
-Verify a user's connected providers:
+Verify a user's connected accounts:
 
 ```bash
 curl "http://localhost:8000/api/v1/users/176be8de-8452-4eb7-a7ea-147fec925d9d/connections" \
   -H "X-Open-Wearables-API-Key: YOUR_API_KEY"
 ```
+
+<Warning>
+This returns one entry per **account**, not per provider. A user may hold
+several accounts with the same provider — two Garmins worn at once for a device
+comparison — so do not key a client on `provider` alone. See
+[Several accounts per provider](/dev-guides/multiple-provider-accounts).
+</Warning>
 
 ### Response
 
@@ -522,6 +529,13 @@ curl "http://localhost:8000/api/v1/users/176be8de-8452-4eb7-a7ea-147fec925d9d/co
     "provider": "garmin",
     "status": "active",
     "provider_user_id": "12345678",
+    "account_type": "validation",
+    "account_email": "p01.left@lab.example.edu",
+    "account_label": "P01 arm A",
+    "display_label": "P01 arm A",
+    "account_index": 1,
+    "account_count": 2,
+    "observed_devices": ["fenix 7"],
     "created_at": "2025-01-15T10:30:00Z",
     "updated_at": "2025-01-15T10:30:00Z",
     "last_synced_at": null,
@@ -812,7 +826,11 @@ class OpenWearablesClient:
             return resp.json()["authorization_url"]
 
     async def get_connections(self, user_id: str) -> list[dict]:
-        """Get user's connected providers."""
+        """Get the user's connected accounts.
+
+        One entry per account, not per provider: a user may hold several with
+        the same provider. Group on `id`, not `provider`.
+        """
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 f"{self.base_url}/api/v1/users/{user_id}/connections",

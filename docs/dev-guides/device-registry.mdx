@@ -6,8 +6,9 @@ description: "How Open Wearables works out which physical device produced a samp
 ## Why this exists
 
 A `data_source` is the immutable ingest fingerprint: one row per
-`(user, provider, device_model, source)`, exactly as the provider reported it. It
-cannot represent "one physical device", because no provider gives us one view of one.
+`(user, provider, device_model, source, user_connection)`, exactly as the provider
+reported it. It cannot represent "one physical device", because no provider gives us
+one view of one.
 
 - **Garmin** reports `deviceName` on activities. Its wellness summaries — sleep,
   dailies, epochs, HRV, pulse ox, body composition — carry no device field at all,
@@ -18,6 +19,18 @@ cannot represent "one physical device", because no provider gives us one view of
 
 The registry sits above `data_source` and answers "which unit produced this?"
 separately from "which path did it arrive by?".
+
+<Note>
+`user_connection` joined the identity when a user became able to hold
+[several accounts with one provider](/dev-guides/multiple-provider-accounts).
+Two Garmin accounts on one participant report the same `device_model` and the
+same `source`, so without it both units' samples would share a `data_source`.
+
+That covers the case the registry cannot: two identical units on **separate
+accounts** are already separate data sources, and the registry's job is the
+harder one — two identical units on the **same** account, where only a
+provider-issued `strong` identity can tell them apart.
+</Note>
 
 ## The tables
 
@@ -57,6 +70,8 @@ compared against claims from the same route.
 - **`strong`** — provider-issued, stable for the life of the unit, and different for
   two same-model devices owned by one person. Only these group data sources on their
   own. Today: `oura_config_id`, `healthkit_device_id`, `serial`.
+  Two same-model units on *different* accounts need no such claim: their data
+  sources are already distinct, because the connection is part of the identity.
 - **`weak`** — names the writing app (`com.ouraring.oura`) or the hardware model
   (`fenix 8`, `Watch7,5`). Two identical units share it, so it supports a proposal
   but never groups by itself.

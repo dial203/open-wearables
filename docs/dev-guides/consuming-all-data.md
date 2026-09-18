@@ -58,10 +58,20 @@ multiple pipes. **Your app decides** which copy to trust; OW just keeps them all
 | Oura | ✅ (wired via `ring_configuration`) | Model derived, e.g. `Oura Ring Gen3 Horizon`. |
 | Whoop | ❌ | Whoop does not report a device model → **manually entered** (see below). |
 
-When a provider doesn't report a device, an operator can set one on the OW side:
-`PUT /users/{user_id}/connections/{provider}/device-label`. That label backfills
-`device_model` on that connection's sources (including previously null rows), so the
-attribution becomes complete after the fact.
+Where the provider does report one, nothing needs entering: the model lands on the
+data source with the first sample, and `GET /users/{user_id}/connections` returns it
+per account as `observed_devices`, humanised (`Watch7,5` reads as
+`Apple Watch Series 8`) and most recent first.
+
+When a provider doesn't report a device, an operator sets one:
+`PATCH /users/{user_id}/connections/accounts/{connection_id}` with `device_label`.
+That label backfills `device_model` on that account's sources (including previously
+null rows), so the attribution becomes complete after the fact.
+
+The older `PUT /users/{user_id}/connections/{provider}/device-label` still works and
+takes an optional `connection_id` query parameter. Without it, it labels the oldest
+account for that provider — unambiguous only for a user who holds one. Prefer the
+per-account route, which names the account in the path.
 
 ---
 

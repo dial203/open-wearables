@@ -189,11 +189,36 @@ class SuuntoStrategy(BaseProviderStrategy):
 Inherited `BaseProviderStrategy` will init all required repositories so you don't need to take care about database manipulations. You can read more about repositories role in our [System Overview](/architecture/system-overview).
 </Check>
 
+<Warning>
+**`(user_id, provider)` does not name one account.** A user may hold
+[several accounts with the same provider](/dev-guides/multiple-provider-accounts),
+so `connection_repo.get_by_user_and_provider(...)` returns the *oldest* and logs a
+warning when there are more. That is fine inside the sync task, the SDK upload task
+and the webhook handlers, which bind the account they are working for — every
+lookup underneath them resolves to it automatically.
+
+It is **not** fine in any new entry point of your own: a Celery task you add, a
+route, a background job. Bind the account explicitly, or you will act on whichever
+one happens to be oldest:
+
+```python
+from app.utils.connection_context import active_connection
+
+with active_connection(connection.id):
+    self.data_247.load_and_save_all(db, user_id, ...)
+```
+
+If you see that "Ambiguous connection lookup" warning in the logs, something is
+guessing. Expose `provider_user_id` from `_get_provider_user_info` wherever the
+provider offers one — it is what lets the OAuth callback tell a second account
+from a reconnect — and return `email` too if the API gives you one.
+</Warning>
+
 ---
 
 ### Declare data coverage (`coverage.py`)
 
-`coverage.py` is the single source of truth for what your provider emits. It powers the public [`GET /api/v1/meta/coverage`](/api-reference) endpoint and the Data Coverage matrix, and the `coverage` property above reads from it.
+`coverage.py` is the single source of truth for what your provider emits. It powers the public [`GET /api/v1/meta/coverage`](/api-reference/introduction) endpoint and the Data Coverage matrix, and the `coverage` property above reads from it.
 
 Create `backend/app/services/providers/suunto/coverage.py`:
 
@@ -854,6 +879,8 @@ Use this checklist to ensure you've completed all steps:
 - [ ] Tested subscription verification at `GET /api/v1/providers/{provider}/webhooks` (if applicable)
 - [ ] If `webhook_registration_api=True`: implemented `register_webhooks()` in strategy and verified auto-registration fires on sync mode switch
 - [ ] If `webhook_subscription_per_user=True`: implemented `register_user_subscriptions()` on your webhook service, overrode `_save_connection` and `deregister_user`, and verified the fan-out registers one subscription per active connection
+- [ ] Returned `provider_user_id` from `_get_provider_user_info` if the API offers one, and `email` if it does — the first lets the OAuth callback tell a second account from a reconnect, the second records which login the data came from
+- [ ] Any entry point you added that is not the sync task, the SDK upload task or a webhook handler binds its account with `active_connection(...)`, and the logs show no "Ambiguous connection lookup" warning
 - [ ] Added error handling and logging
 - [ ] Updated API documentation
 

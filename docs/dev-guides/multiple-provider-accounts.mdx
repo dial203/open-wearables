@@ -234,6 +234,17 @@ That asymmetry is deliberate. A wrong split is visible in the data-source list
 and can be corrected; a wrong merge pools two units' samples into one stream and
 cannot be undone, and may not be noticed until it is in an analysis.
 
+## What this does not cover yet
+
+**SDK providers still hold one account per user.** Apple Health and the other
+client-SDK paths create their connection lazily on first upload, and the sync
+payload carries no account identifier, so `ensure_sdk_connection` resolves to a
+single connection per `(user, provider)`. Two phones signed into two Apple IDs
+share one connection today. The repository method accepts an `account_email` to
+address one of several, so the storage side is ready, but nothing calls it with
+one — wiring that up means adding an account identifier to the SDK sync request
+and threading it through the upload task.
+
 ## Sync
 
 The pull sync walks a user's accounts one at a time and binds each one for the
