@@ -9,7 +9,7 @@ from app.config import settings
 from app.constants.provider_urls import from_url_slug
 from app.database import DbSession
 from app.models import UserConnection
-from app.schemas.enums import ProviderName
+from app.schemas.enums import AccountType, ProviderName
 from app.schemas.model_crud.credentials import AuthorizationURLResponse, OAuthState
 from app.schemas.model_crud.data_priority import (
     BulkProviderSettingsUpdate,
@@ -64,9 +64,13 @@ def authorize_provider(
         bool,
         Query(description="Add another account with this provider beside the ones already linked"),
     ] = False,
+    account_type: Annotated[
+        AccountType | None,
+        Query(description="What this account is for: personal, validation, reliability, monitoring, testing, other"),
+    ] = None,
     account_label: Annotated[
         str | None,
-        Query(max_length=100, description='Name for this account, e.g. "P01 left wrist"'),
+        Query(max_length=100, description='Operator-facing name for this account, e.g. "P01 arm A"'),
     ] = None,
     account_email: Annotated[
         str | None,
@@ -82,10 +86,12 @@ def authorize_provider(
     exactly one it re-authorizes that one. Pass ``new_account=true`` to add
     another, or ``connection_id`` to re-authorize a specific one.
 
-    ``account_label`` and ``account_email`` are carried through the OAuth flow
-    and recorded on whichever account the callback resolves. The e-mail is what
-    ties a data set back to the login it came from, so pass it for providers
-    whose API does not expose it (Garmin, Polar, Suunto, Strava, Withings).
+    ``account_type``, ``account_label`` and ``account_email`` are carried through
+    the OAuth flow and recorded on whichever account the callback resolves.
+    ``account_type`` is what a study filters on - the validation arm separated
+    from the participant's own everyday wear. The e-mail is what ties a data set
+    back to the login it came from, so pass it for providers whose API does not
+    expose it (Garmin, Polar, Suunto, Strava, Withings).
 
     Returns authorization URL where user should be redirected to log in.
     """
@@ -103,6 +109,7 @@ def authorize_provider(
         redirect_uri,
         connection_id=connection_id,
         new_account=new_account,
+        account_type=account_type.value if account_type else None,
         account_label=account_label,
         account_email=account_email,
     )

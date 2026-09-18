@@ -5,7 +5,7 @@ from sqlalchemy import Index, text
 from sqlalchemy.orm import Mapped
 
 from app.database import BaseDbModel
-from app.mappings import FKUser, PrimaryKey, str_64, str_100, str_255
+from app.mappings import FKUser, PrimaryKey, str_32, str_64, str_100, str_255
 from app.schemas.auth import ConnectionStatus
 
 
@@ -29,6 +29,8 @@ class UserConnection(BaseDbModel):
         # The uniqueness that remains is per external account, below.
         Index("ix_user_connection_user_provider", "user_id", "provider"),
         Index("ix_user_connection_status_user_id", "status", "user_id"),
+        # "every validation account", across participants - a study-wide filter.
+        Index("ix_user_connection_account_type", "account_type"),
         # The same external account must not be linked twice to the same user:
         # two rows for one Whoop login would double-count every sample and make
         # the sync fan-out race itself. Providers that report no user id fall
@@ -66,11 +68,25 @@ class UserConnection(BaseDbModel):
     provider_user_id: Mapped[str | None]
     provider_username: Mapped[str | None]
 
-    # Human-facing name for this account, unique per user and provider only by
-    # convention - nothing enforces it, because a label is a note, not a key.
-    # Set when the account is connected and editable afterwards; when it is NULL
-    # the API falls back to provider_username / account_email / a positional
-    # "Account N" so a connection is never unnamed on screen.
+    # What this account is for: personal, validation, reliability, monitoring,
+    # testing, other (app/schemas/enums/account_type.py). The e-mail below says
+    # *which* account this is; this says why it exists, which is what a study
+    # filters on - the validation arm separated from the participant's own
+    # everyday wear, the checkout account excluded from the analysis.
+    #
+    # NULL means nobody has classified it. Deliberately not defaulted: a wrong
+    # classification that nobody chose is worse than a visibly empty one, and
+    # the API reports it as unclassified so it can be found and fixed.
+    #
+    # Plain string rather than a database enum, matching device_type and
+    # provider, so the set can grow without a migration.
+    account_type: Mapped[str_32 | None]
+
+    # Operator-facing free-text name, e.g. "P01 arm A". Optional, and never
+    # asked of a participant - the classification above is the structured field.
+    # Nothing enforces uniqueness, because a name is a note, not a key. When it
+    # is NULL the API falls back to provider_username / account_email / a short
+    # form of the id, so a connection is never unnamed on screen.
     account_label: Mapped[str_100 | None]
 
     # The login e-mail of the provider account behind this connection. Recorded

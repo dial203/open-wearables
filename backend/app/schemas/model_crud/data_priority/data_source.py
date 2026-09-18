@@ -45,10 +45,18 @@ class DataSourceResponse(BaseModel):
     # its own. A participant with two Garmins has two rows here that are
     # otherwise identical down to the device model, and the account is the only
     # thing that tells them apart.
+    account_type: str | None = Field(
+        None,
+        description=(
+            "What the connected account is for: personal, validation, reliability, "
+            "monitoring, testing, other. Null when nobody has classified it."
+        ),
+        example="validation",
+    )
     account_label: str | None = Field(
         None,
-        description="Label of the connected account this source arrived through.",
-        example="P01 left wrist",
+        description="Name of the connected account this source arrived through.",
+        example="P01 arm A",
     )
     account_email: str | None = Field(
         None,

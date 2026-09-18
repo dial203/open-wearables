@@ -90,6 +90,7 @@ export function useUpdateConnectionAccount(
 ) {
   return useMutation({
     mutationFn: (patch: {
+      account_type?: string | null;
       account_label?: string | null;
       account_email?: string | null;
       device_label?: string | null;

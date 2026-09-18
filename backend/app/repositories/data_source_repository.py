@@ -13,7 +13,7 @@ from app.repositories.repositories import CrudRepository
 from app.schemas.enums import DeviceType, ProviderName, infer_device_type_from_model, infer_device_type_from_source_name
 from app.schemas.model_crud.data_priority import DataSourceCreate, DataSourceUpdate
 from app.utils.connection_context import get_active_connection_id
-from app.utils.device_registry import resolve_brand
+from app.utils.device_registry import humanize_device_model, resolve_brand
 
 if TYPE_CHECKING:
     from app.services.devices.identity import IdentityClaim
@@ -501,6 +501,43 @@ class DataSourceRepository(
             )
 
         return result
+
+    def observed_devices_by_connection(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+    ) -> dict[UUID, list[str]]:
+        """The device models each of a user's accounts has actually reported.
+
+        Automatic labelling from what the providers already send: Garmin names
+        the watch on its activities, Apple ships an HKDevice, Samsung and Health
+        Connect carry a model string. That value is on the data source the
+        moment the first sample lands, so an account does not need anyone to
+        type what is behind it - the accounts that do are the ones whose
+        provider reports nothing (Whoop), and those still fall back to the
+        device label set by hand.
+
+        Returned humanised (marketing names for opaque hardware codes) and
+        de-duplicated, ordered by how recently the source was created so the
+        current device leads. Accounts with nothing observed are absent.
+        """
+        rows = (
+            db_session.query(self.model.user_connection_id, self.model.device_model)
+            .filter(
+                self.model.user_id == user_id,
+                self.model.user_connection_id.isnot(None),
+                self.model.device_model.isnot(None),
+            )
+            .order_by(self.model.created_at.desc())
+            .all()
+        )
+        observed: dict[UUID, list[str]] = {}
+        for connection_id, device_model in rows:
+            name = humanize_device_model(device_model) or device_model
+            seen = observed.setdefault(connection_id, [])
+            if name not in seen:
+                seen.append(name)
+        return observed
 
     def get_user_data_sources(
         self,

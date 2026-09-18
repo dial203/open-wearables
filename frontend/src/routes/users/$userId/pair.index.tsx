@@ -15,6 +15,7 @@ import { useUserConnections } from '@/hooks/api/use-health';
 import { useMemo, useState } from 'react';
 import { API_CONFIG } from '@/lib/api/config';
 import { isAuthenticated } from '@/lib/auth/session';
+import { ACCOUNT_TYPES, type AccountType } from '@/lib/api/types';
 
 export const Route = createFileRoute('/users/$userId/pair/')({
   component: PairWearablePage,
@@ -86,7 +87,7 @@ function PairWearablePage() {
     linkedCount: number;
   } | null>(null);
   const [accountEmail, setAccountEmail] = useState('');
-  const [accountLabel, setAccountLabel] = useState('');
+  const [accountType, setAccountType] = useState<AccountType | ''>('');
 
   const openAccountStep = (
     providerId: string,
@@ -95,7 +96,7 @@ function PairWearablePage() {
   ) => {
     if (connectingProvider !== null) return;
     setAccountEmail('');
-    setAccountLabel('');
+    setAccountType('');
     setPendingProvider({ id: providerId, name, linkedCount });
   };
 
@@ -109,7 +110,7 @@ function PairWearablePage() {
       // truth, and the flag alone could not be relied on.
       newAccount: pendingProvider.linkedCount > 0,
       accountEmail: accountEmail.trim() || undefined,
-      accountLabel: accountLabel.trim() || undefined,
+      accountType: accountType || undefined,
     });
   };
 
@@ -202,22 +203,29 @@ function PairWearablePage() {
 
               <div className="space-y-1.5">
                 <label
-                  htmlFor="pair-account-label"
+                  htmlFor="pair-account-type"
                   className="block text-sm font-medium text-zinc-300"
                 >
-                  Label{' '}
-                  <span className="font-normal text-zinc-500">(optional)</span>
+                  What is this account for?
                 </label>
-                <input
-                  id="pair-account-label"
-                  value={accountLabel}
-                  onChange={(e) => setAccountLabel(e.target.value)}
-                  placeholder="e.g. left wrist"
-                  className="h-11 w-full rounded-lg border border-white/10 bg-zinc-950/60 px-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-white/25 focus:ring-2 focus:ring-white/10"
-                />
+                <select
+                  id="pair-account-type"
+                  value={accountType}
+                  onChange={(e) =>
+                    setAccountType(e.target.value as AccountType | '')
+                  }
+                  className="h-11 w-full rounded-lg border border-white/10 bg-zinc-950/60 px-3 text-sm text-zinc-100 outline-none focus:border-white/25 focus:ring-2 focus:ring-white/10"
+                >
+                  <option value="">Choose one</option>
+                  {ACCOUNT_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label} — {t.description}
+                    </option>
+                  ))}
+                </select>
                 <p className="text-xs text-zinc-500">
-                  If you wear more than one {pendingProvider.name} device, this
-                  is what tells them apart.
+                  Helps identify which account the data came from, and keeps a
+                  study&apos;s accounts apart from everyday ones.
                 </p>
               </div>
             </div>

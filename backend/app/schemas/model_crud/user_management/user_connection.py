@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
 from app.schemas.auth import ConnectionStatus, LiveSyncMode
+from app.schemas.enums import AccountType
 
 
 class UserConnectionBase(BaseModel):
@@ -13,6 +14,7 @@ class UserConnectionBase(BaseModel):
     provider: str
     provider_user_id: str | None = None
     provider_username: str | None = None
+    account_type: AccountType | None = None
     account_label: str | None = None
     account_email: str | None = None
     scope: str | None = None
@@ -43,6 +45,7 @@ class UserConnectionUpdate(BaseModel):
     token_expires_at: datetime | None = None
     provider_user_id: str | None = None
     provider_username: str | None = None
+    account_type: AccountType | None = None
     account_label: str | None = None
     account_email: str | None = None
     device_label: str | None = None
@@ -107,7 +110,11 @@ class UserConnectionAccountUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    account_label: str | None = Field(None, max_length=100, description="Human name for this account")
+    account_type: AccountType | None = Field(
+        None,
+        description="What this account is for: personal, validation, reliability, monitoring, testing, other",
+    )
+    account_label: str | None = Field(None, max_length=100, description="Operator-facing name for this account")
     account_email: EmailStr | None = Field(None, description="Login e-mail of the provider account")
     device_label: str | None = Field(None, max_length=100, description='Device behind this account, e.g. "Whoop 5.0"')
 
@@ -146,3 +153,8 @@ class UserConnectionWithCapabilities(UserConnectionRead):
     # say "Garmin account 2" before anyone has named it.
     account_index: int = 1
     account_count: int = 1
+    # Device models this account has actually reported, humanised, most recent
+    # first. Derived from ingested data rather than typed by anyone, so an
+    # account whose provider sends device metadata labels itself. Empty for
+    # providers that report none (Whoop), where `device_label` is the fallback.
+    observed_devices: list[str] = Field(default_factory=list)

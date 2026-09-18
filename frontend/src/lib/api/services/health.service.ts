@@ -169,6 +169,7 @@ export const healthService = {
     userId: string,
     connectionId: string,
     patch: {
+      account_type?: string | null;
       account_label?: string | null;
       account_email?: string | null;
       device_label?: string | null;

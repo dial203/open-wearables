@@ -23,11 +23,34 @@ sources and its own label and login e-mail.
 
 | Field | What it is |
 |---|---|
-| `account_label` | The human name. Yours to set: `"P01 left wrist"`, `"Sub 14 — comparator"`. |
+| `account_type` | **What the account is for**: `personal`, `validation`, `reliability`, `monitoring`, `testing`, `other`. The structured field a study filters on. `NULL` means nobody has classified it — there is deliberately no default. |
 | `account_email` | The login e-mail of the provider account. The provenance record: it is what ties a data set back to the account it came from. |
-| `device_label` | The hardware behind the account, for providers whose API reports none (Whoop, Oura). Unchanged from before, but now per account. |
+| `account_label` | Optional operator-facing name, e.g. `"P01 arm A"`. Never asked of a participant. |
+| `device_label` | Manually-set hardware behind the account, for providers whose API reports none (Whoop). |
+| `observed_devices` | Read-only. Device models this account has actually reported, humanised, most recent first — see [Devices label themselves](#devices-label-themselves). |
 | `provider_user_id` | The provider's own identifier for the account. Set automatically where the API exposes one. |
 | `display_label` | Read-only, computed. `account_label`, else `provider_username`, else `account_email`, else a short form of the id — so an account is never unlabelled on screen. |
+
+### Classification vs. e-mail
+
+They answer different questions and you want both. The e-mail says **which**
+account this is; the classification says **why it exists**, and that is what an
+analysis filters on — the validation arm separated from the participant's own
+everyday wear, the device-checkout account excluded entirely.
+
+| Value | Meaning |
+|---|---|
+| `personal` | The participant's own everyday account |
+| `validation` | Criterion or device-comparison study |
+| `reliability` | Test-retest or inter-device consistency |
+| `monitoring` | Ongoing athlete or tactical readiness monitoring |
+| `testing` | Device or integration checkout, not participant data |
+| `other` | Anything else |
+
+Stored as a plain string with an application-level enum
+(`app/schemas/enums/account_type.py`), the same way `device_type` and `provider`
+are, so the set can grow without a migration. Unknown values are rejected at the
+API boundary.
 
 ### Where the e-mail comes from
 
@@ -50,8 +73,9 @@ it out on its own.
 GET /api/v1/oauth/{provider}/authorize
   ?user_id=<uuid>
   &new_account=true
-  &account_label=P01%20left%20wrist
+  &account_type=validation
   &account_email=p01.left%40lab.example.edu
+  &account_label=P01%20arm%20A
   &redirect_uri=<your callback>
 ```
 
@@ -60,7 +84,8 @@ GET /api/v1/oauth/{provider}/authorize
 | *(none of the below)* | Unchanged behaviour: creates the first account, or re-authorizes the one that exists. |
 | `new_account=true` | Adds another account beside the ones already linked. |
 | `connection_id=<uuid>` | Re-authorizes that specific account, and refuses to touch any other. |
-| `account_label`, `account_email` | Recorded on whichever account the callback resolves. |
+| `account_type` | What the account is for. Recorded on whichever account the callback resolves. |
+| `account_label`, `account_email` | Also recorded on it. A reconnect fills a blank but never overwrites a classification or name somebody already set. |
 
 `connection_id` and `new_account` are mutually exclusive.
 
@@ -94,9 +119,10 @@ row beside it.
 
 `/users/{user_id}/pair` — the pairing link you already send them. Tapping a
 provider now opens a short step before the redirect that asks which account
-they are signing in with (e-mail) and, optionally, a label such as
-"left wrist". For providers that never report an e-mail, this is the only
-moment the person who knows it is present.
+they are signing in with (e-mail) and what the account is for (the
+classification). For providers that never report an e-mail, this is the only
+moment the person who knows it is present. The free-text name is not asked of
+a participant — it is an operator field on the dashboard.
 
 Opened by a signed-in operator, the same page reads the connection list and the
 step says "Add another Garmin account — 1 already linked". Opened by a
@@ -139,6 +165,45 @@ The provider-scoped routes still work and mean **this provider, all of it** —
 `DELETE /users/{id}/connections/garmin` disconnects every Garmin account the
 user has. That is the right reading of "disconnect me from Garmin", but it is
 not what you want when dropping one arm of a study.
+
+## Telling two accounts apart downstream
+
+Separating the *data* is the storage problem, solved by the identity key below.
+Separating them **on screen** is a different problem, and two places got it
+wrong until this landed:
+
+- `GET /users/{id}/data-sources` built `display_name` as `"Garmin - fenix 7"`.
+  Two accounts on the same model produced the same string. It now appends the
+  account when — and only when — the user holds several with that provider:
+  `"Garmin - fenix 7 (validation · P01 arm A)"`. A single-account user's name is
+  byte-for-byte what it was, so nothing that reads this string moves.
+- The **Compare** view keyed its columns on `provider|source|device`, the old
+  data-source identity. Two Garmins reporting `fenix 7` merged into one column —
+  in the one view whose entire purpose is showing them side by side. It now keys
+  on `data_source_id`, which includes the account by construction.
+
+Every sample's `source` metadata carries `user_connection_id`, so any view that
+shows several sources together can name the account without another request:
+resolve it against `GET /users/{id}/connections`. `DataSourceInfo` in the
+frontend does exactly this and renders a classification chip, shown only when
+the user actually holds siblings.
+
+## Devices label themselves
+
+Most providers already tell us what the hardware is, and that value lands on the
+data source with the first sample — Garmin names the watch on its activities,
+Apple ships an `HKDevice`, Samsung and Health Connect carry a model string.
+Nobody should be typing those in.
+
+`GET /users/{id}/connections` returns `observed_devices` per account: the
+distinct device models that account has reported, run through the same
+`humanize_device_model` used elsewhere (so `Watch7,5` reads as
+`Apple Watch Series 8`), most recent first. The dashboard shows them with an
+"auto" marker to distinguish them from a value somebody entered.
+
+`device_label` remains the manual fallback, and is only needed for providers
+whose API reports no device at all — Whoop is the main one. Oura is filled
+automatically from `ring_configuration`.
 
 ## How the data stays separate
 

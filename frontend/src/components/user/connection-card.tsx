@@ -23,7 +23,16 @@ import {
 } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { formatDistanceToNow } from 'date-fns';
-import { UserConnection } from '@/lib/api/types';
+import {
+  ACCOUNT_TYPES,
+  accountTypeLabel,
+  type AccountType,
+  type UserConnection,
+} from '@/lib/api/types';
+import {
+  ACCOUNT_TYPE_CLASSES,
+  UNCLASSIFIED_CLASSES,
+} from '@/lib/utils/account';
 import { API_CONFIG } from '@/lib/api/config';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -272,6 +281,9 @@ function ConnectionCardComponent({
   const [deviceInput, setDeviceInput] = useState(connection.device_label ?? '');
   const [labelInput, setLabelInput] = useState(connection.account_label ?? '');
   const [emailInput, setEmailInput] = useState(connection.account_email ?? '');
+  const [typeInput, setTypeInput] = useState<AccountType | ''>(
+    connection.account_type ?? ''
+  );
   const [imageError, setImageError] = useState(false);
 
   const iconUrl = connection.icon_url
@@ -284,6 +296,14 @@ function ConnectionCardComponent({
   // client that predates it, or a provider with one account, reads as 1.
   const accountCount = connection.account_count ?? 1;
   const hasSiblings = accountCount > 1;
+  // Providers that report device metadata label themselves; the manual label is
+  // the fallback for the ones that report none (Whoop).
+  const observedDevices =
+    connection.observed_devices && connection.observed_devices.length > 0
+      ? connection.observed_devices
+      : connection.device_label
+        ? [connection.device_label]
+        : [];
   const accountName =
     connection.display_label ??
     connection.account_label ??
@@ -411,9 +431,22 @@ function ConnectionCardComponent({
               </h3>
               {/* The account, not the provider. With two Whoops on one
                   participant this line is what says which one this card is. */}
-              <p className="text-sm font-medium text-foreground/90 mt-0.5 flex items-center gap-1">
+              <p className="text-sm font-medium text-foreground/90 mt-0.5 flex items-center gap-1.5">
                 <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="truncate">{accountName}</span>
+                {/* What the account is for. Shown even when unclassified, so an
+                    account nobody has classified is findable rather than silent. */}
+                <span
+                  className={cn(
+                    'shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium',
+                    connection.account_type
+                      ? (ACCOUNT_TYPE_CLASSES[connection.account_type] ??
+                          UNCLASSIFIED_CLASSES)
+                      : UNCLASSIFIED_CLASSES
+                  )}
+                >
+                  {accountTypeLabel(connection.account_type)}
+                </span>
               </p>
               {connection.account_email && (
                 <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
@@ -435,10 +468,26 @@ function ConnectionCardComponent({
                     })
                   : 'Never'}
               </p>
-              {connection.device_label && (
+              {/* Devices this account reports, straight from the provider's own
+                  metadata; the manually-set label only when it reports none. */}
+              {observedDevices.length > 0 && (
                 <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                  <Watch className="h-3 w-3" />
-                  {connection.device_label}
+                  <Watch className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{observedDevices.join(', ')}</span>
+                  {connection.observed_devices &&
+                    connection.observed_devices.length > 0 && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="text-[10px] text-muted-foreground/70">
+                            auto
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Detected from the device metadata {providerName} sends
+                          with this account&apos;s data — not typed by anyone.
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                 </p>
               )}
               {(connection.live_sync_mode || scopeItems.length > 0) && (
@@ -541,6 +590,7 @@ function ConnectionCardComponent({
                     setDeviceInput(connection.device_label ?? '');
                     setLabelInput(connection.account_label ?? '');
                     setEmailInput(connection.account_email ?? '');
+                    setTypeInput(connection.account_type ?? '');
                     setShowAccountDialog(true);
                   }}
                 >
@@ -609,15 +659,42 @@ function ConnectionCardComponent({
                   <div className="space-y-1.5">
                     <label
                       className="text-xs font-medium text-muted-foreground"
+                      htmlFor={`account-type-${connection.id}`}
+                    >
+                      Classification
+                    </label>
+                    <select
+                      id={`account-type-${connection.id}`}
+                      value={typeInput}
+                      onChange={(e) =>
+                        setTypeInput(e.target.value as AccountType | '')
+                      }
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      <option value="">Unclassified</option>
+                      {ACCOUNT_TYPES.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label} — {t.description}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-muted-foreground">
+                      What this account is for. Filterable across participants.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium text-muted-foreground"
                       htmlFor={`account-label-${connection.id}`}
                     >
-                      Account name
+                      Account name{' '}
+                      <span className="font-normal">(optional)</span>
                     </label>
                     <Input
                       id={`account-label-${connection.id}`}
                       value={labelInput}
                       onChange={(e) => setLabelInput(e.target.value)}
-                      placeholder="e.g. P01 left wrist"
+                      placeholder="e.g. P01 arm A"
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -666,6 +743,7 @@ function ConnectionCardComponent({
                     onClick={() =>
                       updateAccount(
                         {
+                          account_type: typeInput || null,
                           account_label: labelInput.trim() || null,
                           account_email: emailInput.trim() || null,
                           device_label: deviceInput.trim() || null,

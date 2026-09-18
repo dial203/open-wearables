@@ -68,10 +68,13 @@ class PriorityService:
         # One query for the user's accounts rather than a lazy load per source:
         # the listing is short, and a participant in a multi-device study has
         # several sources per account.
-        accounts = {
-            connection.id: connection
-            for connection in db_session.query(UserConnection).filter(UserConnection.user_id == user_id).all()
-        }
+        user_accounts = db_session.query(UserConnection).filter(UserConnection.user_id == user_id).all()
+        accounts = {connection.id: connection for connection in user_accounts}
+        # How many accounts the user holds with each provider, so a name is only
+        # qualified when it would otherwise be ambiguous.
+        siblings: dict[str, int] = {}
+        for connection in user_accounts:
+            siblings[connection.provider] = siblings.get(connection.provider, 0) + 1
         items = [
             DataSourceResponse(
                 id=ds.id,
@@ -83,9 +86,16 @@ class PriorityService:
                 source=ds.source,
                 device_type=ds.device_type,
                 original_source_name=ds.original_source_name,
-                display_name=self._build_display_name(ds),
+                display_name=self._build_display_name(
+                    ds,
+                    self._account_suffix(
+                        accounts.get(ds.user_connection_id),
+                        siblings.get(str(getattr(ds.provider, "value", ds.provider)), 0),
+                    ),
+                ),
                 account_label=self._account_label(accounts.get(ds.user_connection_id)),
                 account_email=getattr(accounts.get(ds.user_connection_id), "account_email", None),
+                account_type=getattr(accounts.get(ds.user_connection_id), "account_type", None),
                 ingestion_route=resolve_ingestion_route(ds.provider, ds.original_source_name),
             )
             for ds in sources
@@ -170,7 +180,7 @@ class PriorityService:
         ids = self.get_priority_data_source_ids(db_session, user_id)
         return ids[0] if ids else None
 
-    def _build_display_name(self, ds: DataSource) -> str:
+    def _build_display_name(self, ds: DataSource, account_suffix: str | None = None) -> str:
         parts = []
         if ds.provider:
             # Rows loaded from the database carry provider as a plain str (the
@@ -182,7 +192,32 @@ class PriorityService:
             parts.append(humanize_device_model(ds.device_model) or ds.device_model)
         elif ds.original_source_name:
             parts.append(ds.original_source_name)
-        return " - ".join(parts) if parts else "Unknown Source"
+        name = " - ".join(parts) if parts else "Unknown Source"
+        # Two accounts with one provider report the same model, so "Garmin -
+        # fenix 7" names both of them. Appended only when the user actually
+        # holds several, so a single-account user's name is unchanged and every
+        # existing consumer of this string sees what it saw before.
+        return f"{name} ({account_suffix})" if account_suffix else name
+
+    @staticmethod
+    def _account_suffix(connection: UserConnection | None, sibling_count: int) -> str | None:
+        """How to tell this account apart, when the user holds more than one.
+
+        The classification comes first because it is what a study scans for -
+        which of these is the validation unit - and the name or e-mail follows
+        to separate two accounts that share a classification.
+        """
+        if connection is None or sibling_count < 2:
+            return None
+        bits: list[str] = []
+        if connection.account_type:
+            bits.append(str(connection.account_type))
+        identifier = connection.account_label or connection.provider_username or connection.account_email
+        if identifier:
+            bits.append(identifier)
+        if not bits:
+            bits.append(f"account {str(connection.id)[:8]}")
+        return " · ".join(bits)
 
 
 priority_service = PriorityService(log=getLogger(__name__))

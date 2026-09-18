@@ -475,6 +475,7 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         scope: str | None = None,
         account_email: str | None = None,
         account_label: str | None = None,
+        account_type: str | None = None,
     ) -> UserConnection:
         """Update connection with new tokens and user info.
 
@@ -498,6 +499,10 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
             connection.account_email = account_email.strip() or None
         if account_label and not connection.account_label:
             connection.account_label = account_label
+        # Same rule as the label: a reconnect does not silently reclassify an
+        # account somebody already classified, but it will fill in a blank.
+        if account_type and not connection.account_type:
+            connection.account_type = account_type
 
         connection.status = ConnectionStatus.ACTIVE
         connection.updated_at = datetime.now(timezone.utc)
@@ -511,9 +516,11 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         db_session: DbSession,
         connection: UserConnection,
         *,
+        account_type: str | None = None,
         account_label: str | None = None,
         account_email: str | None = None,
         device_label: str | None = None,
+        clear_account_type: bool = False,
         clear_account_label: bool = False,
         clear_account_email: bool = False,
         clear_device_label: bool = False,
@@ -525,6 +532,8 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         e-mail silently blanked by an unrelated rename is exactly the kind of
         provenance loss this whole feature exists to prevent.
         """
+        if account_type is not None or clear_account_type:
+            connection.account_type = None if clear_account_type else account_type
         if account_label is not None or clear_account_label:
             connection.account_label = None if clear_account_label else account_label
         if account_email is not None or clear_account_email:
@@ -587,6 +596,7 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         provider: str,
         account_email: str | None = None,
         account_label: str | None = None,
+        account_type: str | None = None,
     ) -> tuple[UserConnection, SdkConnectionOutcome]:
         """Ensure an SDK-based connection exists for a user and provider.
 
@@ -625,6 +635,7 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
             provider=provider,
             account_email=account_email.strip() if account_email else None,
             account_label=account_label,
+            account_type=account_type,
             access_token=None,
             refresh_token=None,
             token_expires_at=None,

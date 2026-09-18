@@ -74,16 +74,18 @@ class BaseOAuthTemplate(ABC):
         redirect_uri: str | None = None,
         connection_id: UUID | None = None,
         new_account: bool = False,
+        account_type: str | None = None,
         account_label: str | None = None,
         account_email: str | None = None,
     ) -> tuple[str, str]:
         """Generates the provider's authorization URL.
 
         ``connection_id`` re-authorises an account the user already holds;
-        ``new_account`` adds another one beside it. The label and e-mail are
-        carried through the flow so the account is identifiable the moment it
-        lands, which for a study with three Garmins on one participant is the
-        difference between a usable connection list and three identical rows.
+        ``new_account`` adds another one beside it. The classification, name and
+        e-mail are carried through the flow so the account is identifiable the
+        moment it lands, which for a study with three Garmins on one participant
+        is the difference between a usable connection list and three identical
+        rows.
 
         Returns:
             tuple[str, str]: The authorization URL and the state.
@@ -96,6 +98,7 @@ class BaseOAuthTemplate(ABC):
             redirect_uri=redirect_uri,  # Only store if explicitly provided by frontend
             connection_id=connection_id,
             new_account=new_account,
+            account_type=account_type,
             account_label=account_label,
             account_email=account_email,
         )
@@ -504,6 +507,7 @@ class BaseOAuthTemplate(ABC):
                 scope=scope,
                 account_email=account_email,
                 account_label=oauth_state.account_label,
+                account_type=oauth_state.account_type,
             )
             if was_inactive:
                 on_connection_created(
@@ -518,6 +522,7 @@ class BaseOAuthTemplate(ABC):
                 provider=self.provider_name,
                 provider_user_id=provider_user_id,
                 provider_username=provider_username,
+                account_type=oauth_state.account_type,
                 account_label=oauth_state.account_label,
                 account_email=account_email,
                 access_token=token_response.access_token,

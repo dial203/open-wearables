@@ -23,7 +23,12 @@ export interface OAuthConnectOptions {
   newAccount?: boolean;
   /** Re-authorize this specific account instead of adding one. */
   connectionId?: string;
-  /** Name to record on the account, e.g. "P01 left wrist". */
+  /**
+   * What the account is for: personal, validation, reliability, monitoring,
+   * testing, other. The structured field a study filters on.
+   */
+  accountType?: string;
+  /** Operator-facing name for the account, e.g. "P01 arm A". Not asked of participants. */
   accountLabel?: string;
   /**
    * Login e-mail of the provider account. Worth passing for providers whose API
@@ -81,6 +86,9 @@ export function useOAuthConnect(
           params.set('connection_id', account.connectionId);
         } else if (account?.newAccount) {
           params.set('new_account', 'true');
+        }
+        if (account?.accountType) {
+          params.set('account_type', account.accountType);
         }
         if (account?.accountLabel) {
           params.set('account_label', account.accountLabel);

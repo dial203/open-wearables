@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.database import DbSession
 from app.models import ProviderSetting, UserConnection
+from app.repositories.data_source_repository import DataSourceRepository
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.auth import ConnectionStatus, LiveSyncMode, SDKAuthContext
 from app.schemas.enums import ProviderName
@@ -22,6 +23,7 @@ from app.utils.auth import CombinedAuthDep
 router = APIRouter()
 factory = ProviderFactory()
 provider_settings_repo = ProviderSettingsRepository()
+data_source_repo = DataSourceRepository()
 
 
 def _with_capabilities(
@@ -30,10 +32,12 @@ def _with_capabilities(
     linked_user_ids: list | None = None,
     account_index: int = 1,
     account_count: int = 1,
+    observed_devices: list[str] | None = None,
 ) -> UserConnectionWithCapabilities:
     enriched = UserConnectionWithCapabilities.model_validate(conn)
     enriched.account_index = account_index
     enriched.account_count = account_count
+    enriched.observed_devices = observed_devices or []
     with contextlib.suppress(ValueError):
         strategy = factory.get_provider(enriched.provider)
         caps = strategy.capabilities
@@ -78,12 +82,15 @@ def get_connections_endpoint(
     ]
     linked_map = user_connection_service.get_linked_user_ids(db, user_id, provider_pairs)
     positions = _account_positions(connections)
+    # One grouped query: what each account has actually reported as its device.
+    observed = data_source_repo.observed_devices_by_connection(db, user_id)
     return [
         _with_capabilities(
             conn,
             settings_map,
             linked_map.get((conn.provider, conn.provider_user_id)) if conn.provider_user_id else None,
             *positions[conn.id],
+            observed_devices=observed.get(conn.id, []),
         )
         for conn in connections
     ]
@@ -132,7 +139,15 @@ def _enriched_account(db: DbSession, connection: UserConnection) -> UserConnecti
     settings_map = provider_settings_repo.get_all(db)
     siblings = user_connection_service.get_accounts_for_provider(db, connection.user_id, connection.provider)
     index = next((i for i, c in enumerate(siblings, start=1) if c.id == connection.id), 1)
-    return _with_capabilities(connection, settings_map, None, index, len(siblings))
+    observed = data_source_repo.observed_devices_by_connection(db, connection.user_id)
+    return _with_capabilities(
+        connection,
+        settings_map,
+        None,
+        index,
+        len(siblings),
+        observed_devices=observed.get(connection.id, []),
+    )
 
 
 @router.get("/users/{user_id}/connections/accounts/{connection_id}")

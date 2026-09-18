@@ -311,6 +311,53 @@ export interface Provider {
 export type WearableProvider =
   'fitbit' | 'garmin' | 'oura' | 'whoop' | 'strava' | 'google-fit' | 'withings';
 
+/** What a connected provider account is for. Mirrors backend AccountType. */
+export type AccountType =
+  | 'personal'
+  | 'validation'
+  | 'reliability'
+  | 'monitoring'
+  | 'testing'
+  | 'other';
+
+/** Presentation order and wording, matching the backend's own descriptions. */
+export const ACCOUNT_TYPES: {
+  value: AccountType;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: 'personal',
+    label: 'Personal',
+    description: "The participant's own everyday account",
+  },
+  {
+    value: 'validation',
+    label: 'Validation',
+    description: 'Criterion or device-comparison study',
+  },
+  {
+    value: 'reliability',
+    label: 'Reliability',
+    description: 'Test-retest or inter-device consistency',
+  },
+  {
+    value: 'monitoring',
+    label: 'Monitoring',
+    description: 'Ongoing athlete or tactical readiness monitoring',
+  },
+  {
+    value: 'testing',
+    label: 'Testing',
+    description: 'Device or integration checkout, not participant data',
+  },
+  { value: 'other', label: 'Other', description: 'Anything else' },
+];
+
+export function accountTypeLabel(type: AccountType | null | undefined): string {
+  return ACCOUNT_TYPES.find((t) => t.value === type)?.label ?? 'Unclassified';
+}
+
 export interface UserConnection {
   user_id: string;
   provider: string;
@@ -336,7 +383,17 @@ export interface UserConnection {
   account_index?: number;
   /** How many accounts this user holds with this provider. */
   account_count?: number;
-  /** Manually-set or auto-derived device behind this connection (e.g. "Whoop 5.0"). */
+  /**
+   * What this account is for. Null when nobody has classified it.
+   */
+  account_type?: AccountType | null;
+  /**
+   * Device models this account has actually reported, humanised, most recent
+   * first. Derived from ingested data, not typed by anyone — an account whose
+   * provider sends device metadata labels itself.
+   */
+  observed_devices?: string[];
+  /** Manually-set device behind this connection (e.g. "Whoop 5.0"), for providers that report none. */
   device_label?: string | null;
   status: 'active' | 'revoked' | 'expired';
   last_synced_at?: string;
@@ -379,6 +436,22 @@ export interface SourceMetadata {
   device: string | null;
   device_name: string | null;
   device_type: DeviceType | null;
+  /**
+   * Stable id of the ingest identity this sample belongs to. Includes the
+   * connected account by construction, so two accounts with the same provider
+   * and the same device model have different ids here. The right key whenever
+   * you need "one distinct source".
+   */
+  data_source_id?: string | null;
+  /**
+   * The connected provider account this sample arrived through. Resolve against
+   * GET /users/{id}/connections for its classification, name and e-mail.
+   */
+  user_connection_id?: string | null;
+  /** Stable id of the physical device, when the source has been attributed to one. */
+  device_id?: string | null;
+  /** Human-assigned name for that device, if one has been set. */
+  device_label?: string | null;
 }
 
 export interface SleepSession {

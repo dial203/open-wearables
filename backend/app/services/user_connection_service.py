@@ -137,9 +137,11 @@ class UserConnectionService(
         updated = self.crud.update_account_metadata(
             db_session,
             connection,
+            account_type=payload.account_type.value if payload.account_type is not None else None,
             account_label=payload.account_label,
             account_email=str(payload.account_email) if payload.account_email is not None else None,
             device_label=payload.device_label,
+            clear_account_type="account_type" in fields_set and payload.account_type is None,
             clear_account_label="account_label" in fields_set and payload.account_label is None,
             clear_account_email="account_email" in fields_set and payload.account_email is None,
             clear_device_label="device_label" in fields_set and payload.device_label is None,

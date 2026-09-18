@@ -24,8 +24,10 @@ class OAuthState(BaseModel):
     # Add a new account even though the user already has one with this provider.
     new_account: bool = False
     # Recorded on the connection the callback resolves, so a freshly added
-    # account is named and traceable from the moment it exists rather than
-    # showing up as an unlabelled duplicate.
+    # account is classified and traceable from the moment it exists rather than
+    # showing up as an anonymous duplicate. account_type is what a study filters
+    # on; account_email is what ties the data to a login.
+    account_type: str | None = None
     account_label: str | None = None
     account_email: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
