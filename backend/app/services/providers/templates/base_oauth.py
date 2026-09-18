@@ -15,6 +15,7 @@ from starlette.status import HTTP_400_BAD_REQUEST, HTTP_401_UNAUTHORIZED, HTTP_5
 
 from app.database import DbSession
 from app.integrations.redis_client import get_redis_client
+from app.models import UserConnection
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import AuthenticationMethod, ConnectionStatus
@@ -67,8 +68,22 @@ class BaseOAuthTemplate(ABC):
     use_pkce: bool = False
     auth_method: AuthenticationMethod = AuthenticationMethod.BASIC_AUTH
 
-    def get_authorization_url(self, user_id: UUID, redirect_uri: str | None = None) -> tuple[str, str]:
+    def get_authorization_url(
+        self,
+        user_id: UUID,
+        redirect_uri: str | None = None,
+        connection_id: UUID | None = None,
+        new_account: bool = False,
+        account_label: str | None = None,
+        account_email: str | None = None,
+    ) -> tuple[str, str]:
         """Generates the provider's authorization URL.
+
+        ``connection_id`` re-authorises an account the user already holds;
+        ``new_account`` adds another one beside it. The label and e-mail are
+        carried through the flow so the account is identifiable the moment it
+        lands, which for a study with three Garmins on one participant is the
+        difference between a usable connection list and three identical rows.
 
         Returns:
             tuple[str, str]: The authorization URL and the state.
@@ -79,6 +94,10 @@ class BaseOAuthTemplate(ABC):
             user_id=user_id,
             provider=self.provider_name,
             redirect_uri=redirect_uri,  # Only store if explicitly provided by frontend
+            connection_id=connection_id,
+            new_account=new_account,
+            account_label=account_label,
+            account_email=account_email,
         )
 
         auth_url, pkce_data = self._build_auth_url(state)
@@ -368,6 +387,64 @@ class BaseOAuthTemplate(ABC):
         """Extracts provider user info. Default implementation returns None."""
         return {"user_id": None, "username": None}
 
+    def _resolve_target_connection(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        provider_user_id: str | None,
+        account_email: str | None,
+        oauth_state: OAuthState,
+    ) -> UserConnection | None:
+        """Which of the user's accounts this callback is authorising, if any.
+
+        The order matters, and each step is narrower than the one below it:
+
+        1. An explicit ``connection_id`` - the person pressed "reconnect" on a
+           named account, so that is the account, and nothing else is eligible.
+        2. The provider's own user id - the strongest evidence available that
+           this is an account we already hold, and what stops "add another"
+           from producing a duplicate of an account the person already linked.
+        3. The recorded account e-mail, for providers that report no user id.
+        4. The user's single existing account, which is the pre-multi-account
+           behaviour and keeps every ordinary reconnect working unchanged.
+
+        Returns None when a new connection should be created.
+        """
+        if oauth_state.connection_id is not None:
+            connection = self.connection_repo.get_by_id_for_user(db, user_id, oauth_state.connection_id)
+            if connection is None or connection.provider != self.provider_name:
+                # Refusing is the safe failure: silently falling back to another
+                # account would re-point a reconnect at the wrong wearable, and
+                # the samples that followed would carry the wrong provenance.
+                raise HTTPException(
+                    status_code=HTTP_400_BAD_REQUEST,
+                    detail="Connection to re-authorize was not found for this user and provider",
+                )
+            return connection
+
+        if provider_user_id:
+            match = next(
+                (
+                    c
+                    for c in self.connection_repo.get_all_by_user_and_provider(db, user_id, self.provider_name)
+                    if c.provider_user_id == provider_user_id
+                ),
+                None,
+            )
+            if match is not None:
+                return match
+
+        if account_email:
+            match = self.connection_repo.get_by_account_email(db, user_id, self.provider_name, account_email)
+            if match is not None:
+                return match
+
+        if oauth_state.new_account:
+            return None
+
+        existing = self.connection_repo.get_all_by_user_and_provider(db, user_id, self.provider_name)
+        return existing[0] if len(existing) == 1 else None
+
     def _save_connection(
         self,
         db: DbSession,
@@ -382,12 +459,21 @@ class BaseOAuthTemplate(ABC):
 
         scope = user_info.get("scope") or token_response.scope
 
+        # The provider's own e-mail for the account wins over whatever was typed
+        # at connect time: it is the authoritative record of which login the data
+        # came from, which is the whole point of storing it.
+        account_email = user_info.get("email") or oauth_state.account_email
+        if account_email:
+            account_email = account_email.strip() or None
+
         token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=token_response.expires_in)
 
-        existing_connection = self.connection_repo.get_by_user_and_provider(
+        existing_connection = self._resolve_target_connection(
             db,
             user_id,
-            self.provider_name,
+            provider_user_id,
+            account_email,
+            oauth_state,
         )
 
         if existing_connection:
@@ -402,6 +488,8 @@ class BaseOAuthTemplate(ABC):
                 provider_user_id=provider_user_id,
                 provider_username=provider_username,
                 scope=scope,
+                account_email=account_email,
+                account_label=oauth_state.account_label,
             )
             if was_inactive:
                 on_connection_created(
@@ -416,6 +504,8 @@ class BaseOAuthTemplate(ABC):
                 provider=self.provider_name,
                 provider_user_id=provider_user_id,
                 provider_username=provider_username,
+                account_label=oauth_state.account_label,
+                account_email=account_email,
                 access_token=token_response.access_token,
                 refresh_token=token_response.refresh_token,
                 token_expires_at=token_expires_at,

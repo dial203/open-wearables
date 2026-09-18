@@ -47,6 +47,7 @@ from app.schemas.enums import ProviderName
 from app.schemas.providers.polar import PolarWebhookEvent, PolarWebhookEventType
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.raw_payload_storage import store_raw_payload
+from app.utils.connection_context import active_connection
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
@@ -224,16 +225,19 @@ class PolarWebhookHandler(BaseWebhookHandler):
         )
 
         try:
-            if event.event == PolarWebhookEventType.EXERCISE:
-                if not self.workouts:
-                    return {"status": "error", "error": "workouts service not initialised"}
-                saved = self.workouts.fetch_and_save_exercise(db, user_id, path)
-                return {"status": "accepted", "user_id": str(user_id), "saved": {"exercises": saved}}
+            # The fetch resolves a token from (user, provider); the webhook told
+            # us which Polar account produced this entity, so bind it.
+            with active_connection(connection.id):
+                if event.event == PolarWebhookEventType.EXERCISE:
+                    if not self.workouts:
+                        return {"status": "error", "error": "workouts service not initialised"}
+                    saved = self.workouts.fetch_and_save_exercise(db, user_id, path)
+                    return {"status": "accepted", "user_id": str(user_id), "saved": {"exercises": saved}}
 
-            if not self.data_247:
-                return {"status": "error", "error": "data_247 service not initialised"}
-            saved = self.data_247.fetch_and_save_from_webhook(db, user_id, event.event, path)
-            return {"status": "accepted", "user_id": str(user_id), "saved": saved}
+                if not self.data_247:
+                    return {"status": "error", "error": "data_247 service not initialised"}
+                saved = self.data_247.fetch_and_save_from_webhook(db, user_id, event.event, path)
+                return {"status": "accepted", "user_id": str(user_id), "saved": saved}
         except Exception as exc:
             log_and_capture_error(
                 exc,

@@ -41,6 +41,20 @@ class DataSourceResponse(BaseModel):
     device_type: str | None = None
     original_source_name: str | None = None
     display_name: str | None = None
+    # Denormalised from the connection so a data-source listing is readable on
+    # its own. A participant with two Garmins has two rows here that are
+    # otherwise identical down to the device model, and the account is the only
+    # thing that tells them apart.
+    account_label: str | None = Field(
+        None,
+        description="Label of the connected account this source arrived through.",
+        example="P01 left wrist",
+    )
+    account_email: str | None = Field(
+        None,
+        description="Login e-mail of the connected account this source arrived through.",
+        example="p01.left@lab.example.edu",
+    )
     ingestion_route: IngestionRoute = Field(
         IngestionRoute.DIRECT,
         description=(

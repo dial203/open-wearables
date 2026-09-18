@@ -50,6 +50,7 @@ from app.services.event_record_service import event_record_service
 from app.services.providers.strava.workouts import StravaWorkouts
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.raw_payload_storage import store_raw_payload
+from app.utils.connection_context import active_connection
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
@@ -203,7 +204,9 @@ class StravaWebhookHandler(BaseWebhookHandler):
             )
             return {"status": "user_not_found", "strava_athlete_id": owner_id}
 
-        self.connection_repo.disconnect(db, connection.user_id, "strava")
+        # Only the account Strava deauthorized; the user's other Strava accounts
+        # are still connected and must keep syncing.
+        self.connection_repo.disconnect(db, connection.user_id, "strava", connection.id)
         log_structured(
             logger,
             "info",
@@ -292,7 +295,12 @@ class StravaWebhookHandler(BaseWebhookHandler):
         )
 
         try:
-            activity_data = self.workouts.get_workout_detail_from_api(db, user_id, str(object_id))
+            # Bind the account the webhook named: the fetch resolves its token
+            # from (user, provider), and a participant with two Strava accounts
+            # would otherwise have one account's activity pulled with the
+            # other's token and filed against the wrong data source.
+            with active_connection(connection.id):
+                activity_data = self.workouts.get_workout_detail_from_api(db, user_id, str(object_id))
             if not activity_data:
                 log_structured(
                     logger,
@@ -312,7 +320,8 @@ class StravaWebhookHandler(BaseWebhookHandler):
                 }
 
             activity = StravaActivityJSON(**activity_data)
-            created_ids = self.workouts.process_push_activity(db=db, activity=activity, user_id=user_id)
+            with active_connection(connection.id):
+                created_ids = self.workouts.process_push_activity(db=db, activity=activity, user_id=user_id)
 
             log_structured(
                 logger,

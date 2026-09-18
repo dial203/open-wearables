@@ -2,7 +2,7 @@ from logging import Logger, getLogger
 from uuid import UUID
 
 from app.database import DbSession
-from app.models import DataSource, ProviderPriority
+from app.models import DataSource, ProviderPriority, UserConnection
 from app.repositories import DataSourceRepository, ProviderPriorityRepository
 from app.repositories.device_type_priority_repository import DeviceTypePriorityRepository
 from app.schemas.enums import DeviceType, ProviderName
@@ -16,6 +16,7 @@ from app.schemas.model_crud.data_priority import (
     ProviderPriorityListResponse,
     ProviderPriorityResponse,
 )
+from app.schemas.model_crud.user_management import account_display_label
 from app.utils.device_registry import humanize_device_model, resolve_ingestion_route
 from app.utils.exceptions import handle_exceptions
 
@@ -64,6 +65,13 @@ class PriorityService:
         user_id: UUID,
     ) -> DataSourceListResponse:
         sources = self.data_source_repo.get_user_data_sources(db_session, user_id)
+        # One query for the user's accounts rather than a lazy load per source:
+        # the listing is short, and a participant in a multi-device study has
+        # several sources per account.
+        accounts = {
+            connection.id: connection
+            for connection in db_session.query(UserConnection).filter(UserConnection.user_id == user_id).all()
+        }
         items = [
             DataSourceResponse(
                 id=ds.id,
@@ -76,11 +84,26 @@ class PriorityService:
                 device_type=ds.device_type,
                 original_source_name=ds.original_source_name,
                 display_name=self._build_display_name(ds),
+                account_label=self._account_label(accounts.get(ds.user_connection_id)),
+                account_email=getattr(accounts.get(ds.user_connection_id), "account_email", None),
                 ingestion_route=resolve_ingestion_route(ds.provider, ds.original_source_name),
             )
             for ds in sources
         ]
         return DataSourceListResponse(items=items, total=len(items))
+
+    @staticmethod
+    def _account_label(connection: UserConnection | None) -> str | None:
+        """The account's display name, or None when the source has no connection."""
+        if connection is None:
+            return None
+        return account_display_label(
+            connection.account_label,
+            connection.provider_username,
+            connection.account_email,
+            connection.provider,
+            connection.id,
+        )
 
     @handle_exceptions
     def get_device_type_priorities(

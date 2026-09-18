@@ -45,6 +45,7 @@ from app.services.providers.oura.data_247 import Oura247Data
 from app.services.providers.oura.workouts import OuraWorkouts
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.raw_payload_storage import store_raw_payload
+from app.utils.connection_context import active_connection
 from app.utils.structured_logging import LogContext, log_structured
 
 logger = logging.getLogger(__name__)
@@ -248,7 +249,11 @@ class OuraWebhookHandler(BaseWebhookHandler):
 
         self.connection_repo.update_last_synced_at(db, connection)
 
-        count = self._dispatch_data_type(db, notification, user_id, trace_id)
+        # The fetch below resolves its token from (user, provider); the webhook
+        # named which Oura account changed, so bind it - a participant wearing
+        # two rings has two accounts and the wrong token fetches the wrong ring.
+        with active_connection(connection.id):
+            count = self._dispatch_data_type(db, notification, user_id, trace_id)
 
         if count is None:
             log_structured(

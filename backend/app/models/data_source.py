@@ -34,14 +34,22 @@ class DataSource(BaseDbModel):
     __tablename__ = "data_source"
     __table_args__ = (
         Index("ix_data_source_user_provider", "user_id", "provider"),
+        # user_connection_id is part of the identity, not an attribute of it: a
+        # participant wearing two Garmins reports the same device_model and the
+        # same source from both accounts, and without the connection in the key
+        # the two units would share one data_source and their samples would be
+        # indistinguishable afterwards. The all-zero UUID stands in for NULL
+        # (one-time imports) because NULLs do not compare equal in a unique index.
         Index(
             "uq_data_source_identity",
             "user_id",
             "provider",
             text("COALESCE(device_model, '')"),
             text("COALESCE(source, '')"),
+            text("COALESCE(user_connection_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
             unique=True,
         ),
+        Index("ix_data_source_user_connection", "user_connection_id"),
     )
 
     id: Mapped[PrimaryKey[UUID]]

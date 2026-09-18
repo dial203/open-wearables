@@ -8,8 +8,9 @@ from fastapi.responses import RedirectResponse
 from app.config import settings
 from app.constants.provider_urls import from_url_slug
 from app.database import DbSession
+from app.models import UserConnection
 from app.schemas.enums import ProviderName
-from app.schemas.model_crud.credentials import AuthorizationURLResponse
+from app.schemas.model_crud.credentials import AuthorizationURLResponse, OAuthState
 from app.schemas.model_crud.data_priority import (
     BulkProviderSettingsUpdate,
     ProviderSettingRead,
@@ -55,17 +56,71 @@ def authorize_provider(
     provider: str,
     user_id: Annotated[UUID, Query(description="User ID to connect")],
     redirect_uri: Annotated[str | None, Query(description="Optional redirect URI after authorization")] = None,
+    connection_id: Annotated[
+        UUID | None,
+        Query(description="Re-authorize this existing account instead of adding another"),
+    ] = None,
+    new_account: Annotated[
+        bool,
+        Query(description="Add another account with this provider beside the ones already linked"),
+    ] = False,
+    account_label: Annotated[
+        str | None,
+        Query(max_length=100, description='Name for this account, e.g. "P01 left wrist"'),
+    ] = None,
+    account_email: Annotated[
+        str | None,
+        Query(description="Login e-mail of the provider account, when the provider does not report it"),
+    ] = None,
 ):
     """
     Initiate OAuth flow for a provider.
+
+    A user may hold several accounts with the same provider - two Whoops worn
+    simultaneously for a reliability study, say. By default this endpoint
+    behaves as it always has: with no existing account it creates one, and with
+    exactly one it re-authorizes that one. Pass ``new_account=true`` to add
+    another, or ``connection_id`` to re-authorize a specific one.
+
+    ``account_label`` and ``account_email`` are carried through the OAuth flow
+    and recorded on whichever account the callback resolves. The e-mail is what
+    ties a data set back to the login it came from, so pass it for providers
+    whose API does not expose it (Garmin, Polar, Suunto, Strava, Withings).
 
     Returns authorization URL where user should be redirected to log in.
     """
     strategy = get_oauth_strategy(resolve_provider(provider))
 
+    if connection_id is not None and new_account:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "connection_id re-authorizes an existing account and new_account adds one; pass at most one",
+        )
+
     assert strategy.oauth
-    auth_url, state = strategy.oauth.get_authorization_url(user_id, redirect_uri)
+    auth_url, state = strategy.oauth.get_authorization_url(
+        user_id,
+        redirect_uri,
+        connection_id=connection_id,
+        new_account=new_account,
+        account_label=account_label,
+        account_email=account_email,
+    )
     return AuthorizationURLResponse(authorization_url=auth_url, state=state)
+
+
+def _just_connected(db: DbSession, oauth_state: OAuthState, provider_name: ProviderName) -> UserConnection | None:
+    """The account the callback just authorized.
+
+    ``connection_id`` in the state is authoritative when it is there - it is the
+    account the flow was started for. Otherwise the newest account for this
+    user and provider is the one the callback created or refreshed, since the
+    callback is the only thing that writes them and it has just run.
+    """
+    if oauth_state.connection_id is not None:
+        return user_connection_service.get_account(db, oauth_state.user_id, oauth_state.connection_id)
+    accounts = user_connection_service.get_accounts_for_provider(db, oauth_state.user_id, provider_name.value)
+    return accounts[-1] if accounts else None
 
 
 @router.get("/{provider}/callback", tags=["System: OAuth"])
@@ -100,9 +155,17 @@ def oauth_callback(
     assert strategy.oauth
     oauth_state = strategy.oauth.handle_callback(db, code, state)
 
+    # Which account the callback landed on. With several accounts on one
+    # provider, "the user's connection" is no longer a single row, so the
+    # follow-up work below has to name the one that was just authorized.
+    connected = _just_connected(db, oauth_state, provider_name)
+    connection_id = connected.id if connected else None
+
     # Stamp last_synced_at=now so the first periodic sync uses the connection
     # timestamp as its live-sync cursor and won't attempt to pull all history.
-    user_connection_service.stamp_last_synced_at(db, oauth_state.user_id, provider_name.value)
+    user_connection_service.stamp_last_synced_at(
+        db, oauth_state.user_id, provider_name.value, connection_id=connection_id
+    )
 
     # Grace-period flag: automatically kick off a historical sync so integrators
     # who haven't yet adopted the explicit /sync/historical call still get backfill.
@@ -113,7 +176,10 @@ def oauth_callback(
             # this code is going to be removed later, so leave inner imports heres
             from app.integrations.celery.tasks import start_garmin_full_backfill
 
-            start_garmin_full_backfill.delay(str(oauth_state.user_id))
+            start_garmin_full_backfill.delay(
+                str(oauth_state.user_id),
+                connection_id=str(connection_id) if connection_id else None,
+            )
         elif caps.rest_pull:
             from app.integrations.celery.tasks import sync_vendor_data
 
@@ -125,6 +191,10 @@ def oauth_callback(
                 end_date=now.isoformat(),
                 providers=[provider_name.value],
                 is_historical=True,
+                # Only the account that was just connected needs a backfill; the
+                # others already have theirs and re-pulling 90 days for each of
+                # them on every new connection would be wasteful and rate-limited.
+                connection_ids=[str(connection_id)] if connection_id else None,
             )
 
     # If a specific redirect_uri was requested (e.g. by frontend), redirect there

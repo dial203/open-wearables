@@ -61,9 +61,16 @@ from app.services.sync_status_service import (
     emit_sync_progress,
     emit_sync_started,
 )
+from app.utils.connection_context import bind_active_connection
 from app.utils.structured_logging import log_structured
 
 logger = getLogger(__name__)
+
+# A backfill queued behind another account's run retries this many times, this
+# far apart. Roughly covers a full 30-day Garmin backfill; past that the lock is
+# stuck rather than busy, and retrying is no longer the right answer.
+_MAX_BACKFILL_REQUEUES = 12
+_BACKFILL_REQUEUE_DELAY = 15 * 60
 
 
 def _release_shared_backfill_primary(user_id: str, *, overall_status: SyncStatus = SyncStatus.SUCCESS) -> None:
@@ -109,12 +116,22 @@ def _release_shared_backfill_primary(user_id: str, *, overall_status: SyncStatus
 
 
 @shared_task
-def start_full_backfill(user_id: str) -> dict[str, Any]:
+def start_full_backfill(user_id: str, connection_id: str | None = None, attempt: int = 0) -> dict[str, Any]:
     """Initialize and start full 30-day backfill for all backfill data types.
 
     This is called after OAuth connection to auto-trigger historical sync.
     Triggers the first type and the rest will chain via webhooks.
     If existing state is detected (resume after crash), resumes from current window.
+
+    ``connection_id`` names which Garmin account to back-fill, for a user who
+    holds more than one. It binds the account for the duration of the run, so
+    the API calls and the data sources they produce belong to that account.
+
+    Backfills for one user run one at a time: the whole chain's progress state
+    is keyed by user in Redis, so two concurrent runs would overwrite each
+    other's window and type tracking. A second account asking for a backfill
+    while one is in flight is re-queued rather than dropped - see the lock
+    branch below - so it starts once the first finishes.
     """
 
     try:
@@ -133,9 +150,19 @@ def start_full_backfill(user_id: str) -> dict[str, Any]:
     # scope=None means the permissions fetch failed during OAuth (best-effort) and the
     # userPermissionsChange webhook hasn't updated it yet — treat that as unknown and
     # proceed so the user doesn't get silently blocked.
+    # Bind before anything resolves a connection, so every lookup below and
+    # every provider call the chain makes lands on the account being backfilled.
+    bind_active_connection(UUID(connection_id) if connection_id else None)
+
     with SessionLocal() as db:
         connection_repo = UserConnectionRepository()
-        connection = connection_repo.get_by_user_and_provider(db, UUID(user_id), "garmin")
+        connection = (
+            connection_repo.get_by_id_for_user(db, UUID(user_id), UUID(connection_id))
+            if connection_id
+            else connection_repo.get_by_user_and_provider(db, UUID(user_id), "garmin")
+        )
+        if connection is not None and connection.provider != "garmin":
+            connection = None
         if not connection:
             log_structured(
                 logger,
@@ -158,6 +185,27 @@ def start_full_backfill(user_id: str) -> dict[str, Any]:
 
     # Acquire exclusive lock
     if not acquire_backfill_lock(user_id):
+        # A backfill for one of this user's other Garmin accounts holds the lock.
+        # Re-queue rather than drop: the second account's 30 days are exactly the
+        # comparator data a validation study is being run for, and silently not
+        # fetching them is the worst of the available outcomes. The retry is
+        # bounded so a permanently stuck lock cannot spin forever.
+        if connection_id and attempt < _MAX_BACKFILL_REQUEUES:
+            log_structured(
+                logger,
+                "info",
+                "Backfill already in progress for another account - re-queueing this one",
+                provider="garmin",
+                user_id=user_id,
+                connection_id=connection_id,
+                attempt=attempt,
+            )
+            start_full_backfill.apply_async(
+                kwargs={"user_id": user_id, "connection_id": connection_id, "attempt": attempt + 1},
+                countdown=_BACKFILL_REQUEUE_DELAY,
+            )
+            return {"status": "requeued", "attempt": attempt + 1}
+
         log_structured(
             logger,
             "warning",

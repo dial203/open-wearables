@@ -197,15 +197,20 @@ class EventRecordRepository(
         identity_to_source_id: dict[DataSourceIdentity, UUID] = {}
 
         for provider, provider_creators in by_provider.items():
-            unique_identities: set[DataSourceIdentity] = set()
-            user_connection_id = provider_creators[0].user_connection_id if provider_creators else None
+            # Sub-group by connection: the batch resolver writes one connection
+            # id onto everything it creates, so a batch mixing two of a user's
+            # accounts with the same provider would file the second account's
+            # rows under the first. Taking creators[0]'s id, as this did, was
+            # safe only while (user, provider) named a single account.
+            by_connection: dict[UUID | None, set[DataSourceIdentity]] = {}
             for c in provider_creators:
-                unique_identities.add((c.user_id, c.device_model, c.source))
+                by_connection.setdefault(c.user_connection_id, set()).add((c.user_id, c.device_model, c.source))
 
-            batch_result = self.data_source_repo.batch_ensure_data_sources(
-                db_session, provider, user_connection_id, unique_identities
-            )
-            identity_to_source_id.update(batch_result)
+            for user_connection_id, unique_identities in by_connection.items():
+                batch_result = self.data_source_repo.batch_ensure_data_sources(
+                    db_session, provider, user_connection_id, unique_identities
+                )
+                identity_to_source_id.update(batch_result)
 
         values_list = []
         for creator in creators:

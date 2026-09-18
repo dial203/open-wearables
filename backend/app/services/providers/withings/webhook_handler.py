@@ -25,6 +25,7 @@ from app.services.providers.withings.data_247 import Withings247Data
 from app.services.providers.withings.handlers.applis import APPLI_DOMAIN, SUBSCRIBED_APPLIS, Domain
 from app.services.providers.withings.workouts import WithingsWorkouts
 from app.services.raw_payload_storage import store_raw_payload
+from app.utils.connection_context import active_connection
 from app.utils.structured_logging import log_structured
 
 logger = logging.getLogger(__name__)
@@ -184,7 +185,12 @@ class WithingsWebhookHandler(BaseWebhookHandler):
         per_user: list[tuple[UUID, int]] = []
         for connection in connections:
             user_id = connection.user_id
-            items = self._fetch_domain(db, user_id, domain, start, end)
+            # Each connection is one Withings account on one profile. The fetch
+            # resolves a token from (user, provider), so bind this account -
+            # otherwise a profile holding two Withings accounts would pull both
+            # of them with the same token.
+            with active_connection(connection.id):
+                items = self._fetch_domain(db, user_id, domain, start, end)
             saved += items
             user_ids.append(str(user_id))
             per_user.append((user_id, items))
@@ -248,7 +254,9 @@ class WithingsWebhookHandler(BaseWebhookHandler):
 
         user_ids = [str(connection.user_id) for connection in connections]
         for connection in connections:
-            if self.connection_repo.disconnect(db, connection.user_id, "withings"):
+            # Only this account: the profile's other Withings accounts, if any,
+            # were not part of the upstream profile change.
+            if self.connection_repo.disconnect(db, connection.user_id, "withings", connection.id):
                 db.refresh(connection)
                 on_connection_revoked(
                     user_id=connection.user_id,

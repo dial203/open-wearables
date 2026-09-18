@@ -12,6 +12,7 @@ from app.repositories.provider_priority_repository import ProviderPriorityReposi
 from app.repositories.repositories import CrudRepository
 from app.schemas.enums import DeviceType, ProviderName, infer_device_type_from_model, infer_device_type_from_source_name
 from app.schemas.model_crud.data_priority import DataSourceCreate, DataSourceUpdate
+from app.utils.connection_context import get_active_connection_id
 from app.utils.device_registry import resolve_brand
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ class DataSourceRepository(
         provider: ProviderName,
         device_model: str | None,
         source: str | None,
+        user_connection_id: UUID | None = None,
     ) -> ColumnElement[bool]:
         conditions = [
             self.model.user_id == user_id,
@@ -39,7 +41,33 @@ class DataSourceRepository(
             func.coalesce(self.model.device_model, "") == (device_model or ""),
             func.coalesce(self.model.source, "") == (source or ""),
         ]
+        # The connection is part of the identity: two accounts with one provider
+        # report identical device models, and pooling them would be irreversible.
+        if user_connection_id is None:
+            conditions.append(self.model.user_connection_id.is_(None))
+        else:
+            conditions.append(self.model.user_connection_id == user_connection_id)
         return and_(*conditions)
+
+    def get_by_connection_identity(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: ProviderName,
+        device_model: str | None = None,
+        source: str | None = None,
+        user_connection_id: UUID | None = None,
+    ) -> DataSource | None:
+        """The one data source for this identity *and* this account.
+
+        ``user_connection_id=None`` means the connection-less row (a one-time
+        import), not "any connection" - use :meth:`get_by_identity` for that.
+        """
+        return (
+            db_session.query(self.model)
+            .filter(self._build_identity_filter(user_id, provider, device_model, source, user_connection_id))
+            .one_or_none()
+        )
 
     def get_by_identity(
         self,
@@ -49,10 +77,24 @@ class DataSourceRepository(
         device_model: str | None = None,
         source: str | None = None,
     ) -> DataSource | None:
+        """A data source matching this identity, whichever account it came through.
+
+        For callers that hold no connection of their own. With several accounts
+        the identity no longer names one row, so the oldest is returned - a
+        stable choice rather than a correct one, which is why ingest itself uses
+        :meth:`get_by_connection_identity` instead.
+        """
+        conditions = [
+            self.model.user_id == user_id,
+            self.model.provider == provider,
+            func.coalesce(self.model.device_model, "") == (device_model or ""),
+            func.coalesce(self.model.source, "") == (source or ""),
+        ]
         return (
             db_session.query(self.model)
-            .filter(self._build_identity_filter(user_id, provider, device_model, source))
-            .one_or_none()
+            .filter(and_(*conditions))
+            .order_by(self.model.created_at.asc(), self.model.id.asc())
+            .first()
         )
 
     def _connection_device_label(
@@ -60,21 +102,23 @@ class DataSourceRepository(
         db_session: DbSession,
         user_id: UUID,
         provider: ProviderName,
+        user_connection_id: UUID | None = None,
     ) -> str | None:
-        """The manually-set or auto-derived device label for a user's connection.
+        """The manually-set or auto-derived device label behind a connection.
 
-        Used to fill device_model when the provider reports none. One connection
-        per (user, provider) is guaranteed by a unique index.
+        Used to fill device_model when the provider reports none. Scoped to one
+        connection when the caller knows which account it is ingesting for -
+        without that, a user with two Whoops would stamp both units with
+        whichever label happened to come back first.
         """
-        return (
-            db_session.query(UserConnection.device_label)
-            .filter(
-                UserConnection.user_id == user_id,
-                UserConnection.provider == provider.value,
-                UserConnection.device_label.isnot(None),
-            )
-            .scalar()
+        query = db_session.query(UserConnection.device_label).filter(
+            UserConnection.user_id == user_id,
+            UserConnection.provider == provider.value,
+            UserConnection.device_label.isnot(None),
         )
+        if user_connection_id is not None:
+            query = query.filter(UserConnection.id == user_connection_id)
+        return query.order_by(UserConnection.created_at.asc()).limit(1).scalar()
 
     def set_connection_device_label(
         self,
@@ -82,6 +126,7 @@ class DataSourceRepository(
         user_id: UUID,
         provider: ProviderName,
         device_label: str | None,
+        user_connection_id: UUID | None = None,
     ) -> int:
         """Retroactively relabel a user's existing device-less data sources.
 
@@ -89,20 +134,24 @@ class DataSourceRepository(
         that currently have no device_model, so already-ingested data picks up
         the label too (future data is handled by ensure_data_source). Returns the
         number of rows updated.
+
+        With ``user_connection_id`` only that account's data sources are
+        relabelled, plus any that predate the connection being recorded
+        (user_connection_id IS NULL) when the user holds a single account - see
+        the caller in user_connection_service.
         """
         if not device_label:
             return 0
-        return (
-            db_session.query(self.model)
-            .filter(
-                self.model.user_id == user_id,
-                self.model.provider == provider,
-                self.model.device_model.is_(None),
-            )
-            .update(
-                {self.model.device_model: device_label},
-                synchronize_session=False,
-            )
+        query = db_session.query(self.model).filter(
+            self.model.user_id == user_id,
+            self.model.provider == provider,
+            self.model.device_model.is_(None),
+        )
+        if user_connection_id is not None:
+            query = query.filter(self.model.user_connection_id == user_connection_id)
+        return query.update(
+            {self.model.device_model: device_label},
+            synchronize_session=False,
         )
 
     def ensure_data_source(
@@ -117,11 +166,20 @@ class DataSourceRepository(
         original_source_name: str | None = None,
         identity_claims: "list[IdentityClaim] | None" = None,
     ) -> DataSource:
+        # Fall back to the account the current unit of work declared. Most
+        # provider paths never learned to pass a connection id - they were
+        # written when (user, provider) named exactly one - so without this the
+        # data source would be created connection-less and two accounts with the
+        # same provider would share it. A one-time import (XML) runs in no scope,
+        # so it stays NULL, which is what it should be.
+        if user_connection_id is None:
+            user_connection_id = get_active_connection_id()
+
         # Fill device_model from the connection's device_label when the provider
         # didn't report a device (e.g. Whoop, which exposes none; Oura, auto-filled
         # from ring_configuration). Manual entry / auto-detection both land here.
         if device_model is None:
-            device_model = self._connection_device_label(db_session, user_id, provider)
+            device_model = self._connection_device_label(db_session, user_id, provider, user_connection_id)
 
         # Non-destructive brand tagging: derive a canonical brand (e.g. Oura data
         # arriving via Apple/Google Health) so the same brand groups across ingest paths.
@@ -137,7 +195,18 @@ class DataSourceRepository(
         # The caller's value remains the fallback for what resolve_brand() can't name.
         original_source_name = resolve_brand(provider, device_model, source) or original_source_name
 
-        existing = self.get_by_identity(db_session, user_id, provider, device_model, source)
+        existing = self.get_by_connection_identity(
+            db_session, user_id, provider, device_model, source, user_connection_id
+        )
+        if existing is None and user_connection_id is not None:
+            # Adopt a source ingested before connections were recorded against
+            # them (an XML import, or any row predating this column) rather than
+            # creating a duplicate beside it. Only ever done when the user holds
+            # a single account with the provider: with two, there is no way to
+            # tell which of them the orphaned rows came from, and guessing would
+            # file one unit's history under the other.
+            existing = self._adoptable_orphan(db_session, user_id, provider, device_model, source)
+
         if existing:
             updated = False
             if user_connection_id and existing.user_connection_id is None:
@@ -181,6 +250,38 @@ class DataSourceRepository(
         assert result is not None
         self._attribute_device(db_session, result, identity_claims)
         return result
+
+    def _can_adopt_orphans(self, db_session: DbSession, user_id: UUID, provider: ProviderName) -> bool:
+        """Whether connection-less rows can safely be claimed by this user's account.
+
+        Only when there is exactly one account to claim them for. With two, the
+        rows could have come from either, and a wrong adoption silently merges
+        two units' histories - which, unlike a wrong split, cannot be undone.
+        """
+        connection_count = (
+            db_session.query(func.count(UserConnection.id))
+            .filter(UserConnection.user_id == user_id, UserConnection.provider == provider.value)
+            .scalar()
+            or 0
+        )
+        return connection_count <= 1
+
+    def _adoptable_orphan(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: ProviderName,
+        device_model: str | None,
+        source: str | None,
+    ) -> DataSource | None:
+        """A matching connection-less data source, when adopting it is unambiguous."""
+        if not self._can_adopt_orphans(db_session, user_id, provider):
+            return None
+        return (
+            db_session.query(self.model)
+            .filter(self._build_identity_filter(user_id, provider, device_model, source, None))
+            .one_or_none()
+        )
 
     def _attribute_device(
         self,
@@ -262,6 +363,11 @@ class DataSourceRepository(
         if not identities:
             return {}
 
+        # Same fallback as ensure_data_source: the bulk path is fed by provider
+        # code that mostly does not carry a connection id of its own.
+        if user_connection_id is None:
+            user_connection_id = get_active_connection_id()
+
         identities_list = list(identities)
 
         from sqlalchemy import or_
@@ -276,7 +382,7 @@ class DataSourceRepository(
             if device_model is not None:
                 return device_model
             if user_id not in label_cache:
-                label_cache[user_id] = self._connection_device_label(db_session, user_id, provider)
+                label_cache[user_id] = self._connection_device_label(db_session, user_id, provider, user_connection_id)
             return label_cache[user_id]
 
         # Callers look rows up by the identity they passed in, which may carry a null
@@ -286,8 +392,11 @@ class DataSourceRepository(
             for user_id, device_model, source in identities_list
         }
 
+        # Every identity in one call shares the same connection, so the filter
+        # below is per-account and two accounts with one provider can no longer
+        # collide on an identical (device_model, source).
         conditions = [
-            self._build_identity_filter(user_id, provider, device_model, source)
+            self._build_identity_filter(user_id, provider, device_model, source, user_connection_id)
             for user_id, device_model, source in stored_by_requested.values()
         ]
 
@@ -303,6 +412,39 @@ class DataSourceRepository(
         }
 
         missing = [stored for requested, stored in stored_by_requested.items() if requested not in result]
+
+        # Adopt connection-less rows the same way ensure_data_source does, and
+        # under the same condition: only when the user holds a single account
+        # with this provider, so a row whose origin is unknowable is never
+        # guessed onto one of two units. Without this the events path (which
+        # adopts) and this time-series path (which would not) would file the
+        # same device under two data sources - the exact split this method's
+        # docstring exists to prevent.
+        if missing and user_connection_id is not None:
+            adoptable = {
+                (user_id, device_model, source)
+                for user_id, device_model, source in missing
+                if self._can_adopt_orphans(db_session, user_id, provider)
+            }
+            if adoptable:
+                orphan_conditions = [
+                    self._build_identity_filter(user_id, provider, device_model, source, None)
+                    for user_id, device_model, source in adoptable
+                ]
+                orphans = db_session.query(self.model).filter(or_(*orphan_conditions)).all()
+                for orphan in orphans:
+                    object.__setattr__(orphan, "user_connection_id", user_connection_id)
+                    ids_by_stored[(orphan.user_id, orphan.device_model, orphan.source)] = orphan.id
+                if orphans:
+                    db_session.flush()
+                    result.update(
+                        {
+                            requested: ids_by_stored[stored]
+                            for requested, stored in stored_by_requested.items()
+                            if requested not in result and stored in ids_by_stored
+                        }
+                    )
+                    missing = [stored for requested, stored in stored_by_requested.items() if requested not in result]
 
         if missing:
             values = []
@@ -329,7 +471,7 @@ class DataSourceRepository(
             db_session.flush()
 
             conditions = [
-                self._build_identity_filter(user_id, provider, device_model, source)
+                self._build_identity_filter(user_id, provider, device_model, source, user_connection_id)
                 for user_id, device_model, source in missing
             ]
 
@@ -389,6 +531,38 @@ class DataSourceRepository(
             db_session.execute(
                 delete(self.model).where(
                     and_(self.model.user_id == user_id, self.model.provider == provider),
+                ),
+            ),
+        )
+        db_session.commit()
+        return result.rowcount
+
+    def delete_connection_data(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        user_connection_id: UUID,
+    ) -> int:
+        """Delete the data ingested through one connected account.
+
+        The provider-wide purge above takes every account with that provider
+        along with it. This one is the scalpel: it removes the data sources
+        carrying this connection id and, by cascade, everything hanging off them,
+        and leaves the participant's other accounts with the same provider - the
+        comparator device in a validation study - completely untouched.
+
+        health_score rows are provider-scoped rather than data-source-scoped for
+        some providers, so only those reachable through this connection's data
+        sources are removed; the cascade on data_source handles them.
+        """
+        result = cast(
+            CursorResult,
+            db_session.execute(
+                delete(self.model).where(
+                    and_(
+                        self.model.user_id == user_id,
+                        self.model.user_connection_id == user_connection_id,
+                    ),
                 ),
             ),
         )

@@ -25,6 +25,7 @@ from app.schemas.enums import ProviderName
 from app.services.devices.detection import DeviceDetectionService
 from app.services.devices.identity import claims_from_sdk_source
 from app.services.sdk.device_resolution import extract_device_info
+from app.utils.connection_context import get_active_connection_id
 
 log = getLogger(__name__)
 
@@ -92,4 +93,12 @@ def _find_data_source(
         return None
     from app.repositories.data_source_repository import DataSourceRepository
 
-    return DataSourceRepository().get_by_identity(db_session, user_id, provider_enum, device_model, source)
+    repo = DataSourceRepository()
+    # Inside a sync scoped to one account (the normal SDK path) the identity is
+    # only meaningful together with that connection: a user with two phones on
+    # two Apple IDs has two data sources per identity, and attributing both to
+    # the same device would merge the units.
+    connection_id = get_active_connection_id()
+    if connection_id is not None:
+        return repo.get_by_connection_identity(db_session, user_id, provider_enum, device_model, source, connection_id)
+    return repo.get_by_identity(db_session, user_id, provider_enum, device_model, source)
