@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -71,6 +72,14 @@ class DataSource(BaseDbModel):
     # sent them, because they are the record of what the provider claimed; device_id
     # is our interpretation of it, and the two have to stay separable.
     device_id: Mapped[FKDeviceOptional]
+    # When someone detached this source by hand. Detection then leaves it alone, and
+    # linking it to a device again clears it.
+    #
+    # Without it a NULL device_id says only "no device", which detection reads as
+    # "never attributed" - so it re-attaches on the next batch and a deliberate
+    # detach silently undoes itself. Attribution is already write-once for a source
+    # that *has* a device; this gives the empty state the same protection.
+    attribution_locked_at: Mapped[datetime | None]
     # Not eager-loaded: attribution is read per sample on the timeseries paths, and a
     # lazy load there would be one query per row. Callers that want the device's label
     # join it explicitly; SourceMetadata falls back to the id alone when they have not.

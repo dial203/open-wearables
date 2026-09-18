@@ -136,3 +136,40 @@ Template:
 - **Why**: `.github/workflows/pr-review.yml` and `build.yml` plus
   `docker-compose.prod.yml` are fork-only infrastructure. The AI review step is
   deliberately non-blocking — it must never red a PR on timeout.
+
+## Aggregator routes group on the writer, not the relaying handset
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: on Apple Health, Health Connect, Google Health and Samsung Health,
+  `device_model` is the phone that synced the batch (HealthKit reports
+  `productType`), so grouping devices on it pooled every relaying app behind one
+  handset into a single device — a silent over-merge that only surfaces once the
+  samples are already mixed in an analysis. These routes key on a writer/model pair
+  instead (`DeviceIdentityKind.AGGREGATOR_WRITER_MODEL`). Touches
+  `app/services/devices/identity.py` and `detection.py`, both fork-only today; if
+  upstream grows a device registry, the pairing rule is the part to keep.
+
+## An unrecognised HealthKit writer keeps its own name
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: `resolve_brand()` falls back to the platform when no brand table matches,
+  and that fallback used to overwrite the caller's `original_source_name`
+  unconditionally in `ensure_data_source`. Every third-party HealthKit writer the
+  tables had never heard of — Muse, AutoSleep, Eight Sleep, Hume — was therefore
+  filed as "Apple", losing the only field that named the recorder and making the
+  relay read as first-party Apple data. A recognised brand still wins over the
+  caller's value; a readable name now survives when nothing matched.
+
+## Deliberate detachment is a state, not an absence
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: `data_source.attribution_locked_at` distinguishes "a person unlinked this"
+  from "never attributed". Without it, detection re-attached an unlinked source on the
+  next sync and the unlink button looked broken. Fork-only column; an upstream merge
+  that rewrites `data_source` must carry it.

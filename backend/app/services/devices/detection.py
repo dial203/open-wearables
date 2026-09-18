@@ -34,7 +34,9 @@ from app.database import DbSession
 from app.models import DataSource, Device, EventRecord
 from app.repositories.device_repository import SYSTEM_ACTOR, DeviceRepository
 from app.schemas.enums import (
+    GROUPING_IDENTITY_KINDS,
     STRONG_IDENTITY_KINDS,
+    WRITER_MODEL_SEPARATOR,
     DeviceIdentityKind,
     DeviceType,
     IdentityConfidence,
@@ -58,6 +60,20 @@ PROPOSAL_MIN_SCORE = 60.0
 SESSION_MATCH_TOLERANCE = timedelta(minutes=20)
 
 
+def _first_grouping_claim(claims: list[IdentityClaim], provider: str) -> IdentityClaim | None:
+    """The most specific claim this route offers as a grouping key, or None.
+
+    Order matters and lives in GROUPING_IDENTITY_KINDS: a data source carrying a
+    writer/model pair must group on that and never fall back to the bare model, or
+    the pooling the pair exists to prevent returns through the other key.
+    """
+    for kind in GROUPING_IDENTITY_KINDS:
+        for claim in claims:
+            if claim.kind is kind and claim.route == provider:
+                return claim
+    return None
+
+
 class DeviceDetectionService:
     def __init__(self, repo: DeviceRepository | None = None):
         self.repo = repo or DeviceRepository()
@@ -76,7 +92,17 @@ class DeviceDetectionService:
         failure: the source stays unattributed until either a later sync carries a
         signal or a person links it by hand. Inventing a device from an empty
         signal would produce a registry entry that looks like evidence.
+
+        Also returns None when a person has deliberately detached this source.
+        Attribution is write-once for detection, but a NULL device_id otherwise reads
+        as "never attributed" and the next sync re-attaches what someone just removed
+        - the detach survives only until the following batch, which is indistinguishable
+        from the feature not working. ``attribution_locked_at`` is what makes the two
+        states different; linking the source again clears it.
         """
+        if data_source.attribution_locked_at is not None:
+            return None
+
         provider = getattr(data_source.provider, "value", data_source.provider)
         claims = list(claims_from_data_source(provider, data_source.device_model, data_source.source))
         if extra_claims:
@@ -158,38 +184,62 @@ class DeviceDetectionService:
             conflicts.update(d_id for d_id in matched if d_id != chosen.id)
             return chosen, conflicts
 
-        # 2. Within-route model match. Reproduces what the provider itself asserts -
+        # 2. Within-route grouping match. Reproduces what the provider itself asserts -
         #    "these rows came from a fenix 8" - and nothing more. Scoped to this route
         #    so an identical model string on another route never pulls the two together.
-        model_claim = next(
-            (c for c in claims if c.kind is DeviceIdentityKind.MODEL_STRING and c.route == provider),
-            None,
-        )
-        if model_claim is not None:
-            found = self.repo.find_by_claim(db_session, user_id, model_claim)
+        #    On an aggregator route the key is the writer/model pair rather than the
+        #    model alone; GROUPING_IDENTITY_KINDS holds the order and identity.py holds
+        #    the reason.
+        group_claim = _first_grouping_claim(claims, provider)
+
+        if group_claim is not None:
+            found = self.repo.find_by_claim(db_session, user_id, group_claim)
             if found is not None:
                 return found, conflicts
 
-        # 3. Nothing matched. Create, but only when a model string is actually known:
+        # 3. Nothing matched. Create, but only when a grouping key is actually known:
         #    a device built purely from an app bundle id would be "whatever writes as
         #    com.ouraring.oura", which is a writer, not a unit.
-        if model_claim is None:
+        if group_claim is None:
             return None, conflicts
 
-        brand = resolve_brand(_provider_enum(provider), data_source.device_model, data_source.source)
-        device_type = data_source.device_type or DeviceType.UNKNOWN.value
         device = self.repo.create(
             db_session,
             user_id=user_id,
-            device_type=device_type,
-            brand=brand,
-            model_raw=data_source.device_model,
-            model_display=humanize_device_model(data_source.device_model),
+            **self._new_device_fields(provider, data_source, group_claim),
             actor=SYSTEM_ACTOR,
             reason=f"First seen on the {provider} route",
             detected=True,
         )
         return device, conflicts
+
+    @staticmethod
+    def _new_device_fields(provider: str, data_source: DataSource, group_claim: IdentityClaim) -> dict:
+        """What to call a device the moment it is detected.
+
+        ``model_raw`` is always the provider's own string, verbatim - it is the record
+        of what the provider claimed, and an aggregator sometimes does report the real
+        hardware ("Oura Ring Gen3") rather than the relaying phone.
+
+        What it cannot be trusted to do on an aggregator route is *name the device on
+        screen*: HealthKit reports productType, so a Muse headband would introduce
+        itself as "iPhone 14 Pro Max". The writing app's own name is what a person
+        recognises, so it becomes an auto label, which display prefers over any model.
+        Detection may overwrite an auto label later; a name someone types, never.
+        """
+        brand = resolve_brand(_provider_enum(provider), data_source.device_model, data_source.source)
+        fields = {
+            "device_type": data_source.device_type or DeviceType.UNKNOWN.value,
+            "brand": brand,
+            "model_raw": data_source.device_model,
+            "model_display": humanize_device_model(data_source.device_model),
+        }
+
+        if group_claim.kind is DeviceIdentityKind.AGGREGATOR_WRITER_MODEL:
+            writer = group_claim.value.split(WRITER_MODEL_SEPARATOR, 1)[0]
+            fields["label"] = writer or None
+
+        return fields
 
     # --- cross-route proposals ---------------------------------------------------
 

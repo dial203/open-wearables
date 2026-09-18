@@ -76,6 +76,8 @@ class PriorityService:
                 device_type=ds.device_type,
                 original_source_name=ds.original_source_name,
                 display_name=self._build_display_name(ds),
+                device_id=ds.device_id,
+                attribution_locked_at=ds.attribution_locked_at,
                 ingestion_route=resolve_ingestion_route(ds.provider, ds.original_source_name),
             )
             for ds in sources

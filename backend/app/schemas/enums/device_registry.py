@@ -28,6 +28,17 @@ class DeviceIdentityKind(StrEnum):
     MODEL_STRING = "model_string"  # provider's own model / device name
     SERIAL = "serial"  # only where a provider genuinely exposes one
 
+    # Writer plus hardware, for aggregator routes only: "Muse||iPhone15,3".
+    #
+    # On an aggregator route the model string names the *handset that synced the
+    # batch*, not the device that recorded it - HealthKit reports productType, so a
+    # Muse headband's nights arrive stamped "iPhone15,3" exactly like the Oura ring's
+    # and the WHOOP band's. Grouping on that model alone pools every app relaying
+    # through one phone into a single "device". Pairing it with the writing app's own
+    # identifier keeps the pool apart while still splitting two phones' relays, which
+    # is the over-split direction and therefore the safe one.
+    AGGREGATOR_WRITER_MODEL = "aggregator_writer_model"
+
 
 class IdentityConfidence(StrEnum):
     """How much weight an identity claim carries when grouping data sources.
@@ -54,6 +65,21 @@ STRONG_IDENTITY_KINDS: frozenset[DeviceIdentityKind] = frozenset(
         DeviceIdentityKind.SERIAL,
     }
 )
+
+# The weak claims that may group data sources *within one route*, most specific
+# first. Detection takes the first kind a data source carries and ignores the rest:
+# a row with an AGGREGATOR_WRITER_MODEL claim must never also group on the bare
+# model string, or the pooling that claim exists to prevent comes back through the
+# other key. Ordered, so it is a tuple rather than a set.
+GROUPING_IDENTITY_KINDS: tuple[DeviceIdentityKind, ...] = (
+    DeviceIdentityKind.AGGREGATOR_WRITER_MODEL,
+    DeviceIdentityKind.MODEL_STRING,
+)
+
+# Separator inside an AGGREGATOR_WRITER_MODEL value. Two pipes, because a writer
+# name is free text ("JOSHUA A's Apple Watch") and a model string is a vendor code
+# ("iPhone15,3"); neither has ever been seen to contain this.
+WRITER_MODEL_SEPARATOR = "||"
 
 
 class LabelSource(StrEnum):

@@ -44,6 +44,7 @@ import {
   useCreateDevice,
   useUpdateDevice,
   useRetireDevice,
+  useLinkDataSource,
   useUnlinkDataSource,
   useSplitDevice,
   useMergeDevices,
@@ -56,6 +57,8 @@ import type {
   Device,
   DeviceDataSource,
 } from '@/lib/api/services/device.service';
+import { useUserDataSources } from '@/hooks/api/use-priorities';
+import type { DataSource } from '@/lib/api/services/priority.service';
 
 const DEVICE_TYPES = [
   'chest_strap',
@@ -71,6 +74,7 @@ const DEVICE_TYPES = [
 // A stable empty array, so the `?? []` fallback below does not hand useMemo a new
 // identity on every render and re-run the map build for nothing.
 const NO_DEVICES: Device[] = [];
+const NO_SOURCES: DataSource[] = [];
 
 /** What to call a device on screen. The rule itself lives in lib/utils/device. */
 function deviceName(device: Device): string {
@@ -92,8 +96,10 @@ export function DevicesSection({ userId }: { userId: string }) {
     includeRetired
   );
   const { data: proposals } = useLinkProposals(userId);
+  const { data: allSources } = useUserDataSources(userId);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [linking, setLinking] = useState<DataSource | null>(null);
   const [editing, setEditing] = useState<Device | null>(null);
   const [splitting, setSplitting] = useState<Device | null>(null);
   const [merging, setMerging] = useState<Device | null>(null);
@@ -103,6 +109,13 @@ export function DevicesSection({ userId }: { userId: string }) {
 
   const devices = data?.items ?? NO_DEVICES;
   const byId = useMemo(() => new Map(devices.map((d) => [d.id, d])), [devices]);
+
+  // Sources belonging to no device. Normal for a provider that identifies no
+  // hardware, and the only place a source someone detached can be put back.
+  const unattributed = useMemo(
+    () => (allSources ?? NO_SOURCES).filter((s) => !s.device_id),
+    [allSources]
+  );
 
   if (isLoading) return <LoadingSpinner size="lg" />;
   if (error) {
@@ -199,10 +212,21 @@ export function DevicesSection({ userId }: { userId: string }) {
         </div>
       )}
 
+      <UnattributedSources
+        sources={unattributed}
+        onLink={(source) => setLinking(source)}
+      />
+
       <CreateDeviceDialog
         userId={userId}
         open={createOpen}
         onOpenChange={setCreateOpen}
+      />
+      <LinkDataSourceDialog
+        userId={userId}
+        source={linking}
+        devices={devices}
+        onClose={() => setLinking(null)}
       />
       <EditDeviceDialog
         userId={userId}
@@ -226,6 +250,164 @@ export function DevicesSection({ userId }: { userId: string }) {
         onClose={() => setHistoryFor(null)}
       />
     </div>
+  );
+}
+
+/**
+ * Data sources attributed to no device.
+ *
+ * Detection only groups what a provider itself identifies, so an unattributed source
+ * is a normal resting state rather than an error - but until this panel existed there
+ * was no way back from one. Unlinking was reachable from every device card and linking
+ * was reachable from nowhere, so detaching a source by hand removed it from the
+ * registry for good, however deliberate or accidental the detach was.
+ */
+function UnattributedSources({
+  sources,
+  onLink,
+}: {
+  sources: DataSource[];
+  onLink: (source: DataSource) => void;
+}) {
+  if (sources.length === 0) return null;
+
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h3 className="text-sm font-medium">
+          Unattributed sources ({sources.length})
+        </h3>
+        <p className="text-xs text-muted-foreground">
+          Data still arrives and is stored; it just is not filed under a device
+          yet.
+        </p>
+      </div>
+
+      <ul className="mt-3 space-y-1">
+        {sources.map((source) => (
+          <li
+            key={source.id}
+            className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+          >
+            <Link2Off className="h-3 w-3 flex-shrink-0" />
+            <span className="truncate">
+              {source.provider}
+              {source.source ? ` · ${source.source}` : ''}
+              {source.device_model ? ` · ${source.device_model}` : ''}
+            </span>
+            {source.attribution_locked_at && (
+              <Badge
+                variant="outline"
+                title="Detached by hand. Detection leaves it alone until you link it again."
+              >
+                detached
+              </Badge>
+            )}
+            <button
+              type="button"
+              onClick={() => onLink(source)}
+              className="ml-auto inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+              title="Attribute this source to a device"
+            >
+              <Link2 className="h-3 w-3" />
+              Link
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/** Attribute one data source to an existing device. */
+function LinkDataSourceDialog({
+  userId,
+  source,
+  devices,
+  onClose,
+}: {
+  userId: string;
+  source: DataSource | null;
+  devices: Device[];
+  onClose: () => void;
+}) {
+  const link = useLinkDataSource(userId);
+  const [deviceId, setDeviceId] = useState('');
+  const [reason, setReason] = useState('');
+
+  const close = () => {
+    setDeviceId('');
+    setReason('');
+    onClose();
+  };
+
+  return (
+    <Dialog open={!!source} onOpenChange={(open) => !open && close()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Link a data source</DialogTitle>
+          <DialogDescription>
+            Attribution groups data sources; it never combines them. The samples
+            are untouched, and a direct read and an aggregator relay of the same
+            unit stay separate so you can still compare them.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            {source?.provider}
+            {source?.source ? ` · ${source.source}` : ''}
+            {source?.device_model ? ` · ${source.device_model}` : ''}
+          </div>
+          <div>
+            <Label htmlFor="link-device">Device</Label>
+            <select
+              id="link-device"
+              value={deviceId}
+              onChange={(e) => setDeviceId(e.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="">Select a device…</option>
+              {devices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {deviceName(d)} ({d.data_sources.length} source
+                  {d.data_sources.length === 1 ? '' : 's'})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="link-reason">Reason (recorded in history)</Label>
+            <Input
+              id="link-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Muse headband, relayed through this phone"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>
+            Cancel
+          </Button>
+          <Button
+            disabled={link.isPending || !deviceId || !source}
+            onClick={() => {
+              if (!source || !deviceId) return;
+              link.mutate(
+                { deviceId, dataSourceId: source.id, reason: reason || null },
+                { onSuccess: close }
+              );
+            }}
+          >
+            {link.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              'Link'
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -41,6 +42,22 @@ class DataSourceResponse(BaseModel):
     device_type: str | None = None
     original_source_name: str | None = None
     display_name: str | None = None
+    device_id: UUID | None = Field(
+        None,
+        description=(
+            "The physical device this source is attributed to, or `null` when it is "
+            "unattributed. Unattributed is a normal resting state: detection only groups "
+            "what a provider itself identifies."
+        ),
+    )
+    attribution_locked_at: datetime | None = Field(
+        None,
+        description=(
+            "When someone detached this source from a device by hand. While set, detection "
+            "leaves it unattributed instead of re-attaching it on the next sync. Linking it "
+            "to a device clears it."
+        ),
+    )
     ingestion_route: IngestionRoute = Field(
         IngestionRoute.DIRECT,
         description=(

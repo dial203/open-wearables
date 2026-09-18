@@ -40,6 +40,13 @@ export interface DataSource {
   device_type: DeviceType | null;
   original_source_name: string | null;
   display_name: string | null;
+  /** The physical device this source is attributed to; null means unattributed. */
+  device_id: string | null;
+  /**
+   * When someone detached this source from a device by hand. While set, detection
+   * leaves it unattributed rather than re-attaching it on the next sync.
+   */
+  attribution_locked_at: string | null;
   is_enabled: boolean;
 }
 

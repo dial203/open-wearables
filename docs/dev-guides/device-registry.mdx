@@ -68,6 +68,56 @@ on every export, identical across unrelated devices within one export. It is rej
 never stored as an identity.
 </Note>
 
+## The model string does not name the device on an aggregator route
+
+This is the one rule that is route-dependent rather than provider-dependent, and
+getting it wrong produced the worst over-merge the registry has seen.
+
+Apple Health reports `HKDevice.productType` — **the handset that synced the batch**,
+not the device that recorded the sample. So a Muse headband, an Oura ring, a WHOOP
+band and a sleep-scoring app relaying through one iPhone all arrive with
+`device_model = "iPhone15,3"`. Grouping on that model pooled every one of them into a
+single device: one real account had ~30 data sources and ~2,500 sleep sessions from
+nine brands reading as one unit. Health Connect and Google Health pair a `DataOrigin`
+package with the phone's model the same way.
+
+On these four routes — `apple`, `health_connect`, `google_health`, `samsung` — the
+grouping key is therefore the **writer/model pair**, stored as a
+`aggregator_writer_model` claim:
+
+| Route | `source` | `device_model` | Grouping claim |
+|---|---|---|---|
+| apple | `Muse` | `iPhone15,3` | `Muse\|\|iPhone15,3` |
+| apple | `Oura` | `iPhone15,3` | `Oura\|\|iPhone15,3` |
+| apple | `apple_health_xml` | `Watch7,5` | `Watch7,5` (model only — the XML importer's own stamp is not a writer) |
+| garmin | `garmin` | `fenix 8` | `fenix 8` (model only — here it really is the device) |
+
+The pair over-splits: one headband synced by two phones reads as two devices. That is
+the safe direction — a person sees both and merges them, and nothing was pooled while
+they decided.
+
+<Note>
+`device_model` is still stored verbatim; it is the record of what the provider
+claimed, and an aggregator sometimes does report real hardware (`Oura Ring Gen3`).
+It just no longer *names* the device: a relayed device takes an auto label from the
+writing app, so a Muse headband does not introduce itself as "iPhone 14 Pro Max".
+</Note>
+
+Existing rows are regrouped by
+`backend/scripts/data_migrations/repair_aggregator_device_pooling.py`, which previews
+by default and writes with `--apply`.
+
+## A detach has to survive the next sync
+
+Attribution is write-once for a source that already has a device — but a NULL
+`device_id` says only "no device", which detection read as "never attributed". So the
+next sync re-attached whatever someone had just unlinked, and the detach silently
+undid itself.
+
+`data_source.attribution_locked_at` records that the empty state is deliberate.
+Detection skips a source carrying it; linking the source to a device again clears it.
+Unlinking through the API sets it.
+
 ## The governing rule: over-split, never over-merge
 
 A wrong split is visible and reversible — an extra device appears in the list and
@@ -201,3 +251,8 @@ stamps every row's `data_source.source` with one constant, so apps writing throu
 Health Connect are not separated at that level. Splitting it properly means rewriting
 existing Google `data_source` identities in a migration, which forks a user's history
 if done wrong. Devices still separate whenever `device_model` differs.
+
+**A writer relaying through two phones is two devices.** Deliberate: see the
+writer/model pair above. The evidence cannot separate "one headband, two handsets"
+from "two headbands", so a person decides. `POST /device-link-proposals/refresh`
+scores the candidates.
