@@ -71,6 +71,42 @@ recognises it by its `provider_user_id` — rather than creating a duplicate.
 That is deliberate: two rows for one login would double-count every sample.
 </Warning>
 
+### `new_account` is a hint, not the mechanism
+
+Where the provider reports a `provider_user_id` — Garmin, Polar, Oura, Whoop,
+Fitbit, Strava, Withings, Google Health — the callback compares it against the
+accounts the user already holds. An identifier it does not recognise **is** a
+different account, and a new connection is created whether or not
+`new_account` was passed.
+
+That is what makes the participant-facing pairing page correct. That page is
+unauthenticated, so it cannot read the connection list and cannot know a second
+Garmin is being added; relying on the flag alone would have merged the second
+account into the first. The flag still matters for the providers that report no
+identifier of their own, where the account e-mail is the only signal.
+
+The one case left deliberately ambiguous: when an existing connection has
+`provider_user_id IS NULL` (it predates us learning one, or was created by the
+SDK), a callback that now reports an id adopts it rather than creating a second
+row beside it.
+
+## Where a participant does this
+
+`/users/{user_id}/pair` — the pairing link you already send them. Tapping a
+provider now opens a short step before the redirect that asks which account
+they are signing in with (e-mail) and, optionally, a label such as
+"left wrist". For providers that never report an e-mail, this is the only
+moment the person who knows it is present.
+
+Opened by a signed-in operator, the same page reads the connection list and the
+step says "Add another Garmin account — 1 already linked". Opened by a
+participant it cannot, so it asks the same questions without the count; the
+backend rule above is what keeps the outcome correct either way.
+
+Operators can also link an account from the user's dashboard page
+(**Connected Accounts → Add account**), which names the provider, label and
+e-mail up front.
+
 ### What is still unique
 
 The same external account cannot be linked twice to the same user. Two partial

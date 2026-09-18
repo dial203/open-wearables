@@ -105,6 +105,49 @@ class TestResolution:
         resolved = template._resolve_target_connection(db, user.id, "w-2", None, _state(user.id, new_account=True))
         assert resolved.id == second.id
 
+    def test_an_unrecognised_provider_user_id_creates_an_account_without_the_flag(
+        self, db: Session, template: _Template
+    ) -> None:
+        """The participant-facing pairing page cannot set new_account.
+
+        It is unauthenticated, so it cannot read the connection list and cannot
+        know this is the second Whoop. The provider naming an account we do not
+        hold is enough on its own - without this the second account's tokens
+        would overwrite the first's and both wrists would report as one.
+        """
+        user = UserFactory()
+        first = UserConnectionFactory(user=user, provider="whoop", provider_user_id="w-1")
+        db.commit()
+
+        resolved = template._resolve_target_connection(db, user.id, "w-2", None, _state(user.id))
+
+        assert resolved is None, f"would have re-pointed {first.id} at a different Whoop account"
+
+    def test_a_recognised_provider_user_id_still_reauthorizes_that_account(
+        self, db: Session, template: _Template
+    ) -> None:
+        """The other half of the same rule: signing back in is not a new account."""
+        user = UserFactory()
+        first = UserConnectionFactory(user=user, provider="whoop", provider_user_id="w-1")
+        UserConnectionFactory(user=user, provider="whoop", provider_user_id="w-2")
+        db.commit()
+
+        assert template._resolve_target_connection(db, user.id, "w-1", None, _state(user.id)).id == first.id
+
+    def test_an_account_with_no_recorded_provider_user_id_stays_ambiguous(
+        self, db: Session, template: _Template
+    ) -> None:
+        """A connection that predates us learning its id may well be this one.
+
+        Creating a second row would strand the first; adopting it is the
+        pre-existing behaviour and the recoverable choice.
+        """
+        user = UserFactory()
+        connection = UserConnectionFactory(user=user, provider="whoop", provider_user_id=None)
+        db.commit()
+
+        assert template._resolve_target_connection(db, user.id, "w-1", None, _state(user.id)).id == connection.id
+
     def test_the_account_email_matches_when_the_provider_reports_no_user_id(
         self, db: Session, template: _Template
     ) -> None:

@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { useOAuthConnect } from '@/hooks/use-oauth-connect';
 import { useOAuthProviders } from '@/hooks/api/use-oauth-providers';
 import { useUserConnections } from '@/hooks/api/use-health';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { API_CONFIG } from '@/lib/api/config';
 import { isAuthenticated } from '@/lib/auth/session';
 
@@ -74,13 +74,43 @@ function PairWearablePage() {
     ? displayProviders.find((p) => p.id === connectingProvider)
     : null;
 
-  const handleConnect = (providerId: string, linkedCount: number) => {
-    if (connectingProvider === null) {
-      // Signal intent explicitly. Without it the callback would re-authorize the
-      // account already linked, which is right for "reconnect" and wrong for
-      // "add the second watch" - and the two are the same click here.
-      connect(providerId, linkedCount > 0 ? { newAccount: true } : undefined);
-    }
+  // Tapping a provider opens a short step for the account details before the
+  // redirect, rather than going straight to the provider. Two reasons: most
+  // providers never tell us the e-mail of the account that authorized (Garmin,
+  // Polar, Suunto, Strava, Withings do not), and this is the only moment the
+  // person who knows it is present; and if they are wearing two of the same
+  // brand, the label is what will tell the two apart afterwards.
+  const [pendingProvider, setPendingProvider] = useState<{
+    id: string;
+    name: string;
+    linkedCount: number;
+  } | null>(null);
+  const [accountEmail, setAccountEmail] = useState('');
+  const [accountLabel, setAccountLabel] = useState('');
+
+  const openAccountStep = (
+    providerId: string,
+    name: string,
+    linkedCount: number
+  ) => {
+    if (connectingProvider !== null) return;
+    setAccountEmail('');
+    setAccountLabel('');
+    setPendingProvider({ id: providerId, name, linkedCount });
+  };
+
+  const handleConnect = () => {
+    if (!pendingProvider || connectingProvider !== null) return;
+    connect(pendingProvider.id, {
+      // Only meaningful for providers that report no user id of their own. For
+      // the rest the callback recognises a second account from the provider's
+      // identifier, which is what makes this page correct for a participant:
+      // it is unauthenticated, so `linkedCount` is 0 for them whatever the
+      // truth, and the flag alone could not be relied on.
+      newAccount: pendingProvider.linkedCount > 0,
+      accountEmail: accountEmail.trim() || undefined,
+      accountLabel: accountLabel.trim() || undefined,
+    });
   };
 
   return (
@@ -126,7 +156,89 @@ function PairWearablePage() {
 
       {/* Main content */}
       <AnimatePresence mode="wait">
-        {connectionState === 'idle' && (
+        {connectionState === 'idle' && pendingProvider && (
+          <motion.div
+            key="account-step"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="relative z-10 w-full max-w-lg rounded-2xl border border-white/10 bg-zinc-900/60 p-8"
+          >
+            <h2 className="text-2xl font-medium text-white">
+              {pendingProvider.linkedCount > 0
+                ? `Add another ${pendingProvider.name} account`
+                : `Connect ${pendingProvider.name}`}
+            </h2>
+            <p className="mt-2 text-sm text-zinc-400">
+              {pendingProvider.linkedCount > 0
+                ? `${pendingProvider.linkedCount} ${pendingProvider.name} account${
+                    pendingProvider.linkedCount > 1 ? 's are' : ' is'
+                  } already linked. On the next screen, sign in to the account you want to add — signing in to one already linked just reconnects it.`
+                : `You'll sign in to ${pendingProvider.name} on the next screen.`}
+            </p>
+
+            <div className="mt-6 space-y-5">
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="pair-account-email"
+                  className="block text-sm font-medium text-zinc-300"
+                >
+                  Which {pendingProvider.name} account?
+                </label>
+                <input
+                  id="pair-account-email"
+                  type="email"
+                  autoComplete="email"
+                  value={accountEmail}
+                  onChange={(e) => setAccountEmail(e.target.value)}
+                  placeholder="the email you sign in with"
+                  className="h-11 w-full rounded-lg border border-white/10 bg-zinc-950/60 px-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-white/25 focus:ring-2 focus:ring-white/10"
+                />
+                <p className="text-xs text-zinc-500">
+                  Recorded so this data can always be traced back to the right
+                  account.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="pair-account-label"
+                  className="block text-sm font-medium text-zinc-300"
+                >
+                  Label{' '}
+                  <span className="font-normal text-zinc-500">(optional)</span>
+                </label>
+                <input
+                  id="pair-account-label"
+                  value={accountLabel}
+                  onChange={(e) => setAccountLabel(e.target.value)}
+                  placeholder="e.g. left wrist"
+                  className="h-11 w-full rounded-lg border border-white/10 bg-zinc-950/60 px-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-white/25 focus:ring-2 focus:ring-white/10"
+                />
+                <p className="text-xs text-zinc-500">
+                  If you wear more than one {pendingProvider.name} device, this
+                  is what tells them apart.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-8 flex items-center justify-between gap-3">
+              <Button
+                variant="ghost"
+                onClick={() => setPendingProvider(null)}
+                className="text-zinc-400 hover:text-white"
+              >
+                Back
+              </Button>
+              <Button onClick={handleConnect}>
+                Continue to {pendingProvider.name}
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          </motion.div>
+        )}
+
+        {connectionState === 'idle' && !pendingProvider && (
           <motion.div
             key="providers"
             initial={{ opacity: 0 }}
@@ -148,7 +260,11 @@ function PairWearablePage() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.05, duration: 0.3 }}
                     onClick={() =>
-                      handleConnect(provider.id, provider.linkedCount)
+                      openAccountStep(
+                        provider.id,
+                        provider.name,
+                        provider.linkedCount
+                      )
                     }
                     className={`group relative flex flex-col items-center text-center p-10 rounded-2xl bg-zinc-900/40 border transition-all duration-300 ease-out outline-none focus:ring-2 focus:ring-white/20 ${
                       provider.linkedCount > 0

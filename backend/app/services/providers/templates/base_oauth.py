@@ -401,9 +401,11 @@ class BaseOAuthTemplate(ABC):
 
         1. An explicit ``connection_id`` - the person pressed "reconnect" on a
            named account, so that is the account, and nothing else is eligible.
-        2. The provider's own user id - the strongest evidence available that
-           this is an account we already hold, and what stops "add another"
-           from producing a duplicate of an account the person already linked.
+        2. The provider's own user id. A match is the strongest evidence
+           available that this is an account we already hold, and is what stops
+           "add another" from producing a duplicate of an account the person
+           already linked. A *mismatch* is equally strong evidence the other
+           way, and is handled below.
         3. The recorded account e-mail, for providers that report no user id.
         4. The user's single existing account, which is the pre-multi-account
            behaviour and keeps every ordinary reconnect working unchanged.
@@ -422,17 +424,30 @@ class BaseOAuthTemplate(ABC):
                 )
             return connection
 
+        existing_accounts = self.connection_repo.get_all_by_user_and_provider(db, user_id, self.provider_name)
+
         if provider_user_id:
-            match = next(
-                (
-                    c
-                    for c in self.connection_repo.get_all_by_user_and_provider(db, user_id, self.provider_name)
-                    if c.provider_user_id == provider_user_id
-                ),
-                None,
-            )
+            match = next((c for c in existing_accounts if c.provider_user_id == provider_user_id), None)
             if match is not None:
                 return match
+
+            # The provider named an account, and it is none of the ones this
+            # user holds. That is a different account, whatever the caller
+            # asked for - so create one rather than re-pointing an existing
+            # connection's tokens at it.
+            #
+            # This is what makes the participant-facing pairing page correct
+            # without it having to know how many accounts already exist. That
+            # page is unauthenticated, so it cannot read the connection list and
+            # cannot set ``new_account`` on the person's behalf; relying on the
+            # flag alone would silently merge a second Garmin into the first.
+            #
+            # Only when every existing account carries an id of its own. A
+            # connection with ``provider_user_id IS NULL`` predates us learning
+            # one (or is SDK-created), so it may well *be* this account finally
+            # reporting its id - that stays ambiguous and falls through.
+            if existing_accounts and all(c.provider_user_id is not None for c in existing_accounts):
+                return None
 
         if account_email:
             match = self.connection_repo.get_by_account_email(db, user_id, self.provider_name, account_email)
@@ -442,8 +457,7 @@ class BaseOAuthTemplate(ABC):
         if oauth_state.new_account:
             return None
 
-        existing = self.connection_repo.get_all_by_user_and_provider(db, user_id, self.provider_name)
-        return existing[0] if len(existing) == 1 else None
+        return existing_accounts[0] if len(existing_accounts) == 1 else None
 
     def _save_connection(
         self,
