@@ -145,9 +145,24 @@ Detection therefore:
 
 `relaying_host_model` (`app/services/devices/identity.py`) recognises the one case
 where a provider's model string is not evidence about the device at all: an aggregator
-route, a third-party writer, and a model that infers to `phone`. It fires narrowly —
-the platform writing about its own handset (`com.apple.*`, or a writer whose name is
-itself a phone) still means the handset, and a direct route never relays.
+route, a third-party writer, and a model that infers to `phone`. A direct route never
+relays.
+
+"Third-party writer" is the load-bearing half, and it excludes more than a bundle
+prefix. The handset writes about itself under several names, and splitting any of them
+off would turn one phone into several devices and discard its model:
+
+| Writer | Why it is the handset |
+|---|---|
+| `com.apple.*`, `com.sec.android.*`, `com.android.*` | the platform's own bundle id |
+| `Health`, `Fitness`, `Clock`, `Activity`, … | Apple's own apps, which HealthKit reports by display name rather than bundle id |
+| `Michael's iPhone` | the writer's name infers to `phone` |
+| `Michael's S22`, `S10+`, `V35 ThinQ` | the writer shares an identifying token with the model or its marketing name (`SM-S901U` → `Galaxy S22`) |
+
+Brand words alone (`Galaxy`, `Apple`) never count for that last row: `Galaxy Watch7` and
+`Galaxy S22` are two devices. A manufacturer's internal codename — Samsung's `r0q` for
+the S22 — shares nothing with either spelling and will split off as its own device; one
+stray device to merge is the cheaper error than a hand-maintained codename table.
 
 Taken at face value that string is worse than no signal. Grouping on it collapses every
 brand relayed through one phone into a single device — the over-merge this package

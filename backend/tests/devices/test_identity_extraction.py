@@ -171,6 +171,34 @@ class TestRelayingHost:
         assert relaying_host_model(ProviderName.APPLE, "iPhone 17 Pro", "Michael's iPhone") is None
         assert relaying_host_model(ProviderName.HEALTH_CONNECT, "Pixel 9 Pro", "com.android.healthconnect") is None
 
+    def test_the_platform_s_own_apps_are_the_handset(self) -> None:
+        """HealthKit reports Apple's own apps by display name, not by bundle id.
+
+        Their data was recorded by the phone or the watch, not relayed through it, so
+        splitting them off would invent a nameless device for data the model string
+        already describes correctly.
+        """
+        for writer in ("Health", "Fitness", "Clock", "cycle tracking"):
+            assert relaying_host_model(ProviderName.APPLE, "iPhone 17 Pro", writer) is None
+
+    def test_a_writer_that_is_another_name_for_the_handset_is_the_handset(self) -> None:
+        """Platforms report a phone's own data under whatever the owner named it.
+
+        Splitting these would turn one handset into several devices and throw its model
+        away - strictly worse than leaving it alone.
+        """
+        assert relaying_host_model(ProviderName.SAMSUNG, "SM-S901U", "Michael's S22") is None
+        assert relaying_host_model(ProviderName.SAMSUNG, "SM-G975U", "S10+") is None
+        assert relaying_host_model(ProviderName.SAMSUNG, "LM-V350", "V35 ThinQ") is None
+
+    def test_a_shared_brand_word_is_not_enough_to_be_the_handset(self) -> None:
+        """ "Galaxy Watch" and "Galaxy S22" share a word and are two devices."""
+        assert relaying_host_model(ProviderName.SAMSUNG, "SM-S901U", "Galaxy Watch7") == "SM-S901U"
+
+    def test_a_wearable_relaying_through_a_phone_still_splits(self) -> None:
+        """The watch is its own unit even when the phone is what synced its data."""
+        assert relaying_host_model(ProviderName.APPLE, "iPhone10,5", "Ali's Apple Watch") == "iPhone10,5"
+
     def test_real_wearable_hardware_is_never_treated_as_a_host(self) -> None:
         assert relaying_host_model(ProviderName.APPLE, "Watch7,5", "Ali's Watch") is None
         assert relaying_host_model(ProviderName.APPLE, "Oura Ring Gen3", "Oura") is None
