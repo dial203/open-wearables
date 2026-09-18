@@ -23,6 +23,13 @@ Subcommands
     between two of them is exactly "what did we change between syncs", and a
     diff from the latest one is "what have we changed since a known-good base".
 
+``stamp``
+    Refresh ``frontend/fork-version.json``: the fork's own version and
+    last-updated timestamp, plus the commit and date of the newest upstream
+    commit this fork contains, both as rendered in the UI footer. The file is
+    committed because the frontend image is built from a ``./frontend`` context
+    with no ``.git`` in it, so a Docker build cannot read git itself.
+
 Stdlib only, no virtualenv: this spans backend, frontend, mcp and docs, so it
 must run from a bare checkout with nothing installed.
 """
@@ -30,6 +37,7 @@ must run from a bare checkout with nothing installed.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -41,6 +49,8 @@ UPSTREAM_REMOTE = "upstream"
 UPSTREAM_BRANCH = "main"
 OUTPUT = REPO_ROOT / "docs" / "fork" / "DIVERGENCE.md"
 SYNC_TAG_PREFIX = "upstream-sync/"
+STAMP = REPO_ROOT / "frontend" / "fork-version.json"
+DEFAULT_FORK_VERSION = "0.1.0"
 
 # Files whose divergence is structural rather than behavioural: the fork is a
 # fork, so its own identity, agent config and CI wiring are expected to differ
@@ -218,6 +228,63 @@ def render(
     return "\n".join(out)
 
 
+def read_stamp() -> dict[str, str]:
+    """The committed stamp, or an empty dict when it is missing or corrupt."""
+    try:
+        data = json.loads(STAMP.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def upstream_stamp(existing: dict[str, str]) -> dict[str, str]:
+    """Commit and date of the newest upstream commit this fork contains.
+
+    That is the merge base with ``upstream/main``: upstream's version number says
+    which release we sit on, this says which day of it. Deliberately does not
+    fetch - the merge base only moves when we merge upstream, and `make build`
+    must not need the network.
+    """
+    if not have_upstream():
+        print("note: no 'upstream' remote - keeping the previous upstream stamp (run 'make fork-setup')")
+        return {k: existing[k] for k in ("upstreamCommit", "upstreamUpdatedAt") if k in existing}
+
+    base = git("merge-base", f"{UPSTREAM_REMOTE}/{UPSTREAM_BRANCH}", "HEAD")
+    return {
+        "upstreamCommit": git("rev-parse", "--short", base),
+        "upstreamUpdatedAt": git("log", "-1", "--format=%cI", base),
+    }
+
+
+def cmd_stamp(args: argparse.Namespace) -> int:
+    existing = read_stamp()
+    version = args.set_version or existing.get("version") or DEFAULT_FORK_VERSION
+
+    stamp = {
+        "version": version,
+        "commit": git("rev-parse", "--short", "HEAD"),
+        "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+        # Commit time, not build time: "last updated" means the fork's code
+        # moved, and rebuilding an unchanged tree must not bump the date.
+        "updatedAt": git("log", "-1", "--format=%cI", "HEAD"),
+        "stampedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        **upstream_stamp(existing),
+    }
+
+    dirty = bool(git("status", "--porcelain").strip())
+    if dirty:
+        print("warning: working tree is dirty - stamping the last commit, not your uncommitted changes")
+
+    STAMP.write_text(json.dumps(stamp, indent=2) + "\n")
+    print(f"wrote {STAMP.relative_to(REPO_ROOT)}: fork v{version} @ {stamp['commit']} ({stamp['updatedAt']})")
+    if stamp.get("upstreamCommit"):
+        print(f"  upstream @ {stamp['upstreamCommit']} ({stamp['upstreamUpdatedAt']})")
+    rel = str(STAMP.relative_to(REPO_ROOT))
+    if git("status", "--porcelain", "--", rel):
+        print(f"commit it so the built image carries it: git add {rel}")
+    return 0
+
+
 def cmd_tag(args: argparse.Namespace) -> int:
     name = f"{SYNC_TAG_PREFIX}{args.date}"
     existing = git("tag", "--list", name)
@@ -239,6 +306,14 @@ def main(argv: list[str] | None = None) -> int:
     p_diff.add_argument("--ref", default="HEAD", help="our ref to compare (default: HEAD)")
     p_diff.add_argument("--no-fetch", action="store_true", help="use the already-fetched upstream ref")
     p_diff.set_defaults(func=cmd_diff)
+
+    p_stamp = sub.add_parser("stamp", help="refresh frontend/fork-version.json from git")
+    p_stamp.add_argument(
+        "--set-version",
+        help="set the fork version (semver) as well; keeps the current one when omitted "
+        f"(default: {DEFAULT_FORK_VERSION})",
+    )
+    p_stamp.set_defaults(func=cmd_stamp)
 
     p_tag = sub.add_parser("tag", help="tag HEAD as an upstream sync point")
     p_tag.add_argument(
