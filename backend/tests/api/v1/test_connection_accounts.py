@@ -133,7 +133,8 @@ class TestUpdate:
             json={"account_email": "not-an-email"},
             headers=api_key_header,
         )
-        assert response.status_code == 422
+        # The app's global handler maps RequestValidationError to 400, not 422.
+        assert response.status_code == 400
 
     def test_updating_another_users_account_is_not_found(
         self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]

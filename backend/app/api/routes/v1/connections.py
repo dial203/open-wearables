@@ -201,7 +201,13 @@ def delete_connection_account_data_endpoint(
     db: DbSession,
     _api_key: ApiKeyDep,
 ) -> Response:
-    """Revoke one account and delete only the data that came through it."""
+    """Revoke one account and delete only the data that came through it.
+
+    The user's other accounts with the same provider keep their data. Health
+    scores computed without a data source are left alone, because they cannot be
+    attributed to one of several accounts - use the provider-level purge to
+    clear those.
+    """
     connection = _account_or_404(db, user_id, connection_id)
     strategy = ProviderFactory().get_provider(connection.provider)
     user_connection_service.purge_provider_data(

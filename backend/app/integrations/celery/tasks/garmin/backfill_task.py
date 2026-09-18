@@ -156,13 +156,14 @@ def start_full_backfill(user_id: str, connection_id: str | None = None, attempt:
 
     with SessionLocal() as db:
         connection_repo = UserConnectionRepository()
-        connection = (
-            connection_repo.get_by_id_for_user(db, UUID(user_id), UUID(connection_id))
-            if connection_id
-            else connection_repo.get_by_user_and_provider(db, UUID(user_id), "garmin")
-        )
-        if connection is not None and connection.provider != "garmin":
-            connection = None
+        if connection_id:
+            connection = connection_repo.get_by_id_for_user(db, UUID(user_id), UUID(connection_id))
+            # An id naming some other provider's connection is not a Garmin
+            # account; the by-provider lookup below filters on provider already.
+            if connection is not None and connection.provider != "garmin":
+                connection = None
+        else:
+            connection = connection_repo.get_by_user_and_provider(db, UUID(user_id), "garmin")
         if not connection:
             log_structured(
                 logger,

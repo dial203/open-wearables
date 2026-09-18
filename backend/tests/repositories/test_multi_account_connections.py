@@ -59,9 +59,9 @@ class TestSeveralAccountsPerProvider:
         UserConnectionFactory(user=user, provider="whoop", provider_user_id="whoop-1")
         db.commit()
 
-        UserConnectionFactory(user=user, provider="whoop", provider_user_id="whoop-1")
+        # The factory flushes on create, so the constraint fires there.
         with pytest.raises(IntegrityError):
-            db.commit()
+            UserConnectionFactory(user=user, provider="whoop", provider_user_id="whoop-1")
         db.rollback()
 
     def test_the_same_account_email_cannot_be_linked_twice(self, db: Session) -> None:
@@ -75,14 +75,13 @@ class TestSeveralAccountsPerProvider:
         )
         db.commit()
 
-        UserConnectionFactory(
-            user=user,
-            provider="polar",
-            provider_user_id=None,
-            account_email="p01@lab.example.edu",
-        )
         with pytest.raises(IntegrityError):
-            db.commit()
+            UserConnectionFactory(
+                user=user,
+                provider="polar",
+                provider_user_id=None,
+                account_email="p01@lab.example.edu",
+            )
         db.rollback()
 
     def test_a_revoked_account_does_not_block_reconnecting(self, db: Session) -> None:

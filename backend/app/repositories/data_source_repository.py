@@ -421,10 +421,17 @@ class DataSourceRepository(
         # same device under two data sources - the exact split this method's
         # docstring exists to prevent.
         if missing and user_connection_id is not None:
+            # Cached per user: a payload can carry dozens of identities and the
+            # answer is the same for every one of them.
+            adoption_allowed: dict[UUID, bool] = {}
+
+            def _allowed(user_id: UUID) -> bool:
+                if user_id not in adoption_allowed:
+                    adoption_allowed[user_id] = self._can_adopt_orphans(db_session, user_id, provider)
+                return adoption_allowed[user_id]
+
             adoptable = {
-                (user_id, device_model, source)
-                for user_id, device_model, source in missing
-                if self._can_adopt_orphans(db_session, user_id, provider)
+                (user_id, device_model, source) for user_id, device_model, source in missing if _allowed(user_id)
             }
             if adoptable:
                 orphan_conditions = [
@@ -551,9 +558,12 @@ class DataSourceRepository(
         and leaves the participant's other accounts with the same provider - the
         comparator device in a validation study - completely untouched.
 
-        health_score rows are provider-scoped rather than data-source-scoped for
-        some providers, so only those reachable through this connection's data
-        sources are removed; the cascade on data_source handles them.
+        Health scores linked to those data sources go with them by cascade.
+        Scores computed without one - ``data_source_id IS NULL``, which the
+        provider-wide purge removes by (user, provider) - are deliberately left:
+        they cannot be attributed to one of a user's several accounts, and
+        deleting them would take the comparator account's scores too. The
+        provider-wide purge is the way to clear those.
         """
         result = cast(
             CursorResult,

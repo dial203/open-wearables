@@ -154,11 +154,19 @@ def sync_vendor_data(
         try:
             connections = user_connection_repo.get_all_active_by_user(db, user_uuid)
 
+            # Counted before any filtering, so the result keys below do not
+            # change shape depending on what a given run was restricted to: a
+            # backfill of one of two Garmin accounts still keys that account the
+            # way the periodic sync of both does.
+            accounts_per_provider: dict[str, int] = {}
+            for connection in connections:
+                accounts_per_provider[connection.provider] = accounts_per_provider.get(connection.provider, 0) + 1
+
             if providers:
                 connections = [c for c in connections if c.provider in providers]
 
             if connection_ids:
-                wanted = {cid for cid in connection_ids}
+                wanted = set(connection_ids)
                 connections = [c for c in connections if str(c.id) in wanted]
 
             # Load provider settings once (live_sync_mode per provider).
@@ -198,13 +206,6 @@ def sync_vendor_data(
                 user_id=user_id,
             )
 
-            # How many accounts this user holds with each provider in this run.
-            # Used only to key the result: a single account keeps the plain
-            # provider key existing consumers already read.
-            accounts_per_provider: dict[str, int] = {}
-            for c in connections:
-                accounts_per_provider[c.provider] = accounts_per_provider.get(c.provider, 0) + 1
-
             for connection in connections:
                 provider_name = connection.provider
                 # Everything below resolves credentials, cursors and data sources
@@ -213,6 +214,9 @@ def sync_vendor_data(
                 # instead of the first one's. Rebound at the top of every
                 # iteration and cleared in the finally that closes the loop.
                 bind_active_connection(connection.id)
+                # A single account keeps the plain provider key existing
+                # consumers already read; several would collapse onto it, so
+                # those are keyed per account instead.
                 result_key = (
                     provider_name
                     if accounts_per_provider.get(provider_name, 1) == 1
