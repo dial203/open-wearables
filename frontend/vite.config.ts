@@ -12,9 +12,10 @@ import { nitro } from 'nitro/vite';
 const { version } = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
 /**
- * The fork's own version and last-updated time, resolved from (in order):
+ * Fork and upstream build provenance, each resolved from (in order):
  *
- * 1. `FORK_*` env vars - for CI, which knows the commit without a checkout's git.
+ * 1. `FORK_*` / `UPSTREAM_*` env vars - for CI, which knows the commit without a
+ *    checkout's git.
  * 2. git - a host checkout (`pnpm dev`, `pnpm build`), always exact and never stale.
  * 3. `fork-version.json` - the committed stamp from `make fork-stamp`. The Docker
  *    build context is `./frontend` with `.git` excluded, so images have only this.
@@ -32,9 +33,13 @@ function readForkStamp(): Record<string, string> {
   }
 }
 
+const git = (...args: string[]) =>
+  execFileSync('git', args, {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
+
 function gitForkMeta(): { commit?: string; updatedAt?: string } {
-  const git = (...args: string[]) =>
-    execFileSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   try {
     git('rev-parse', '--is-inside-work-tree');
     const dirty = git('status', '--porcelain').length > 0;
@@ -49,17 +54,56 @@ function gitForkMeta(): { commit?: string; updatedAt?: string } {
   }
 }
 
+/**
+ * The newest upstream commit this fork contains: the merge base with
+ * `upstream/main`. Upstream's version number says which release we sit on, this
+ * says which day of it - two syncs a month apart are both "v0.9.0". Needs the
+ * `upstream` remote (`make fork-setup`); without it the stamp's value stands.
+ */
+function gitUpstreamMeta(): { commit?: string; updatedAt?: string } {
+  try {
+    git('rev-parse', '--is-inside-work-tree');
+    const base = git('merge-base', 'upstream/main', 'HEAD');
+    return {
+      commit: git('rev-parse', '--short', base),
+      updatedAt: git('log', '-1', '--format=%cI', base),
+    };
+  } catch {
+    return {};
+  }
+}
+
 function resolveForkMeta() {
   const stamp = readForkStamp();
   const fromGit = gitForkMeta();
   return {
     version: process.env.FORK_VERSION || stamp.version || 'unknown',
-    commit: process.env.FORK_COMMIT || fromGit.commit || stamp.commit || 'unknown',
-    updatedAt: process.env.FORK_UPDATED_AT || fromGit.updatedAt || stamp.updatedAt || '',
+    commit:
+      process.env.FORK_COMMIT || fromGit.commit || stamp.commit || 'unknown',
+    updatedAt:
+      process.env.FORK_UPDATED_AT || fromGit.updatedAt || stamp.updatedAt || '',
+  };
+}
+
+function resolveUpstreamMeta() {
+  const stamp = readForkStamp();
+  const fromGit = gitUpstreamMeta();
+  return {
+    commit:
+      process.env.UPSTREAM_COMMIT ||
+      fromGit.commit ||
+      stamp.upstreamCommit ||
+      'unknown',
+    updatedAt:
+      process.env.UPSTREAM_UPDATED_AT ||
+      fromGit.updatedAt ||
+      stamp.upstreamUpdatedAt ||
+      '',
   };
 }
 
 const fork = resolveForkMeta();
+const upstream = resolveUpstreamMeta();
 
 const config = defineConfig({
   define: {
@@ -67,6 +111,8 @@ const config = defineConfig({
     __FORK_VERSION__: JSON.stringify(fork.version),
     __FORK_COMMIT__: JSON.stringify(fork.commit),
     __FORK_UPDATED_AT__: JSON.stringify(fork.updatedAt),
+    __UPSTREAM_COMMIT__: JSON.stringify(upstream.commit),
+    __UPSTREAM_UPDATED_AT__: JSON.stringify(upstream.updatedAt),
   },
   build: {
     outDir: 'dist',

@@ -24,10 +24,11 @@ Subcommands
     diff from the latest one is "what have we changed since a known-good base".
 
 ``stamp``
-    Refresh ``frontend/fork-version.json``, the fork's own version and
-    last-updated timestamp as rendered in the UI next to upstream's version. The
-    file is committed because the frontend image is built from a ``./frontend``
-    context with no ``.git`` in it, so a Docker build cannot read git itself.
+    Refresh ``frontend/fork-version.json``: the fork's own version and
+    last-updated timestamp, plus the commit and date of the newest upstream
+    commit this fork contains, both as rendered in the UI footer. The file is
+    committed because the frontend image is built from a ``./frontend`` context
+    with no ``.git`` in it, so a Docker build cannot read git itself.
 
 Stdlib only, no virtualenv: this spans backend, frontend, mcp and docs, so it
 must run from a bare checkout with nothing installed.
@@ -236,6 +237,25 @@ def read_stamp() -> dict[str, str]:
     return data if isinstance(data, dict) else {}
 
 
+def upstream_stamp(existing: dict[str, str]) -> dict[str, str]:
+    """Commit and date of the newest upstream commit this fork contains.
+
+    That is the merge base with ``upstream/main``: upstream's version number says
+    which release we sit on, this says which day of it. Deliberately does not
+    fetch - the merge base only moves when we merge upstream, and `make build`
+    must not need the network.
+    """
+    if not have_upstream():
+        print("note: no 'upstream' remote - keeping the previous upstream stamp (run 'make fork-setup')")
+        return {k: existing[k] for k in ("upstreamCommit", "upstreamUpdatedAt") if k in existing}
+
+    base = git("merge-base", f"{UPSTREAM_REMOTE}/{UPSTREAM_BRANCH}", "HEAD")
+    return {
+        "upstreamCommit": git("rev-parse", "--short", base),
+        "upstreamUpdatedAt": git("log", "-1", "--format=%cI", base),
+    }
+
+
 def cmd_stamp(args: argparse.Namespace) -> int:
     existing = read_stamp()
     version = args.set_version or existing.get("version") or DEFAULT_FORK_VERSION
@@ -248,6 +268,7 @@ def cmd_stamp(args: argparse.Namespace) -> int:
         # moved, and rebuilding an unchanged tree must not bump the date.
         "updatedAt": git("log", "-1", "--format=%cI", "HEAD"),
         "stampedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        **upstream_stamp(existing),
     }
 
     dirty = bool(git("status", "--porcelain").strip())
@@ -255,7 +276,9 @@ def cmd_stamp(args: argparse.Namespace) -> int:
         print("warning: working tree is dirty - stamping the last commit, not your uncommitted changes")
 
     STAMP.write_text(json.dumps(stamp, indent=2) + "\n")
-    print(f"wrote {STAMP.relative_to(REPO_ROOT)}: v{version} @ {stamp['commit']} ({stamp['updatedAt']})")
+    print(f"wrote {STAMP.relative_to(REPO_ROOT)}: fork v{version} @ {stamp['commit']} ({stamp['updatedAt']})")
+    if stamp.get("upstreamCommit"):
+        print(f"  upstream @ {stamp['upstreamCommit']} ({stamp['upstreamUpdatedAt']})")
     rel = str(STAMP.relative_to(REPO_ROOT))
     if git("status", "--porcelain", "--", rel):
         print(f"commit it so the built image carries it: git add {rel}")
@@ -287,7 +310,8 @@ def main(argv: list[str] | None = None) -> int:
     p_stamp = sub.add_parser("stamp", help="refresh frontend/fork-version.json from git")
     p_stamp.add_argument(
         "--set-version",
-        help=f"set the fork version (semver) as well; keeps the current one when omitted (default: {DEFAULT_FORK_VERSION})",
+        help="set the fork version (semver) as well; keeps the current one when omitted "
+        f"(default: {DEFAULT_FORK_VERSION})",
     )
     p_stamp.set_defaults(func=cmd_stamp)
 

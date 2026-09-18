@@ -169,6 +169,8 @@ services:
         FORK_VERSION: ${FORK_VERSION:-}
         FORK_COMMIT: ${FORK_COMMIT:-}
         FORK_UPDATED_AT: ${FORK_UPDATED_AT:-}
+        UPSTREAM_COMMIT: ${UPSTREAM_COMMIT:-}
+        UPSTREAM_UPDATED_AT: ${UPSTREAM_UPDATED_AT:-}
     container_name: frontend__open-wearables
     image: open-wearables-frontend:latest
     pull_policy: never
