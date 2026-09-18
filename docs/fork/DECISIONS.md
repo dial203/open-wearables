@@ -136,3 +136,21 @@ Template:
 - **Why**: `.github/workflows/pr-review.yml` and `build.yml` plus
   `docker-compose.prod.yml` are fork-only infrastructure. The AI review step is
   deliberately non-blocking — it must never red a PR on timeout.
+
+## Fork version in the sidebar footer
+
+- **Area**: frontend, tooling
+- **Status**: active
+- **On conflict**: reconcile — keep upstream's `__APP_VERSION__` wiring, re-apply the
+  `__FORK_*` defines and `VersionFooter` on top
+- **Why**: the footer used to show one version, which on a fork is ambiguous: `v0.9.0`
+  is upstream's release, and says nothing about which fork build is running. It now
+  shows both, plus when the fork's code last moved, so a bug report from a running
+  instance identifies the exact tree. Upstream's version still comes from
+  `frontend/package.json` (synced, so never edited here); the fork's own version lives
+  in fork-only `frontend/fork-version.json` to keep it out of every upstream merge.
+  The frontend image is built from a `./frontend` context with `.git` excluded, so the
+  build cannot read git — hence the committed stamp, refreshed by `make fork-stamp`
+  (which `make build` runs). A host build or `pnpm dev` still prefers live git over the
+  stamp, so a stale stamp only ever affects a Docker image; `FORK_VERSION`,
+  `FORK_COMMIT` and `FORK_UPDATED_AT` override both for CI.

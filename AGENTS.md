@@ -100,7 +100,17 @@ something misbehaves the first question is whether the code is ours or theirs.
 make fork-setup   # once per clone: adds the 'upstream' remote and fetches it
 make fork-diff    # regenerate docs/fork/DIVERGENCE.md
 make fork-tag     # after merging upstream: tag HEAD as upstream-sync/<date>
+make fork-stamp   # refresh frontend/fork-version.json (v=0.2.0 to bump the fork version)
 ```
+
+The sidebar footer shows both versions: `OW` is upstream's release (from
+`frontend/package.json`, synced from upstream — do not edit it), `fork` is this fork's
+version and commit, and `updated` is the commit time of that commit. The fork's values
+come from `frontend/fork-version.json`, which is committed because the frontend image
+is built from a `./frontend` context with no `.git` in it. A host build reads git
+directly, so the stamp only needs refreshing before building an image — `make build`
+runs `make fork-stamp` for you, and bumping the fork version is
+`make fork-stamp v=<semver>`.
 
 - **[docs/fork/DIVERGENCE.md](docs/fork/DIVERGENCE.md)** - generated. Every file that
   differs from upstream, marked fork-only or modified. A file that is *not* listed is

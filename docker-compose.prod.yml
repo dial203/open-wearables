@@ -165,6 +165,10 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:?Set VITE_API_URL in your environment}
+        # Optional: override the committed frontend/fork-version.json stamp.
+        FORK_VERSION: ${FORK_VERSION:-}
+        FORK_COMMIT: ${FORK_COMMIT:-}
+        FORK_UPDATED_AT: ${FORK_UPDATED_AT:-}
     container_name: frontend__open-wearables
     image: open-wearables-frontend:latest
     pull_policy: never

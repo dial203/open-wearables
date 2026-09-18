@@ -18,6 +18,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { ROUTES } from '@/lib/constants/routes';
 import { Button } from '@/components/ui/button';
+import { VersionFooter } from '@/components/layout/version-footer';
 import {
   Sheet,
   SheetContent,
@@ -143,9 +144,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <LogOut className="h-4 w-4" />
           {isLoggingOut ? 'Logging out...' : 'Logout'}
         </Button>
-        <p className="px-3 text-[11px] text-muted-foreground/50 select-none">
-          v{__APP_VERSION__}
-        </p>
+        <VersionFooter />
       </div>
     </>
   );
