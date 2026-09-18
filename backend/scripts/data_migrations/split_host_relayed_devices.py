@@ -56,7 +56,7 @@ from app.schemas.enums import (
     ProviderName,
     infer_device_type_from_source_name,
 )
-from app.services.devices.identity import relaying_host_model
+from app.services.devices.identity import grouping_claim, relaying_host_model
 from app.utils.device_registry import relayed_brand
 
 ACTOR = "script:split_host_relayed_devices"
@@ -120,6 +120,34 @@ def _reclassify(
         )
     if device.label and device.label_source != LabelSource.MANUAL.value:
         device.label_source = LabelSource.AUTO.value
+
+
+def _add_grouping_claim(
+    db: Session, repo: DeviceRepository, target: Device, writer: str | None, host_model: str, provider: str
+) -> None:
+    """Give the device the key detection will look it up by on the next sync.
+
+    That key is the writer paired with the host it relayed through, not the writer
+    alone: one app syncing through two handsets would otherwise group across both, so
+    an Oura app relaying from a 2017 phone and a 2024 phone would land the two rings
+    on one device. See identity.grouping_claim.
+    """
+    if not writer:
+        return
+    claim = grouping_claim(provider, writer, host_model)
+    if claim is None or repo.add_claim(db, target, claim, actor=ACTOR) is None:
+        return
+    repo.record(
+        db,
+        user_id=target.user_id,
+        device_id=target.id,
+        action=DeviceHistoryAction.IDENTITY_ADDED,
+        field=claim.kind.value,
+        new_value=claim.value,
+        actor=ACTOR,
+        reason=f"Groups this writer's stream from {host_model}, and only from {host_model}",
+        meta={"route": claim.route, "confidence": claim.confidence.value},
+    )
 
 
 def _move_writer_claim(
@@ -234,10 +262,12 @@ def run(db: Session, dry_run: bool, user_id: UUID | None = None) -> int:
             new_device = repo.split(db, device, moved_ids, actor=ACTOR, reason=f"Relayed by {writer} on {host_model}")
             _reclassify(db, repo, new_device, writer, host_model, provider)
             _move_writer_claim(db, repo, device, new_device, writer)
+            _add_grouping_claim(db, repo, new_device, writer, host_model, provider)
             _drop_host_claims(db, repo, new_device, host_model)
 
         if stays is not None:
             _reclassify(db, repo, device, stays, host_model, provider)
+            _add_grouping_claim(db, repo, device, stays, host_model, provider)
         if not direct:
             _drop_host_claims(db, repo, device, host_model)
         # The session runs without autoflush, and the next device's lookups have to see

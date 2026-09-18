@@ -10,6 +10,7 @@ See scripts/data_migrations/split_host_relayed_devices.py.
 """
 
 import importlib.util
+from collections import defaultdict
 from pathlib import Path
 from types import ModuleType
 from uuid import uuid4
@@ -133,11 +134,22 @@ def test_no_claim_is_left_describing_the_handset(db: Session) -> None:
     run(db, dry_run=False)
 
     claims = db.query(DeviceIdentity).filter(DeviceIdentity.user_id == user.id).all()
-    assert {c.id_value for c in claims} == {"Muse", "Oura"}
-    # Each writer's claim sits on the device holding that writer's data source.
-    by_device = {c.device_id: c.id_value for c in claims}
+    # The writer's own claim, plus the key detection groups by: that key names the host,
+    # but only bound to one writer, so no other app on the phone can produce it. What
+    # must not survive is a claim on the bare handset string.
+    assert "iPhone 17 Pro" not in {c.id_value for c in claims}
+    assert {c.id_value for c in claims} == {
+        "Muse",
+        "Oura",
+        "Muse||iPhone 17 Pro",
+        "Oura||iPhone 17 Pro",
+    }
+    # Every claim sits on the device holding that writer's data source.
+    writers_by_device: dict[object, set[str]] = defaultdict(set)
+    for claim in claims:
+        writers_by_device[claim.device_id].add(claim.id_value.split("||")[0])
     for data_source in db.query(DataSource).filter(DataSource.user_id == user.id).all():
-        assert by_device[data_source.device_id] == data_source.source
+        assert writers_by_device[data_source.device_id] == {data_source.source}
 
 
 def test_a_hand_set_name_is_never_overwritten(db: Session) -> None:

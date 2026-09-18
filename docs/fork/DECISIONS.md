@@ -168,6 +168,44 @@ Template:
   `docker-compose.prod.yml` are fork-only infrastructure. The AI review step is
   deliberately non-blocking — it must never red a PR on timeout.
 
+## A relayed stream groups on the writer *and* the host, not the writer alone
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: `relaying_host_model()` already recognises that an aggregator's
+  `device_model` names the phone that ran the writing app, not the recorder. Keying
+  those sources on the writer alone fixes the pooling but introduces the opposite
+  error: one app's streams then group across every handset it ever synced through, so
+  an Oura app relaying from a 2017 phone and a 2024 phone reads as one ring — two
+  units merged, with no symptom, for anyone who replaced the ring in between. The key
+  is therefore the pair (`DeviceIdentityKind.AGGREGATOR_WRITER_MODEL`), which
+  over-splits instead; a person merges what is really one unit, and nothing was
+  pooled while they decided. A claim on the bare host string is never stored — every
+  app on that phone would make the same one.
+
+## An unrecognised HealthKit writer keeps its own name
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: `resolve_brand()` falls back to the platform when no brand table matches,
+  and that fallback used to overwrite the caller's `original_source_name`
+  unconditionally in `ensure_data_source`. Every third-party HealthKit writer the
+  tables had never heard of — Muse, AutoSleep, Eight Sleep, Hume — was therefore
+  filed as "Apple", losing the only field that named the recorder and making the
+  relay read as first-party Apple data. A recognised brand still wins over the
+  caller's value; a readable name now survives when nothing matched.
+
+## Deliberate detachment is a state, not an absence
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: `data_source.attribution_locked_at` distinguishes "a person unlinked this"
+  from "never attributed". Without it, detection re-attached an unlinked source on the
+  next sync and the unlink button looked broken. Fork-only column; an upstream merge
+  that rewrites `data_source` must carry it.
 ## Fork version in the sidebar footer
 
 - **Area**: frontend, tooling

@@ -28,6 +28,17 @@ class DeviceIdentityKind(StrEnum):
     MODEL_STRING = "model_string"  # provider's own model / device name
     SERIAL = "serial"  # only where a provider genuinely exposes one
 
+    # Writer plus hardware, for aggregator routes only: "Muse||iPhone15,3".
+    #
+    # On an aggregator route the model string names the *handset that synced the
+    # batch*, not the device that recorded it - HealthKit reports productType, so a
+    # Muse headband's nights arrive stamped "iPhone15,3" exactly like the Oura ring's
+    # and the WHOOP band's. Grouping on that model alone pools every app relaying
+    # through one phone into a single "device". Pairing it with the writing app's own
+    # identifier keeps the pool apart while still splitting two phones' relays, which
+    # is the over-split direction and therefore the safe one.
+    AGGREGATOR_WRITER_MODEL = "aggregator_writer_model"
+
 
 class IdentityConfidence(StrEnum):
     """How much weight an identity claim carries when grouping data sources.
@@ -54,6 +65,11 @@ STRONG_IDENTITY_KINDS: frozenset[DeviceIdentityKind] = frozenset(
         DeviceIdentityKind.SERIAL,
     }
 )
+
+# Separator inside an AGGREGATOR_WRITER_MODEL value. Two pipes, because a writer
+# name is free text ("JOSHUA A's Apple Watch") and a model string is a vendor code
+# ("iPhone15,3"); neither has ever been seen to contain this.
+WRITER_MODEL_SEPARATOR = "||"
 
 
 # Kinds that name the app that wrote the data rather than the hardware. They are the

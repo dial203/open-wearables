@@ -6,6 +6,7 @@ symptom, and may not surface until the data is in an analysis - at which point t
 samples cannot be separated again. These tests pin that asymmetry.
 """
 
+from datetime import UTC, datetime
 from typing import Never
 from uuid import uuid4
 
@@ -223,10 +224,17 @@ class TestRelayedThroughAPhone:
         assert source.device_model == "iPhone 17 Pro"
 
     def test_no_claim_describes_the_phone(self, db: Session, user: User) -> None:
-        """A host claim on one writer's device collides with the next writer's sync."""
+        """A host claim on one writer's device collides with the next writer's sync.
+
+        The grouping key names the host, but only ever bound to the writer that relayed
+        through it, so it is a value no other app can produce. What must not exist is a
+        claim on the bare host string, which every app on that phone would also make.
+        """
         _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
         values = {c.id_value for c in db.query(DeviceIdentity).filter(DeviceIdentity.user_id == user.id).all()}
-        assert values == {"Muse"}
+
+        assert "iPhone 17 Pro" not in values
+        assert values == {"Muse", "Muse||iPhone 17 Pro"}
 
     def test_the_writing_app_names_and_types_the_device(self, db: Session, user: User) -> None:
         """A starting point, not an answer - but a better one than "Apple phone"."""
@@ -276,3 +284,72 @@ class TestRelayedThroughAPhone:
         whoop = _ensure(db, user, ProviderName.HEALTH_CONNECT, "Pixel 9 Pro", "com.whoop.android")
 
         assert fitbit.device_id != whoop.device_id
+
+
+class TestOneWriterAcrossTwoHosts:
+    """The grouping key is the writer *and* the host, not the writer alone.
+
+    Keyed on the writer alone, one app's streams group across every handset it ever
+    synced through: an Oura app relaying through a 2017 phone and a 2024 phone reads
+    as one ring, and for someone who replaced the ring in between that is two units
+    merged with no symptom. The pair over-splits instead, which a person can undo.
+    """
+
+    def test_the_same_app_on_two_phones_is_two_devices(self, db: Session, user: User) -> None:
+        old_phone = _ensure(db, user, ProviderName.APPLE, "iPhone 12 Mini", "Oura")
+        new_phone = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Oura")
+
+        assert old_phone.device_id != new_phone.device_id
+
+    def test_the_same_app_on_one_phone_stays_one_device(self, db: Session, user: User) -> None:
+        """Re-syncing must be idempotent: the pair is a stable key, not a new one."""
+        first = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        again = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+
+        assert first.id == again.id
+        assert len(_devices(db, user)) == 1
+
+    def test_the_xml_import_literal_is_not_treated_as_a_writer(self, db: Session, user: User) -> None:
+        """`apple_health_xml` is the importer's stamp, identical on every row it writes.
+
+        Read as a writer id it gave every XML-imported source the same identity, so the
+        first device claimed it and every later one collided with that claim.
+        """
+        watch = _ensure(db, user, ProviderName.APPLE, "Watch7,5", "apple_health_xml")
+        phone = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "apple_health_xml")
+
+        assert watch.device_id != phone.device_id
+        values = {c.id_value for c in db.query(DeviceIdentity).filter(DeviceIdentity.user_id == user.id).all()}
+        assert "apple_health_xml" not in values
+
+
+class TestDeliberateDetachment:
+    def test_a_locked_source_is_not_re_attached(self, db: Session, user: User) -> None:
+        """Unlinking by hand has to outlive the next sync.
+
+        Attribution is write-once for a source that has a device, but a NULL device_id
+        otherwise reads as "never attributed" - so detection re-attached what someone
+        had just removed, and the detach lasted until the following batch.
+        """
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "Muse")
+        assert source.device_id is not None
+
+        source.device_id = None
+        source.attribution_locked_at = datetime.now(UTC)
+        db.flush()
+
+        resolved = DeviceDetectionService().resolve_for_data_source(db, source)
+
+        assert resolved is None
+        assert source.device_id is None
+
+    def test_clearing_the_lock_lets_detection_speak_again(self, db: Session, user: User) -> None:
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "Muse")
+        source.device_id = None
+        source.attribution_locked_at = None
+        db.flush()
+
+        resolved = DeviceDetectionService().resolve_for_data_source(db, source)
+
+        assert resolved is not None
+        assert source.device_id == resolved.id

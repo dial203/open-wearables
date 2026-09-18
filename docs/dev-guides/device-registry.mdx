@@ -72,6 +72,56 @@ on every export, identical across unrelated devices within one export. It is rej
 never stored as an identity.
 </Note>
 
+## The grouping key on a relay route is the writer *and* the host
+
+A third-party app writing into HealthKit or Health Connect generally passes no device
+record of its own, so the platform reports the phone that ran the app. A Muse headband,
+an Oura ring and a WHOOP band relaying through one iPhone therefore all arrive with the
+same `device_model`. `relaying_host_model()` recognises that case — relay route,
+third-party writer, model naming a phone — and the device it produces keeps the handset
+in `device.host_model_raw` rather than in `model_raw`.
+
+Grouping those sources on the **writer alone** would be the obvious next step, and it is
+wrong in one specific way: one app's streams would then group across every handset it
+ever synced through. An Oura app relaying from a 2017 phone and a 2024 phone reads as
+one ring — and for a person who replaced the ring in between, that is two units merged
+with no symptom. So the key is the pair, stored as an `aggregator_writer_model` claim:
+
+| Route | `source` | `device_model` | Grouping claim |
+|---|---|---|---|
+| apple | `Muse` | `iPhone 17 Pro` | `Muse\|\|iPhone 17 Pro` |
+| apple | `Oura` | `iPhone 17 Pro` | `Oura\|\|iPhone 17 Pro` |
+| apple | `Oura` | `iPhone 12 Mini` | `Oura\|\|iPhone 12 Mini` (a second device, deliberately) |
+| apple | `apple_health_xml` | `Watch7,5` | `Watch7,5` — the XML importer's own stamp is not a writer |
+| apple | `Ali's Watch` | `Apple Watch Ultra 3` | `Apple Watch Ultra 3` — a model naming real hardware still groups on its own |
+| garmin | `garmin` | `fenix 8` | `fenix 8` — a direct route never relays |
+
+The pair over-splits, which is the recoverable direction: a person sees two devices and
+merges them, and nothing was pooled while they decided. `POST
+/device-link-proposals/refresh` scores the candidates.
+
+<Warning>
+A claim on the bare host string must never exist. Every app on that phone would make
+the same one, so the first to sync would own it and every later sync would collide with
+it. The pair names the host only ever bound to one writer, which no other app can
+produce.
+</Warning>
+
+Existing rows are regrouped by
+`backend/scripts/data_migrations/split_host_relayed_devices.py`, which previews by
+default and writes with `--apply`.
+
+## A detach has to survive the next sync
+
+Attribution is write-once for a source that already has a device — but a NULL
+`device_id` says only "no device", which detection read as "never attributed". So the
+next sync re-attached whatever someone had just unlinked, and the detach silently
+undid itself.
+
+`data_source.attribution_locked_at` records that the empty state is deliberate.
+Detection skips a source carrying it; linking the source to a device again clears it.
+Unlinking through the API sets it.
+
 ## The governing rule: over-split, never over-merge
 
 A wrong split is visible and reversible — an extra device appears in the list and
@@ -260,3 +310,13 @@ stamps every row's `data_source.source` with one constant, so apps writing throu
 Health Connect are not separated at that level. Splitting it properly means rewriting
 existing Google `data_source` identities in a migration, which forks a user's history
 if done wrong. Devices still separate whenever `device_model` differs.
+
+**A writer relaying through two phones is two devices.** Deliberate: see the
+writer/host pair above. The evidence cannot separate "one headband, two handsets"
+from "two headbands", so a person decides.
+
+**An app writing under a *watch* model stays on the watch.** A sleep-scoring app
+deriving nights from an Apple Watch reports that watch's model, and nothing in the
+source name separates "SleepWatch" from the watch's own "Ali's Watch". Only a model
+naming a phone is treated as a relay host. Splitting those properly needs the writer's
+bundle id, which the SDK route carries and the XML export does not.

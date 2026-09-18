@@ -9,7 +9,7 @@ the point of the trail - "the label changed" is not useful six months later, "th
 label changed, by this person, for this reason" is.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from logging import Logger
 from uuid import UUID
 
@@ -155,6 +155,9 @@ class DeviceService:
             raise ResourceNotFoundError("data_source", data_source_id)
 
         self.repo.attach_data_source(db, data_source, device, actor=actor, reason=reason)
+        # An explicit link answers the question the lock was holding open, so detection
+        # is allowed to speak again for this source.
+        data_source.attribution_locked_at = None
         db.commit()
         return self._to_response(db, device)
 
@@ -176,6 +179,10 @@ class DeviceService:
             raise ValueError("that data source is not attributed to this device")
 
         self.repo.attach_data_source(db, data_source, None, actor=actor, reason=reason)
+        # Record that the empty state is deliberate. Without this the next sync
+        # re-attaches the source from the same claims that attributed it in the first
+        # place, and the detach reads as a feature that does not work.
+        data_source.attribution_locked_at = datetime.now(UTC)
         db.commit()
         return self._to_response(db, device)
 

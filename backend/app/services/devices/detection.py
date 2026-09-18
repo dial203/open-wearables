@@ -35,7 +35,6 @@ from app.models import DataSource, Device, EventRecord
 from app.repositories.device_repository import SYSTEM_ACTOR, DeviceRepository
 from app.schemas.enums import (
     STRONG_IDENTITY_KINDS,
-    WRITER_IDENTITY_KINDS,
     DeviceIdentityKind,
     DeviceType,
     IdentityConfidence,
@@ -79,7 +78,17 @@ class DeviceDetectionService:
         failure: the source stays unattributed until either a later sync carries a
         signal or a person links it by hand. Inventing a device from an empty
         signal would produce a registry entry that looks like evidence.
+
+        Also returns None when a person has deliberately detached this source.
+        Attribution is write-once for detection, but a NULL device_id otherwise reads
+        as "never attributed" and the next sync re-attaches what someone just removed
+        - the detach survives only until the following batch, which is indistinguishable
+        from the feature not working. ``attribution_locked_at`` is what makes the two
+        states different; linking the source again clears it.
         """
+        if data_source.attribution_locked_at is not None:
+            return None
+
         provider = getattr(data_source.provider, "value", data_source.provider)
         claims = list(claims_from_data_source(provider, data_source.device_model, data_source.source))
         if extra_claims:
@@ -163,18 +172,17 @@ class DeviceDetectionService:
 
         # The one case where the route's model string is not about this device at all:
         # a third-party app relaying through HealthKit or Health Connect reports the
-        # phone that ran it. Every app on that phone reports the same string, so
-        # grouping on it pools unrelated brands into one device.
+        # host that ran it. Every app on that host reports the same string, so grouping
+        # on it pools unrelated brands into one device.
         host_model = relaying_host_model(provider, data_source.device_model, data_source.source)
 
-        # 2. Within-route match on the grouping key. Normally the provider's own model
-        #    string, which reproduces what the provider itself asserts - "these rows
-        #    came from a fenix 8" - and nothing more. Where the model names the relaying
-        #    host, the writer id takes its place: it is the only value on the row that
-        #    varies per device, so it splits what the model string would have merged.
-        #    Either way the key is scoped to this route, so an identical value on
-        #    another route never pulls the two together.
-        kinds = WRITER_IDENTITY_KINDS if host_model is not None else {DeviceIdentityKind.MODEL_STRING}
+        # 2. Within-route match on the grouping key: the provider's own model string,
+        #    or - where a third-party app is relaying - that app paired with the host it
+        #    relayed through. identity.grouping_claim builds whichever applies and says
+        #    why the pair rather than the writer alone. Either way the key is scoped to
+        #    this route, so an identical value on another route never pulls the two
+        #    together.
+        kinds = {DeviceIdentityKind.AGGREGATOR_WRITER_MODEL, DeviceIdentityKind.MODEL_STRING}
         group_claim = next((c for c in claims if c.kind in kinds and c.route == provider), None)
         if group_claim is not None:
             found = self.repo.find_by_claim(db_session, user_id, group_claim)

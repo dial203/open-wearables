@@ -18,12 +18,18 @@ person confirms - see app/services/devices/detection.py.
 
 Several identifiers providers *do* send were previously parsed and dropped. They
 are collected here rather than at each call site so the rules stay in one place.
+
+One rule is route-dependent rather than provider-dependent: on an aggregator route
+the model string names the phone that relayed the data, not the device that recorded
+it, so it is paired with the writing app's identifier before it may group anything.
+See ``_grouping_claim``.
 """
 
 from dataclasses import dataclass
 from typing import Any
 
 from app.schemas.enums import (
+    WRITER_MODEL_SEPARATOR,
     DeviceIdentityKind,
     DeviceType,
     IdentityConfidence,
@@ -99,6 +105,44 @@ def garmin_summary_prefix(summary_id: str | None) -> str | None:
     return prefix or None
 
 
+def grouping_claim(
+    route: ProviderName | str,
+    writer_id: str | None,
+    model: str | None,
+) -> IdentityClaim | None:
+    """The one claim that may group data sources within this route.
+
+    On a maker's own API the model string names the unit that recorded the data, and
+    grouping on it reproduces what the provider already asserts.
+
+    On a relay route it does not: the platform reports the host that ran the writing
+    app, so a Muse headband, an Oura ring and a WHOOP band relayed through one iPhone
+    all report ``iPhone15,3``. Grouping on that pools them into one device - the
+    over-merge this package exists to prevent, reached through the rule meant to
+    prevent it.
+
+    The key there is the writer and the host together, not the writer alone. The
+    writer alone would group one app's streams across every host it ever synced
+    through, so an Oura app relaying through a 2017 phone and a 2024 phone reads as
+    one ring - and for a person who replaced the ring in between, that is two units
+    merged with no symptom. The pair over-splits instead: two hosts read as two
+    devices, a person sees both and merges them, and nothing was pooled while they
+    decided.
+    """
+    host_model = relaying_host_model(route, model, writer_id)
+    writer = writer_id.strip() if writer_id else None
+    cleaned_model = model.strip() if model else None
+
+    if host_model is not None and writer and cleaned_model:
+        return _claim(
+            route,
+            DeviceIdentityKind.AGGREGATOR_WRITER_MODEL,
+            f"{writer}{WRITER_MODEL_SEPARATOR}{cleaned_model}",
+            IdentityConfidence.WEAK,
+        )
+    return _claim(route, DeviceIdentityKind.MODEL_STRING, cleaned_model, IdentityConfidence.WEAK)
+
+
 def claims_from_sdk_source(provider: ProviderName | str, source: Any) -> list[IdentityClaim]:
     """Claims from a mobile SDK ``SourceInfo`` (HealthKit and Health Connect).
 
@@ -123,6 +167,9 @@ def claims_from_sdk_source(provider: ProviderName | str, source: Any) -> list[Id
     claims = [
         _claim(provider, DeviceIdentityKind.HEALTHKIT_DEVICE_ID, _device_id(source), IdentityConfidence.STRONG),
         _claim(provider, DeviceIdentityKind.HEALTHKIT_BUNDLE, writer_id, IdentityConfidence.WEAK),
+        # The grouping key: the writer/model pair on a relay route, the bare model
+        # everywhere else. See grouping_claim.
+        grouping_claim(provider, writer_id, model),
     ]
 
     # When the model describes the phone that relayed the data rather than the unit
@@ -211,14 +258,22 @@ _PROVIDER_LITERALS: frozenset[str] = frozenset(
         "google_health",
         "health_connect",
         "apple_health_sdk",
+        # What the Apple Health XML importer stamps on every row it writes
+        # (XMLService._create_record). Missing here, it read as a writing app, so every
+        # XML-imported source claimed the same constant identity: the first device to
+        # take it owned it, and every later one collided and raised a link proposal
+        # between unrelated hardware.
+        "apple_health_xml",
         "healthkit",
         "api_response",
         "webhook",
     }
 )
 
-# Routes whose `source` can hold a writing app's identifier at all.
-_WRITER_ID_ROUTES: frozenset[str] = frozenset(
+# Routes whose `source` can hold a writing app's identifier at all. These are also
+# exactly the routes where a model string names the relaying handset rather than the
+# recorder, so they are the routes _grouping_claim pairs writer with model on.
+WRITER_ID_ROUTES: frozenset[str] = frozenset(
     {
         ProviderName.HEALTH_CONNECT.value,
         ProviderName.GOOGLE_HEALTH.value,
@@ -277,7 +332,7 @@ def relaying_host_model(
     costs a merge nobody can see, so the doubt resolves toward firing.
     """
     provider_value = getattr(provider, "value", provider)
-    if provider_value not in _WRITER_ID_ROUTES or not device_model or not writer_id:
+    if provider_value not in WRITER_ID_ROUTES or not device_model or not writer_id:
         return None
     if not _is_writer_id(provider_value, writer_id):
         return None
@@ -290,7 +345,7 @@ def relaying_host_model(
 
 def _is_writer_id(provider_value: str, source: str) -> bool:
     """Whether `source` names an app that wrote the data, rather than the integration."""
-    if provider_value not in _WRITER_ID_ROUTES:
+    if provider_value not in WRITER_ID_ROUTES:
         return False
     normalized = source.strip().casefold()
     if normalized in _PROVIDER_LITERALS:
@@ -312,25 +367,24 @@ def claims_from_data_source(
     """
     provider_value = getattr(provider, "value", provider)
 
-    claims: list[IdentityClaim | None] = []
-    # Suppressed when the model names the phone that relayed the data rather than the
-    # device that recorded it: see relaying_host_model for why that string is not
-    # evidence about this device, and detection._resolve for what groups those sources
-    # instead.
-    if relaying_host_model(provider, device_model, source) is None:
-        claims.append(_claim(provider, DeviceIdentityKind.MODEL_STRING, device_model, IdentityConfidence.WEAK))
-
     # A Health Connect / HealthKit writer id, which only these routes carry. Elsewhere
     # `source` is the provider's own literal ("garmin", "google_health_api") and says
     # nothing about a device, so claiming it would give every one of that user's
     # devices on that route the same identity value - noise at best, and a grouping
     # key that means "same provider" if it were ever promoted.
-    if source and _is_writer_id(provider_value, source):
+    writer_id = source if source and _is_writer_id(provider_value, source) else None
+
+    # The grouping key. On a relay route the model names the host that ran the writing
+    # app, so it is paired with the writer rather than claimed on its own; see
+    # grouping_claim, and detection._resolve for what does the grouping.
+    claims: list[IdentityClaim | None] = [grouping_claim(provider, writer_id, device_model)]
+
+    if writer_id:
         kind = (
             DeviceIdentityKind.HEALTH_CONNECT_PACKAGE
             if provider_value in _ANDROID_ROUTES
             else DeviceIdentityKind.HEALTHKIT_BUNDLE
         )
-        claims.append(_claim(provider, kind, source, IdentityConfidence.WEAK))
+        claims.append(_claim(provider, kind, writer_id, IdentityConfidence.WEAK))
 
     return [c for c in claims if c is not None]
