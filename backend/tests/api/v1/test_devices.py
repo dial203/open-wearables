@@ -126,6 +126,70 @@ class TestEditing:
         assert response.status_code == 200
         assert response.json()["model_raw"] == "fenix 8"
 
+    def test_a_relayed_device_can_be_named_completely_by_hand(
+        self, client: TestClient, db: Session, user: User, auth_headers: dict[str, str]
+    ) -> None:
+        """The case the registry exists for: nothing the provider sent named this unit.
+
+        A Muse headband reaching Apple Health through its own app leaves a data source
+        whose only model string is the phone that ran the app, so brand, model and type
+        are all a person's to supply - and what they supply has to be what the device is
+        called afterwards.
+        """
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+
+        response = client.patch(
+            f"/api/v1/users/{user.id}/devices/{source.device_id}",
+            headers=auth_headers,
+            json={
+                "brand_display": "InteraXon",
+                "model_display": "Muse S Athena",
+                "device_type": DeviceType.EEG.value,
+                "serial": "MS-0041",
+                "firmware_version": "3.2.1",
+                "wear_location": "forehead",
+                "reason": "identified from the unit in the lab",
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["brand_display"] == "InteraXon"
+        assert body["model_display"] == "Muse S Athena"
+        assert body["serial"] == "MS-0041"
+        assert body["firmware_version"] == "3.2.1"
+        assert body["device_type"] == DeviceType.EEG.value
+        # The hand-set model is what the device is called from here on.
+        assert body["display_name"] == "Muse S Athena"
+        # The phone stays, as provenance rather than as this device's model.
+        assert body["host_model_raw"] == "iPhone 17 Pro"
+        assert body["model_raw"] is None
+
+        history = client.get(
+            f"/api/v1/users/{user.id}/devices-history",
+            headers=auth_headers,
+            params={"device_id": str(source.device_id)},
+        ).json()
+        updates = {e["field"] for e in history["items"] if e["action"] == "updated"}
+        assert {"brand_display", "model_display", "serial", "firmware_version"} <= updates
+
+    def test_a_phone_relaying_two_apps_yields_two_editable_devices(
+        self, client: TestClient, db: Session, user: User, auth_headers: dict[str, str]
+    ) -> None:
+        """Renaming one must not rename the other - the whole point of the split."""
+        muse = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        oura = _ensure(db, user, ProviderName.APPLE, "iPhone 17 Pro", "Oura")
+        assert muse.device_id != oura.device_id
+
+        client.patch(
+            f"/api/v1/users/{user.id}/devices/{muse.device_id}",
+            headers=auth_headers,
+            json={"label": "Muse S Athena"},
+        )
+        listed = client.get(f"/api/v1/users/{user.id}/devices", headers=auth_headers).json()
+        names = {d["id"]: d["display_name"] for d in listed["items"]}
+        assert names[str(muse.device_id)] == "Muse S Athena"
+        assert names[str(oura.device_id)] == "Oura"
+
     def test_retiring_records_the_effective_date(
         self, client: TestClient, db: Session, user: User, auth_headers: dict[str, str]
     ) -> None:

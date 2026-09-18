@@ -61,25 +61,58 @@ export interface DeviceNameParts {
   model_display: string | null;
   model_raw: string | null;
   brand: string | null;
+  /** Hand-set brand, which wins over the one derived from the provider's report. */
+  brand_display?: string | null;
+  /** `auto` when detection guessed the label rather than a person setting it. */
+  label_source?: string | null;
   device_type: string;
 }
 
 /**
  * What to call a device on screen, preferring the most human name available.
  *
- * A person's own label wins over everything, because it is the only one that can
- * say which of two identical units this is. `model_raw` is the provider's verbatim
- * string and is the last resort before a generic description — showing the raw code
- * beats guessing a friendlier name that might be wrong.
+ * A label a person set wins over everything, because it is the only one that can say
+ * which of two identical units this is. An auto label ranks below the hand-set model:
+ * detection names a relayed stream after the app that wrote it, and someone who then
+ * types the model has said something the guess did not. `model_raw` is the provider's
+ * verbatim string and is the last resort before a generic description — showing the raw
+ * code beats guessing a friendlier name that might be wrong.
+ *
+ * The server derives the same name into `Device.display_name`; this exists for the
+ * callers that hold the parts but not that field. Mirrors
+ * backend/app/utils/device_naming.device_display_name.
  */
 export function deviceDisplayName(
   device: DeviceNameParts,
   typeLabel: string
 ): string {
+  if (device.label && device.label_source !== 'auto') return device.label;
   return (
-    device.label ||
     device.model_display ||
+    device.label ||
     device.model_raw ||
-    `${device.brand ?? 'Unknown'} ${typeLabel}`
+    `${device.brand_display || device.brand || 'Unknown'} ${typeLabel}`
+  );
+}
+
+/** The fields that decide what a source's device is called on screen. */
+export interface SourceDeviceNameParts {
+  device_display_name?: string | null;
+  device_name?: string | null;
+}
+
+/**
+ * What to call the device behind a sample.
+ *
+ * The registry's name wins: `device_name` is derived from whatever model string the
+ * provider sent, and for a third-party app relaying through Apple Health or Health
+ * Connect that string names the phone that ran the app, not the hardware that
+ * recorded the data. Null when neither is known.
+ */
+export function sourceDeviceName(
+  source: SourceDeviceNameParts | null | undefined
+): string | null {
+  return (
+    source?.device_display_name?.trim() || source?.device_name?.trim() || null
   );
 }

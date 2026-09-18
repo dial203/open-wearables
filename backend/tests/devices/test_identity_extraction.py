@@ -10,6 +10,7 @@ from app.services.devices.identity import (
     claims_from_oura_ring_config,
     claims_from_sdk_source,
     garmin_summary_prefix,
+    relaying_host_model,
 )
 
 
@@ -149,3 +150,51 @@ class TestDataSourceBaseline:
 
     def test_blank_values_are_not_claims(self) -> None:
         assert claims_from_data_source(ProviderName.GARMIN, "   ", None) == []
+
+
+class TestRelayingHost:
+    """A model string that names the phone an app ran on is not about the device.
+
+    Every app on one handset reports the same string, so treating it as this device's
+    model groups unrelated brands together - the one over-merge a model string can
+    cause. These pin where that is recognised and where it deliberately is not.
+    """
+
+    def test_a_third_party_app_on_a_phone_names_the_host(self) -> None:
+        assert relaying_host_model(ProviderName.APPLE, "iPhone 17 Pro", "Muse") == "iPhone 17 Pro"
+        assert (
+            relaying_host_model(ProviderName.HEALTH_CONNECT, "Pixel 9 Pro", "com.fitbit.FitbitMobile") == "Pixel 9 Pro"
+        )
+
+    def test_the_platform_writing_about_its_own_handset_is_the_handset(self) -> None:
+        assert relaying_host_model(ProviderName.APPLE, "iPhone 17 Pro", "com.apple.health") is None
+        assert relaying_host_model(ProviderName.APPLE, "iPhone 17 Pro", "Michael's iPhone") is None
+        assert relaying_host_model(ProviderName.HEALTH_CONNECT, "Pixel 9 Pro", "com.android.healthconnect") is None
+
+    def test_real_wearable_hardware_is_never_treated_as_a_host(self) -> None:
+        assert relaying_host_model(ProviderName.APPLE, "Watch7,5", "Ali's Watch") is None
+        assert relaying_host_model(ProviderName.APPLE, "Oura Ring Gen3", "Oura") is None
+
+    def test_a_direct_route_is_never_treated_as_a_relay(self) -> None:
+        """Only aggregators relay. A maker's own API reporting a phone means a phone."""
+        assert relaying_host_model(ProviderName.GARMIN, "fenix 8", "garmin") is None
+
+    def test_the_host_s_claims_are_not_emitted(self) -> None:
+        """A host claim would be handed to whichever app synced first and collide after."""
+        claims = claims_from_data_source(ProviderName.APPLE, "iPhone 17 Pro", "Muse")
+        assert _by_kind(claims, DeviceIdentityKind.MODEL_STRING) is None
+        assert _by_kind(claims, DeviceIdentityKind.HEALTHKIT_BUNDLE).value == "Muse"
+
+    def test_the_sdk_path_suppresses_the_product_type_too(self) -> None:
+        source = SimpleNamespace(
+            device_id=None,
+            bundle_identifier="com.interaxon.muse",
+            product_type="iPhone18,1",
+            device_model="iPhone 17 Pro",
+            device_name=None,
+            app_id=None,
+        )
+        claims = claims_from_sdk_source(ProviderName.APPLE, source)
+        assert _by_kind(claims, DeviceIdentityKind.MODEL_STRING) is None
+        assert _by_kind(claims, DeviceIdentityKind.APPLE_PRODUCT_TYPE) is None
+        assert _by_kind(claims, DeviceIdentityKind.HEALTHKIT_BUNDLE).value == "com.interaxon.muse"

@@ -353,14 +353,35 @@ export interface SleepStage {
 }
 
 export type DeviceType =
-  'watch' | 'band' | 'ring' | 'phone' | 'scale' | 'other' | 'unknown';
+  | 'chest_strap'
+  | 'eeg'
+  | 'headband'
+  | 'watch'
+  | 'band'
+  | 'ring'
+  | 'phone'
+  | 'scale'
+  | 'other'
+  | 'unknown';
 
 export interface SourceMetadata {
   provider: string;
   source: string | null;
+  /** The provider's own model string, verbatim. On a relayed stream this is the phone. */
   device: string | null;
+  /** Marketing name derived from `device`. Still describes whatever `device` named. */
   device_name: string | null;
   device_type: DeviceType | null;
+  /** The attributed physical unit, null when the source is not attributed to one. */
+  device_id?: string | null;
+  device_label?: string | null;
+  /**
+   * What to call the unit: its label, else its hand-set model, else the provider's
+   * model string. Prefer this over `device_name` — for a third-party app relaying
+   * through Apple Health or Health Connect, `device_name` is the phone that ran the
+   * app, not the hardware that recorded the data.
+   */
+  device_display_name?: string | null;
 }
 
 export interface SleepSession {
