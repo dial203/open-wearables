@@ -206,3 +206,23 @@ Template:
   from "never attributed". Without it, detection re-attached an unlinked source on the
   next sync and the unlink button looked broken. Fork-only column; an upstream merge
   that rewrites `data_source` must carry it.
+## Fork version in the sidebar footer
+
+- **Area**: frontend, tooling
+- **Status**: active
+- **On conflict**: reconcile — keep upstream's `__APP_VERSION__` wiring, re-apply the
+  `__FORK_*` defines and `VersionFooter` on top
+- **Why**: the footer used to show one version, which on a fork is ambiguous: `v0.9.0`
+  is upstream's release, and says nothing about which fork build is running. It now
+  shows both, each with the date its code last moved, so a bug report from a running
+  instance identifies the exact tree. Upstream's date is the merge base with
+  `upstream/main` rather than a release date: two syncs a month apart are both
+  "v0.9.0", and the question being asked is how old the upstream code in this build
+  is. Upstream's version still comes from
+  `frontend/package.json` (synced, so never edited here); the fork's own version lives
+  in fork-only `frontend/fork-version.json` to keep it out of every upstream merge.
+  The frontend image is built from a `./frontend` context with `.git` excluded, so the
+  build cannot read git — hence the committed stamp, refreshed by `make fork-stamp`
+  (which `make build` runs). A host build or `pnpm dev` still prefers live git over the
+  stamp, so a stale stamp only ever affects a Docker image; `FORK_VERSION`,
+  `FORK_COMMIT` and `FORK_UPDATED_AT` override both for CI.

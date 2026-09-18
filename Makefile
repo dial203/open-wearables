@@ -9,6 +9,7 @@ help:	## Show this help.
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##//'
 
 build:	## Builds docker image
+	$(MAKE) fork-stamp
 	$(DOCKER_COMMAND) build --no-cache
 
 run:	## Runs the environment in detached mode
@@ -58,3 +59,6 @@ fork-diff:  ## Regenerate docs/fork/DIVERGENCE.md from upstream
 
 fork-tag:  ## Tag HEAD as an upstream sync point. Use 'make fork-tag d=2026-09-17'
 	python3 scripts/fork/fork_tools.py tag $(if $(d),--date $(d),)
+
+fork-stamp:  ## Refresh frontend/fork-version.json (fork version + last-updated shown in the UI). Use 'make fork-stamp v=0.2.0' to bump the version
+	python3 scripts/fork/fork_tools.py stamp $(if $(v),--set-version $(v),)
