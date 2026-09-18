@@ -13,7 +13,12 @@ from app.repositories.repositories import CrudRepository
 from app.schemas.enums import DeviceType, ProviderName, infer_device_type_from_model, infer_device_type_from_source_name
 from app.schemas.model_crud.data_priority import DataSourceCreate, DataSourceUpdate
 from app.utils.connection_context import get_active_connection_id
-from app.utils.device_registry import humanize_device_model, resolve_brand
+from app.utils.device_registry import (
+    PROVIDER_BRANDS,
+    humanize_device_model,
+    looks_like_writer_id,
+    resolve_brand_signal,
+)
 
 if TYPE_CHECKING:
     from app.services.devices.identity import IdentityClaim
@@ -154,6 +159,52 @@ class DataSourceRepository(
             synchronize_session=False,
         )
 
+    @staticmethod
+    def _resolve_original_source_name(
+        provider: ProviderName,
+        device_model: str | None,
+        source: str | None,
+        caller_value: str | None,
+    ) -> str | None:
+        """The brand or app to file this source under.
+
+        Non-destructive tagging: name the maker (e.g. Oura data arriving via Apple
+        Health) so one brand groups across ingest paths.
+
+        A brand the tables actually recognise wins over whatever the caller passed,
+        because the one caller that supplies a value (event_record_repository) hands us
+        the raw `creator.source`, which may be a package id like "com.oura.oura" rather
+        than a brand. Honouring that first would put a literal where consumers expect
+        "Oura", and this value feeds both device-type inference and
+        resolve_ingestion_route(), which compares it against the platform brand.
+
+        When no table matched, a readable caller value is kept. Falling straight
+        through to the platform brand is what made every unrecognised HealthKit writer
+        - Muse, AutoSleep, Eight Sleep, Hume - read as "Apple": it overwrote the only
+        field naming the recorder, and made a relay read as first-party Apple data.
+
+        A bare identifier ("com.some.app") yields to the platform brand, which is the
+        case the fallback was written for - but only when there *is* one. For a
+        provider with no brand of its own, storing the identifier beats storing NULL,
+        since nothing else on the row names the writer.
+        """
+        matched = resolve_brand_signal(provider, device_model, source)
+        if matched:
+            return matched
+
+        readable = [c.strip() for c in (caller_value, source) if c and c.strip() and not looks_like_writer_id(c)]
+        if readable:
+            return readable[0]
+
+        platform_brand = PROVIDER_BRANDS.get(provider)
+        if platform_brand:
+            return platform_brand
+
+        for candidate in (caller_value, source):
+            if candidate and candidate.strip():
+                return candidate.strip()
+        return None
+
     def ensure_data_source(
         self,
         db_session: DbSession,
@@ -181,19 +232,7 @@ class DataSourceRepository(
         if device_model is None:
             device_model = self._connection_device_label(db_session, user_id, provider, user_connection_id)
 
-        # Non-destructive brand tagging: derive a canonical brand (e.g. Oura data
-        # arriving via Apple/Google Health) so the same brand groups across ingest paths.
-        #
-        # resolve_brand() wins over whatever the caller passed. The one caller that
-        # supplies original_source_name (event_record_repository) hands us the raw
-        # `creator.source` — a package id or provider key like "com.oura.oura", not a
-        # brand — so honouring the argument first would skip resolution entirely and
-        # put a literal where consumers expect "Oura". That also feeds device-type
-        # inference below and resolve_ingestion_route(), which compares this value
-        # against the platform brand: a raw literal never matches, so Apple's own data
-        # inside Apple Health would read as relayed rather than first-party.
-        # The caller's value remains the fallback for what resolve_brand() can't name.
-        original_source_name = resolve_brand(provider, device_model, source) or original_source_name
+        original_source_name = self._resolve_original_source_name(provider, device_model, source, original_source_name)
 
         existing = self.get_by_connection_identity(
             db_session, user_id, provider, device_model, source, user_connection_id
@@ -458,8 +497,11 @@ class DataSourceRepository(
             for user_id, device_model, source in missing:
                 # Mirror ensure_data_source: derive the canonical brand here too, so rows
                 # first created by the bulk path aren't left with a NULL brand, and always
-                # store a device_type rather than NULL.
-                original_source_name = resolve_brand(provider, device_model, source)
+                # store a device_type rather than NULL. Same rule as the single path,
+                # including keeping a readable writer name the brand tables do not know -
+                # otherwise one Muse source would read "Muse" and the other "Apple"
+                # depending only on which path happened to create the row first.
+                original_source_name = self._resolve_original_source_name(provider, device_model, source, None)
                 device_type = self._infer_device_type(device_model, original_source_name, source)
                 values.append(
                     {

@@ -93,6 +93,8 @@ class PriorityService:
                         siblings.get(str(getattr(ds.provider, "value", ds.provider)), 0),
                     ),
                 ),
+                device_id=ds.device_id,
+                attribution_locked_at=ds.attribution_locked_at,
                 account_label=self._account_label(accounts.get(ds.user_connection_id)),
                 account_email=getattr(accounts.get(ds.user_connection_id), "account_email", None),
                 account_type=getattr(accounts.get(ds.user_connection_id), "account_type", None),

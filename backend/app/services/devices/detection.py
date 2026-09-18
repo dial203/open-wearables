@@ -38,10 +38,12 @@ from app.schemas.enums import (
     DeviceIdentityKind,
     DeviceType,
     IdentityConfidence,
+    LabelSource,
     ProviderName,
+    infer_device_type_from_source_name,
 )
-from app.services.devices.identity import IdentityClaim, claims_from_data_source
-from app.utils.device_registry import humanize_device_model, resolve_brand
+from app.services.devices.identity import IdentityClaim, claims_from_data_source, relaying_host_model
+from app.utils.device_registry import humanize_device_model, relayed_brand, resolve_brand
 
 log = getLogger(__name__)
 
@@ -76,7 +78,17 @@ class DeviceDetectionService:
         failure: the source stays unattributed until either a later sync carries a
         signal or a person links it by hand. Inventing a device from an empty
         signal would produce a registry entry that looks like evidence.
+
+        Also returns None when a person has deliberately detached this source.
+        Attribution is write-once for detection, but a NULL device_id otherwise reads
+        as "never attributed" and the next sync re-attaches what someone just removed
+        - the detach survives only until the following batch, which is indistinguishable
+        from the feature not working. ``attribution_locked_at`` is what makes the two
+        states different; linking the source again clears it.
         """
+        if data_source.attribution_locked_at is not None:
+            return None
+
         provider = getattr(data_source.provider, "value", data_source.provider)
         claims = list(claims_from_data_source(provider, data_source.device_model, data_source.source))
         if extra_claims:
@@ -158,38 +170,93 @@ class DeviceDetectionService:
             conflicts.update(d_id for d_id in matched if d_id != chosen.id)
             return chosen, conflicts
 
-        # 2. Within-route model match. Reproduces what the provider itself asserts -
-        #    "these rows came from a fenix 8" - and nothing more. Scoped to this route
-        #    so an identical model string on another route never pulls the two together.
-        model_claim = next(
-            (c for c in claims if c.kind is DeviceIdentityKind.MODEL_STRING and c.route == provider),
-            None,
-        )
-        if model_claim is not None:
-            found = self.repo.find_by_claim(db_session, user_id, model_claim)
+        # The one case where the route's model string is not about this device at all:
+        # a third-party app relaying through HealthKit or Health Connect reports the
+        # host that ran it. Every app on that host reports the same string, so grouping
+        # on it pools unrelated brands into one device.
+        host_model = relaying_host_model(provider, data_source.device_model, data_source.source)
+
+        # 2. Within-route match on the grouping key: the provider's own model string,
+        #    or - where a third-party app is relaying - that app paired with the host it
+        #    relayed through. identity.grouping_claim builds whichever applies and says
+        #    why the pair rather than the writer alone. Either way the key is scoped to
+        #    this route, so an identical value on another route never pulls the two
+        #    together.
+        kinds = {DeviceIdentityKind.AGGREGATOR_WRITER_MODEL, DeviceIdentityKind.MODEL_STRING}
+        group_claim = next((c for c in claims if c.kind in kinds and c.route == provider), None)
+        if group_claim is not None:
+            found = self.repo.find_by_claim(db_session, user_id, group_claim)
             if found is not None:
                 return found, conflicts
 
-        # 3. Nothing matched. Create, but only when a model string is actually known:
-        #    a device built purely from an app bundle id would be "whatever writes as
-        #    com.ouraring.oura", which is a writer, not a unit.
-        if model_claim is None:
+        # 3. Nothing matched. Create, but only when the route said something about the
+        #    hardware: a device built purely from an app bundle id would be "whatever
+        #    writes as com.ouraring.oura", which is a writer, not a unit. A relayed
+        #    stream clears that bar - the platform did report hardware, just the wrong
+        #    piece of it - and a source carrying no model and no host stays unattributed
+        #    until a person links it, which is a normal resting state.
+        if group_claim is None:
             return None, conflicts
 
-        brand = resolve_brand(_provider_enum(provider), data_source.device_model, data_source.source)
-        device_type = data_source.device_type or DeviceType.UNKNOWN.value
-        device = self.repo.create(
+        if host_model is not None:
+            device = self._create_relayed(db_session, user_id, provider, data_source, host_model)
+        else:
+            device = self.repo.create(
+                db_session,
+                user_id=user_id,
+                device_type=data_source.device_type or DeviceType.UNKNOWN.value,
+                brand=resolve_brand(_provider_enum(provider), data_source.device_model, data_source.source),
+                model_raw=data_source.device_model,
+                model_display=humanize_device_model(data_source.device_model),
+                actor=SYSTEM_ACTOR,
+                reason=f"First seen on the {provider} route",
+                detected=True,
+            )
+        return device, conflicts
+
+    def _create_relayed(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        data_source: DataSource,
+        host_model: str,
+    ) -> Device:
+        """Create the device behind a stream whose only model string named the relay host.
+
+        Everything the platform reported about hardware describes the phone, so none of
+        it is written where it would read as this device's own: ``model_raw`` stays
+        NULL and the phone goes to ``host_model_raw``. What is left is the writing
+        app's name, which is a weak but honest signal - it is the brand the person
+        installed - and the device it produces is a starting point to correct rather
+        than an answer. Correcting it is the point: ``model_display``, ``brand_display``
+        and the type are all editable, and a hand-set label pins the device against
+        later detection.
+        """
+        writer = data_source.source
+        brand = relayed_brand(_provider_enum(provider), writer)
+
+        # Not data_source.device_type: that was inferred from the host's model and says
+        # "phone" for every relayed stream. The writer's name is the only description of
+        # the hardware left, and UNKNOWN where it names nothing.
+        device_type = infer_device_type_from_source_name(writer)
+
+        return self.repo.create(
             db_session,
             user_id=user_id,
             device_type=device_type,
             brand=brand,
-            model_raw=data_source.device_model,
-            model_display=humanize_device_model(data_source.device_model),
+            model_raw=None,
+            model_display=None,
+            host_model_raw=host_model,
+            # The writing app's name, as an auto label: it is what the person recognises
+            # in the list, and being auto it never blocks a hand-set name.
+            label=writer,
+            label_source=LabelSource.AUTO,
             actor=SYSTEM_ACTOR,
-            reason=f"First seen on the {provider} route",
+            reason=f"Relayed through {provider} by {writer or 'an unnamed app'} on {host_model}",
             detected=True,
         )
-        return device, conflicts
 
     # --- cross-route proposals ---------------------------------------------------
 

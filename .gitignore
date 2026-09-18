@@ -175,5 +175,12 @@ CLAUDE.local.md
 .claude/
 *.local.mdc
 
+# Exception: generated OpenAPI spec that feeds the docs API Reference
+!docs/openapi.json
+
 # Exception: AI tool configs that should be tracked
 !.gemini/settings.json
+
+# Exception: the fork's version stamp is rendered in the UI, so it has to ship
+# inside the frontend Docker build context (which has no .git to read).
+!frontend/fork-version.json

@@ -9,6 +9,7 @@ import {
   DeviceTypeIcon,
 } from '@/components/common/device-type';
 import { cn } from '@/lib/utils';
+import { sourceDeviceName } from '@/lib/utils/device';
 import type { SourceMetadata } from '@/lib/api/types';
 import {
   ACCOUNT_TYPE_CLASSES,
@@ -44,7 +45,14 @@ export function DataSourceInfo({
   const showAccount = account?.hasSiblings ?? false;
 
   const { label: deviceTypeLabel } = deviceTypeInfo(source.device_type);
-  const deviceName = source.device_name?.trim() || null;
+  // The registry's name for the unit, falling back to whatever the provider's model
+  // string described. Those differ whenever an app relayed through Apple Health or
+  // Health Connect: there the provider's string is the phone that ran the app.
+  const deviceName = sourceDeviceName(source);
+  const reportedModel = source.device?.trim() || null;
+  const isRelayed = Boolean(
+    reportedModel && source.device_id && reportedModel !== deviceName
+  );
   // Native API integrations store the provider key as the source ("garmin"/"garmin"),
   // so it only carries information for HealthKit / Health Connect writers.
   const showSource =
@@ -127,9 +135,10 @@ export function DataSourceInfo({
               <div>
                 {deviceTypeLabel}: {deviceName}
               </div>
-              {source.device && source.device !== deviceName && (
+              {reportedModel && reportedModel !== deviceName && (
                 <div className="text-muted-foreground">
-                  Model: {source.device}
+                  {isRelayed ? 'Reported by provider as' : 'Model'}:{' '}
+                  {reportedModel}
                 </div>
               )}
             </div>

@@ -24,7 +24,7 @@ open-wearables/
 
 | Backend | Frontend | MCP |
 |---------|----------|-----|
-| Python 3.13+ | React 19 + TypeScript | Python 3.13+ |
+| Python 3.14+ | React 19 + TypeScript | Python 3.13+ |
 | FastAPI | TanStack Router/Query | FastMCP |
 | SQLAlchemy 2.0 | React Hook Form + Zod | httpx |
 | PostgreSQL | Tailwind + shadcn/ui | |
@@ -100,7 +100,27 @@ something misbehaves the first question is whether the code is ours or theirs.
 make fork-setup   # once per clone: adds the 'upstream' remote and fetches it
 make fork-diff    # regenerate docs/fork/DIVERGENCE.md
 make fork-tag     # after merging upstream: tag HEAD as upstream-sync/<date>
+make fork-stamp   # refresh frontend/fork-version.json (v=0.2.0 to bump the fork version)
 ```
+
+The sidebar footer shows both versions, each with the date its code last moved:
+
+```
+OW    v0.9.0 · ff8527a      # upstream's release, and the newest upstream commit merged in
+      2026-09-17 14:30 UTC
+fork  v0.1.0 · fa819b7      # this fork's version, and the commit built from
+      2026-09-18 18:33 UTC
+```
+
+Upstream's version comes from `frontend/package.json` (synced from upstream — do not
+edit it) and its date from the merge base with `upstream/main`, so two syncs a month
+apart are distinguishable even though both are "v0.9.0". The fork's values come from
+`frontend/fork-version.json`, which is committed because the frontend image is built
+from a `./frontend` context with no `.git` in it. A host build reads git directly, so
+the stamp only needs refreshing before building an image — `make build` runs
+`make fork-stamp` for you, and bumping the fork version is `make fork-stamp v=<semver>`.
+Stamping the upstream date needs the `upstream` remote (`make fork-setup`); without it
+the previous value is kept.
 
 - **[docs/fork/DIVERGENCE.md](docs/fork/DIVERGENCE.md)** - generated. Every file that
   differs from upstream, marked fork-only or modified. A file that is *not* listed is

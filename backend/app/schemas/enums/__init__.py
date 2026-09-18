@@ -16,6 +16,8 @@ from .data_granularity import (
 )
 from .device_registry import (
     STRONG_IDENTITY_KINDS,
+    WRITER_IDENTITY_KINDS,
+    WRITER_MODEL_SEPARATOR,
     DeviceHistoryAction,
     DeviceIdentityKind,
     IdentityConfidence,
@@ -62,6 +64,8 @@ __all__ = [
     "DeviceIdentityKind",
     "IdentityConfidence",
     "STRONG_IDENTITY_KINDS",
+    "WRITER_IDENTITY_KINDS",
+    "WRITER_MODEL_SEPARATOR",
     "LabelSource",
     "DeviceHistoryAction",
     "LinkProposalStatus",

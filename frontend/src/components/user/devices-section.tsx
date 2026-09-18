@@ -44,6 +44,7 @@ import {
   useCreateDevice,
   useUpdateDevice,
   useRetireDevice,
+  useLinkDataSource,
   useUnlinkDataSource,
   useSplitDevice,
   useMergeDevices,
@@ -56,9 +57,13 @@ import type {
   Device,
   DeviceDataSource,
 } from '@/lib/api/services/device.service';
+import { useUserDataSources } from '@/hooks/api/use-priorities';
+import type { DataSource } from '@/lib/api/services/priority.service';
 
 const DEVICE_TYPES = [
   'chest_strap',
+  'eeg',
+  'headband',
   'watch',
   'band',
   'ring',
@@ -71,12 +76,21 @@ const DEVICE_TYPES = [
 // A stable empty array, so the `?? []` fallback below does not hand useMemo a new
 // identity on every render and re-run the map build for nothing.
 const NO_DEVICES: Device[] = [];
+const NO_SOURCES: DataSource[] = [];
 
-/** What to call a device on screen. The rule itself lives in lib/utils/device. */
+/**
+ * What to call a device on screen.
+ *
+ * The server derives the same name into `display_name`; the local rule (lib/utils/device)
+ * is the fallback for a response served before that field existed.
+ */
 function deviceName(device: Device): string {
-  return deviceDisplayName(
-    { ...device, device_type: String(device.device_type) },
-    deviceTypeInfo(device.device_type).label
+  return (
+    device.display_name ||
+    deviceDisplayName(
+      { ...device, device_type: String(device.device_type) },
+      deviceTypeInfo(device.device_type).label
+    )
   );
 }
 
@@ -92,8 +106,10 @@ export function DevicesSection({ userId }: { userId: string }) {
     includeRetired
   );
   const { data: proposals } = useLinkProposals(userId);
+  const { data: allSources } = useUserDataSources(userId);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [linking, setLinking] = useState<DataSource | null>(null);
   const [editing, setEditing] = useState<Device | null>(null);
   const [splitting, setSplitting] = useState<Device | null>(null);
   const [merging, setMerging] = useState<Device | null>(null);
@@ -103,6 +119,13 @@ export function DevicesSection({ userId }: { userId: string }) {
 
   const devices = data?.items ?? NO_DEVICES;
   const byId = useMemo(() => new Map(devices.map((d) => [d.id, d])), [devices]);
+
+  // Sources belonging to no device. Normal for a provider that identifies no
+  // hardware, and the only place a source someone detached can be put back.
+  const unattributed = useMemo(
+    () => (allSources ?? NO_SOURCES).filter((s) => !s.device_id),
+    [allSources]
+  );
 
   if (isLoading) return <LoadingSpinner size="lg" />;
   if (error) {
@@ -199,10 +222,21 @@ export function DevicesSection({ userId }: { userId: string }) {
         </div>
       )}
 
+      <UnattributedSources
+        sources={unattributed}
+        onLink={(source) => setLinking(source)}
+      />
+
       <CreateDeviceDialog
         userId={userId}
         open={createOpen}
         onOpenChange={setCreateOpen}
+      />
+      <LinkDataSourceDialog
+        userId={userId}
+        source={linking}
+        devices={devices}
+        onClose={() => setLinking(null)}
       />
       <EditDeviceDialog
         userId={userId}
@@ -226,6 +260,164 @@ export function DevicesSection({ userId }: { userId: string }) {
         onClose={() => setHistoryFor(null)}
       />
     </div>
+  );
+}
+
+/**
+ * Data sources attributed to no device.
+ *
+ * Detection only groups what a provider itself identifies, so an unattributed source
+ * is a normal resting state rather than an error - but until this panel existed there
+ * was no way back from one. Unlinking was reachable from every device card and linking
+ * was reachable from nowhere, so detaching a source by hand removed it from the
+ * registry for good, however deliberate or accidental the detach was.
+ */
+function UnattributedSources({
+  sources,
+  onLink,
+}: {
+  sources: DataSource[];
+  onLink: (source: DataSource) => void;
+}) {
+  if (sources.length === 0) return null;
+
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h3 className="text-sm font-medium">
+          Unattributed sources ({sources.length})
+        </h3>
+        <p className="text-xs text-muted-foreground">
+          Data still arrives and is stored; it just is not filed under a device
+          yet.
+        </p>
+      </div>
+
+      <ul className="mt-3 space-y-1">
+        {sources.map((source) => (
+          <li
+            key={source.id}
+            className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+          >
+            <Link2Off className="h-3 w-3 flex-shrink-0" />
+            <span className="truncate">
+              {source.provider}
+              {source.source ? ` · ${source.source}` : ''}
+              {source.device_model ? ` · ${source.device_model}` : ''}
+            </span>
+            {source.attribution_locked_at && (
+              <Badge
+                variant="outline"
+                title="Detached by hand. Detection leaves it alone until you link it again."
+              >
+                detached
+              </Badge>
+            )}
+            <button
+              type="button"
+              onClick={() => onLink(source)}
+              className="ml-auto inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+              title="Attribute this source to a device"
+            >
+              <Link2 className="h-3 w-3" />
+              Link
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/** Attribute one data source to an existing device. */
+function LinkDataSourceDialog({
+  userId,
+  source,
+  devices,
+  onClose,
+}: {
+  userId: string;
+  source: DataSource | null;
+  devices: Device[];
+  onClose: () => void;
+}) {
+  const link = useLinkDataSource(userId);
+  const [deviceId, setDeviceId] = useState('');
+  const [reason, setReason] = useState('');
+
+  const close = () => {
+    setDeviceId('');
+    setReason('');
+    onClose();
+  };
+
+  return (
+    <Dialog open={!!source} onOpenChange={(open) => !open && close()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Link a data source</DialogTitle>
+          <DialogDescription>
+            Attribution groups data sources; it never combines them. The samples
+            are untouched, and a direct read and an aggregator relay of the same
+            unit stay separate so you can still compare them.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            {source?.provider}
+            {source?.source ? ` · ${source.source}` : ''}
+            {source?.device_model ? ` · ${source.device_model}` : ''}
+          </div>
+          <div>
+            <Label htmlFor="link-device">Device</Label>
+            <select
+              id="link-device"
+              value={deviceId}
+              onChange={(e) => setDeviceId(e.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="">Select a device…</option>
+              {devices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {deviceName(d)} ({d.data_sources.length} source
+                  {d.data_sources.length === 1 ? '' : 's'})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="link-reason">Reason (recorded in history)</Label>
+            <Input
+              id="link-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Muse headband, relayed through this phone"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>
+            Cancel
+          </Button>
+          <Button
+            disabled={link.isPending || !deviceId || !source}
+            onClick={() => {
+              if (!source || !deviceId) return;
+              link.mutate(
+                { deviceId, dataSourceId: source.id, reason: reason || null },
+                { onSuccess: close }
+              );
+            }}
+          >
+            {link.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              'Link'
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -289,9 +481,17 @@ function DeviceCard({
           </div>
 
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {device.brand ?? 'Unknown brand'}
+            {device.brand_display ?? device.brand ?? 'Unknown brand'}
             {device.model_raw ? ` · reported as "${device.model_raw}"` : ''}
+            {/* The provider only ever described the phone that relayed this, so
+                everything naming the unit itself was typed by a person. Saying so is
+                what stops the name reading as something a provider confirmed. */}
+            {device.host_model_raw
+              ? ` · relayed by ${device.host_model_raw}`
+              : ''}
             {device.wear_location ? ` · ${device.wear_location}` : ''}
+            {device.serial ? ` · s/n ${device.serial}` : ''}
+            {device.firmware_version ? ` · fw ${device.firmware_version}` : ''}
           </p>
 
           <div className="mt-3 space-y-1">
@@ -556,6 +756,8 @@ function CreateDeviceDialog({
     device_type: 'unknown',
     brand: '',
     model_raw: '',
+    serial: '',
+    firmware_version: '',
     label: '',
     wear_location: '',
     reason: '',
@@ -610,6 +812,26 @@ function CreateDeviceDialog({
               />
             </div>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="create-serial">Serial / asset tag</Label>
+              <Input
+                id="create-serial"
+                value={form.serial}
+                onChange={(e) => setForm({ ...form, serial: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="create-firmware">Firmware</Label>
+              <Input
+                id="create-firmware"
+                value={form.firmware_version}
+                onChange={(e) =>
+                  setForm({ ...form, firmware_version: e.target.value })
+                }
+              />
+            </div>
+          </div>
           <div>
             <Label htmlFor="create-wear">Wear location</Label>
             <Input
@@ -643,6 +865,8 @@ function CreateDeviceDialog({
                   device_type: form.device_type,
                   brand: form.brand || null,
                   model_raw: form.model_raw || null,
+                  serial: form.serial || null,
+                  firmware_version: form.firmware_version || null,
                   label: form.label || null,
                   wear_location: form.wear_location || null,
                   reason: form.reason || null,
@@ -700,6 +924,10 @@ function EditDeviceForm({
   const [form, setForm] = useState({
     label: device.label ?? '',
     device_type: String(device.device_type),
+    brand_display: device.brand_display ?? '',
+    model_display: device.model_display ?? '',
+    serial: device.serial ?? '',
+    firmware_version: device.firmware_version ?? '',
     wear_location: device.wear_location ?? '',
     notes: device.notes ?? '',
     reason: '',
@@ -710,8 +938,10 @@ function EditDeviceForm({
       <DialogHeader>
         <DialogTitle>Edit device</DialogTitle>
         <DialogDescription>
-          Brand and the reported model are not editable — they record what the
-          provider claimed the hardware was.
+          Brand and model here are what this device is called everywhere. They
+          sit beside what the provider reported rather than replacing it — the
+          original claim stays on the device as evidence of what the hardware
+          said it was.
         </DialogDescription>
       </DialogHeader>
       <div className="space-y-3">
@@ -721,6 +951,7 @@ function EditDeviceForm({
             id="edit-label"
             value={form.label}
             onChange={(e) => setForm({ ...form, label: e.target.value })}
+            placeholder="Sub 04 headband"
           />
         </div>
         <div>
@@ -729,6 +960,50 @@ function EditDeviceForm({
             value={form.device_type}
             onChange={(v) => setForm({ ...form, device_type: v })}
           />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="edit-brand">Brand</Label>
+            <Input
+              id="edit-brand"
+              value={form.brand_display}
+              onChange={(e) =>
+                setForm({ ...form, brand_display: e.target.value })
+              }
+              placeholder={device.brand ?? 'Muse'}
+            />
+          </div>
+          <div>
+            <Label htmlFor="edit-model">Model</Label>
+            <Input
+              id="edit-model"
+              value={form.model_display}
+              onChange={(e) =>
+                setForm({ ...form, model_display: e.target.value })
+              }
+              placeholder={device.model_raw ?? 'S Athena'}
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="edit-serial">Serial / asset tag</Label>
+            <Input
+              id="edit-serial"
+              value={form.serial}
+              onChange={(e) => setForm({ ...form, serial: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="edit-firmware">Firmware</Label>
+            <Input
+              id="edit-firmware"
+              value={form.firmware_version}
+              onChange={(e) =>
+                setForm({ ...form, firmware_version: e.target.value })
+              }
+            />
+          </div>
         </div>
         <div>
           <Label htmlFor="edit-wear">Wear location</Label>
@@ -770,6 +1045,10 @@ function EditDeviceForm({
                 data: {
                   label: form.label || null,
                   device_type: form.device_type,
+                  brand_display: form.brand_display || null,
+                  model_display: form.model_display || null,
+                  serial: form.serial || null,
+                  firmware_version: form.firmware_version || null,
                   wear_location: form.wear_location || null,
                   notes: form.notes || null,
                   reason: form.reason || null,

@@ -34,6 +34,8 @@ ANDROID_PACKAGE_BRANDS: dict[str, str] = {
     "com.polar": "Polar",
     "com.suunto": "Suunto",
     "com.ultrahuman": "Ultrahuman",
+    "com.interaxon.muse": "Muse",
+    "com.eightsleep": "Eight Sleep",
 }
 
 # --- App / HealthKit source-name keyword -> brand --------------------------------
@@ -64,6 +66,10 @@ SOURCE_NAME_BRANDS: tuple[tuple[str, str], ...] = (
     ("corsano", "Corsano"),
     ("masimo", "Masimo"),
     ("withings", "Withings"),
+    ("muse", "Muse"),  # Interaxon Muse S: EEG headband relaying sleep into Apple Health
+    ("dreem", "Dreem"),
+    ("eight sleep", "Eight Sleep"),
+    ("eightsleep", "Eight Sleep"),
 )
 
 # --- device_model keyword -> brand (google `device_model`, generic models) -------
@@ -85,6 +91,8 @@ DEVICE_MODEL_BRANDS: tuple[tuple[str, str], ...] = (
     ("suunto", "Suunto"),
     ("whoop", "Whoop"),
     ("health_connect", "Health Connect"),
+    ("muse", "Muse"),
+    ("dreem", "Dreem"),
 )
 
 # --- provider fallback (used when no source/model signal identifies a brand) -----
@@ -144,18 +152,22 @@ SAMSUNG_MODEL_NAMES: dict[str, str] = {
 }
 
 
-def resolve_brand(
+def resolve_brand_signal(
     provider: ProviderName,
     device_model: str | None = None,
     source: str | None = None,
 ) -> str | None:
-    """Derive a canonical brand from the strongest available signal.
+    """The brand a signal actually names, or None when nothing did.
 
     Order: Android package (authoritative) -> device_model keyword -> source-name
-    keyword -> provider fallback. device_model is checked before the source label
-    because the source is often a generic app/provider literal (e.g. "strava")
-    while the model names the real recording device (e.g. "Garmin fenix 8").
-    Returns None only for UNKNOWN/INTERNAL providers with no identifying signal.
+    keyword. device_model is checked before the source label because the source is
+    often a generic app/provider literal (e.g. "strava") while the model names the
+    real recording device (e.g. "Garmin fenix 8").
+
+    Separate from ``resolve_brand`` because the platform fallback and a real match
+    are not the same answer, and one caller has to tell them apart: a third-party
+    writer this table has never heard of ("Muse", "Hume", "Bevel") produced no match,
+    and answering "Apple" there overwrites the only thing that named the recorder.
     """
     if source:
         for pkg, brand in ANDROID_PACKAGE_BRANDS.items():
@@ -174,7 +186,51 @@ def resolve_brand(
             if keyword in source_lower:
                 return brand
 
-    return PROVIDER_BRANDS.get(provider)
+    return None
+
+
+def resolve_brand(
+    provider: ProviderName,
+    device_model: str | None = None,
+    source: str | None = None,
+) -> str | None:
+    """Derive a canonical brand, falling back to the platform when nothing names one.
+
+    Returns None only for UNKNOWN/INTERNAL providers with no identifying signal.
+    """
+    return resolve_brand_signal(provider, device_model, source) or PROVIDER_BRANDS.get(provider)
+
+
+def looks_like_writer_id(value: str | None) -> bool:
+    """Whether a string is a package/bundle identifier rather than something readable.
+
+    ``"com.ouraring.oura"`` is an identifier; ``"Muse"``, ``"Polar Flow"`` and
+    ``"JOSHUA A's Apple Watch"`` are names a person would recognise. The test is a dot
+    with no whitespace, which is what every package name and bundle id has and what no
+    HealthKit source name observed so far does.
+
+    Used to decide whether a caller's own source label is worth keeping when no brand
+    table matched it: a name is, an identifier is not.
+    """
+    if not value:
+        return False
+    stripped = value.strip()
+    return "." in stripped and not any(c.isspace() for c in stripped)
+
+
+def relayed_brand(provider: ProviderName, writer_id: str | None) -> str | None:
+    """Brand of a relayed stream, from the writing app alone.
+
+    ``resolve_brand`` falls back to the platform's own brand when nothing in the writer
+    id is recognised, which for a relayed stream would file a Muse headband under
+    "Apple". The model is no help here - it names the phone that ran the app - so an
+    unrecognised writer leaves the brand unset, which is the honest answer and the one a
+    person can correct.
+    """
+    brand = resolve_brand(provider, None, writer_id)
+    if brand is not None and brand == PROVIDER_BRANDS.get(provider):
+        return None
+    return brand
 
 
 def resolve_ingestion_route(

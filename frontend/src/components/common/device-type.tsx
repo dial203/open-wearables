@@ -1,4 +1,7 @@
 import {
+  Activity,
+  Brain,
+  CircleDashed,
   CircleDot,
   HelpCircle,
   Package,
@@ -14,6 +17,9 @@ const DEVICE_TYPE_INFO: Record<
   DeviceType,
   { label: string; Icon: LucideIcon }
 > = {
+  chest_strap: { label: 'Chest strap', Icon: Activity },
+  eeg: { label: 'EEG', Icon: Brain },
+  headband: { label: 'Headband', Icon: CircleDashed },
   watch: { label: 'Watch', Icon: Watch },
   band: { label: 'Band', Icon: Vibrate },
   ring: { label: 'Ring', Icon: CircleDot },

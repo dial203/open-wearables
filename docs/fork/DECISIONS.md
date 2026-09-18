@@ -61,6 +61,37 @@ Template:
   where knowing *which unit* produced a sample is the point. The per-route identity
   model could be.
 
+## Relayed streams are keyed on the writing app, not the phone that relayed them
+
+- **Area**: backend, frontend
+- **Status**: active
+- **On conflict**: keep ours; it only adds columns and narrows a grouping rule
+- **Why**: A third-party app writing into HealthKit or Health Connect generally passes
+  no device record, so the platform reports the phone that ran the app. Every app on one
+  handset then reports the same model string, and the registry's within-route model
+  grouping pooled all of them into a single device named after the phone — the
+  over-merge the whole package exists to prevent, reached through the rule meant to
+  prevent it. Renaming that device renamed every brand behind it, which made the
+  registry unusable for relayed data.
+  `relaying_host_model` (`app/services/devices/identity.py`) recognises that case
+  narrowly — aggregator route, third-party writer, model inferring to `phone` — and
+  detection then groups those sources on the writer's claim, keeps the handset in the
+  new `device.host_model_raw` column as provenance, and leaves `model_raw` NULL because
+  the provider never reported this unit's hardware. Over-splitting is the safe direction,
+  so the doubt resolves toward firing.
+  Everything a person then needs to identify the unit is editable beside the provider's
+  claim rather than on top of it: `brand_display` joins `model_display`, plus `serial`
+  and `firmware_version` (migration `c9d4e1f7a3b8`). `serial` is deliberately not an
+  identity claim and groups nothing. `SourceMetadata` gained `device_display_name` and
+  now takes the registry's `device_type` where it knows one, so the compare view names
+  the unit rather than the handset. Existing rows are corrected by
+  `scripts/data_migrations/split_host_relayed_devices.py`.
+  `DeviceType` gained `eeg` and `headband` (migration `b7c2d9e4f1a6`); handset model
+  codes (Pixel, Galaxy S, SM-S/G, LM-) now infer as `phone`, which is what makes the
+  Android relay case detectable at all.
+- **Upstreamable?** The host-relay rule and the handset model patterns are a plain bug
+  fix and would be. The editable display fields ride on the registry, which is not.
+
 ## Device attribution helpers (pre-registry)
 
 - **Area**: backend, frontend
@@ -136,6 +167,65 @@ Template:
 - **Why**: `.github/workflows/pr-review.yml` and `build.yml` plus
   `docker-compose.prod.yml` are fork-only infrastructure. The AI review step is
   deliberately non-blocking — it must never red a PR on timeout.
+
+## A relayed stream groups on the writer *and* the host, not the writer alone
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: `relaying_host_model()` already recognises that an aggregator's
+  `device_model` names the phone that ran the writing app, not the recorder. Keying
+  those sources on the writer alone fixes the pooling but introduces the opposite
+  error: one app's streams then group across every handset it ever synced through, so
+  an Oura app relaying from a 2017 phone and a 2024 phone reads as one ring — two
+  units merged, with no symptom, for anyone who replaced the ring in between. The key
+  is therefore the pair (`DeviceIdentityKind.AGGREGATOR_WRITER_MODEL`), which
+  over-splits instead; a person merges what is really one unit, and nothing was
+  pooled while they decided. A claim on the bare host string is never stored — every
+  app on that phone would make the same one.
+
+## An unrecognised HealthKit writer keeps its own name
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: `resolve_brand()` falls back to the platform when no brand table matches,
+  and that fallback used to overwrite the caller's `original_source_name`
+  unconditionally in `ensure_data_source`. Every third-party HealthKit writer the
+  tables had never heard of — Muse, AutoSleep, Eight Sleep, Hume — was therefore
+  filed as "Apple", losing the only field that named the recorder and making the
+  relay read as first-party Apple data. A recognised brand still wins over the
+  caller's value; a readable name now survives when nothing matched.
+
+## Deliberate detachment is a state, not an absence
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: `data_source.attribution_locked_at` distinguishes "a person unlinked this"
+  from "never attributed". Without it, detection re-attached an unlinked source on the
+  next sync and the unlink button looked broken. Fork-only column; an upstream merge
+  that rewrites `data_source` must carry it.
+## Fork version in the sidebar footer
+
+- **Area**: frontend, tooling
+- **Status**: active
+- **On conflict**: reconcile — keep upstream's `__APP_VERSION__` wiring, re-apply the
+  `__FORK_*` defines and `VersionFooter` on top
+- **Why**: the footer used to show one version, which on a fork is ambiguous: `v0.9.0`
+  is upstream's release, and says nothing about which fork build is running. It now
+  shows both, each with the date its code last moved, so a bug report from a running
+  instance identifies the exact tree. Upstream's date is the merge base with
+  `upstream/main` rather than a release date: two syncs a month apart are both
+  "v0.9.0", and the question being asked is how old the upstream code in this build
+  is. Upstream's version still comes from
+  `frontend/package.json` (synced, so never edited here); the fork's own version lives
+  in fork-only `frontend/fork-version.json` to keep it out of every upstream merge.
+  The frontend image is built from a `./frontend` context with `.git` excluded, so the
+  build cannot read git — hence the committed stamp, refreshed by `make fork-stamp`
+  (which `make build` runs). A host build or `pnpm dev` still prefers live git over the
+  stamp, so a stale stamp only ever affects a Docker image; `FORK_VERSION`,
+  `FORK_COMMIT` and `FORK_UPDATED_AT` override both for CI.
 
 ## Several provider accounts per user
 

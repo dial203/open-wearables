@@ -1,7 +1,7 @@
 """multiple provider accounts per user, labelled and traceable to an e-mail
 
 Revision ID: b5d41c7a9e02
-Revises: d3f1a8c2e5b4
+Revises: f5a2c7b31e88
 
 Until now a user could hold one account per provider: `ix_user_connection_user_provider`
 was UNIQUE on (user_id, provider). That is wrong for validation and reliability work,
@@ -47,7 +47,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b5d41c7a9e02"
-down_revision: Union[str, None] = "d3f1a8c2e5b4"
+down_revision: Union[str, None] = "f5a2c7b31e88"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

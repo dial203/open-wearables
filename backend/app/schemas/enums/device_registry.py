@@ -28,6 +28,17 @@ class DeviceIdentityKind(StrEnum):
     MODEL_STRING = "model_string"  # provider's own model / device name
     SERIAL = "serial"  # only where a provider genuinely exposes one
 
+    # Writer plus hardware, for aggregator routes only: "Muse||iPhone15,3".
+    #
+    # On an aggregator route the model string names the *handset that synced the
+    # batch*, not the device that recorded it - HealthKit reports productType, so a
+    # Muse headband's nights arrive stamped "iPhone15,3" exactly like the Oura ring's
+    # and the WHOOP band's. Grouping on that model alone pools every app relaying
+    # through one phone into a single "device". Pairing it with the writing app's own
+    # identifier keeps the pool apart while still splitting two phones' relays, which
+    # is the over-split direction and therefore the safe one.
+    AGGREGATOR_WRITER_MODEL = "aggregator_writer_model"
+
 
 class IdentityConfidence(StrEnum):
     """How much weight an identity claim carries when grouping data sources.
@@ -55,6 +66,23 @@ STRONG_IDENTITY_KINDS: frozenset[DeviceIdentityKind] = frozenset(
     }
 )
 
+# Separator inside an AGGREGATOR_WRITER_MODEL value. Two pipes, because a writer
+# name is free text ("JOSHUA A's Apple Watch") and a model string is a vendor code
+# ("iPhone15,3"); neither has ever been seen to contain this.
+WRITER_MODEL_SEPARATOR = "||"
+
+
+# Kinds that name the app that wrote the data rather than the hardware. They are the
+# grouping key of last resort: used only where the route's model string describes the
+# phone that relayed the data (see services/devices/identity.relaying_host_model),
+# because there the writer is the only thing on the row that varies per device.
+WRITER_IDENTITY_KINDS: frozenset[DeviceIdentityKind] = frozenset(
+    {
+        DeviceIdentityKind.HEALTHKIT_BUNDLE,
+        DeviceIdentityKind.HEALTH_CONNECT_PACKAGE,
+    }
+)
+
 
 class LabelSource(StrEnum):
     """Where a device's label came from. A manual label is never overwritten by detection."""
@@ -76,6 +104,7 @@ class DeviceHistoryAction(StrEnum):
     RETIRED = "retired"
     REACTIVATED = "reactivated"
     IDENTITY_ADDED = "identity_added"
+    IDENTITY_REMOVED = "identity_removed"  # a claim that turned out to describe something else
     LINK_PROPOSED = "link_proposed"
     LINK_ACCEPTED = "link_accepted"
     LINK_REJECTED = "link_rejected"

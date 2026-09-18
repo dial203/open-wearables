@@ -382,6 +382,82 @@ class TestSleepSummaryEndpoint:
         assert sleep_data["efficiency_percent"] == 90.0
 
 
+class TestSleepSummaryDeviceAttribution:
+    """A summary has to name the device, not the phone that relayed it.
+
+    The compare view reads these summaries, and its device column is the answer to
+    "which unit reported this". Before the registry reached this path it showed
+    data_source.device_model, which for anything relayed through HealthKit is the
+    handset that ran the writing app - so every brand on one phone read as that phone.
+    """
+
+    def _relayed_night(self, db: Session, user: object, writer: str) -> object:
+        from app.repositories.data_source_repository import DataSourceRepository
+
+        data_source = DataSourceRepository().ensure_data_source(
+            db,
+            user_id=user.id,
+            provider=ProviderName.APPLE,
+            device_model="iPhone 17 Pro",
+            source=writer,
+        )
+        db.commit()
+        EventRecordFactory(
+            mapping=data_source,
+            category="sleep",
+            start_datetime=datetime(2025, 12, 25, 22, 0, 0, tzinfo=timezone.utc),
+            end_datetime=datetime(2025, 12, 26, 5, 0, 0, tzinfo=timezone.utc),
+            duration_seconds=25200,
+        )
+        return data_source
+
+    def _summaries(self, client: TestClient, user: object, every_source: bool = False) -> list[dict]:
+        api_key = ApiKeyFactory()
+        params = {"start_date": "2025-12-25T00:00:00Z", "end_date": "2025-12-27T00:00:00Z"}
+        if every_source:
+            # What the compare view asks for: one row per source rather than the
+            # highest-priority one, which is the whole point of that screen.
+            params["filter_by_priority"] = "false"
+        response = client.get(
+            f"/api/v1/users/{user.id}/summaries/sleep",
+            headers=api_key_headers(api_key.plain_key),
+            params=params,
+        )
+        assert response.status_code == 200
+        return response.json()["data"]
+
+    def test_the_device_name_and_type_come_from_the_registry(self, client: TestClient, db: Session) -> None:
+        from app.repositories.device_repository import DeviceRepository
+
+        user = UserFactory()
+        data_source = self._relayed_night(db, user, "Muse")
+        DeviceRepository().update_fields(
+            db,
+            DeviceRepository().get(db, data_source.device_id),
+            {"model_display": "Muse S Athena"},
+            actor="test",
+        )
+        db.commit()
+
+        source = self._summaries(client, user)[0]["source"]
+        assert source["device_display_name"] == "Muse S Athena"
+        assert source["device_type"] == "eeg"
+        assert source["device_id"] == str(data_source.device_id)
+        # The ingest fingerprint is untouched and still available for provenance.
+        assert source["device"] == "iPhone 17 Pro"
+
+    def test_two_apps_on_one_phone_are_two_named_rows(self, client: TestClient, db: Session) -> None:
+        user = UserFactory()
+        self._relayed_night(db, user, "Muse")
+        self._relayed_night(db, user, "Oura")
+
+        rows = self._summaries(client, user, every_source=True)
+        names = {row["source"]["device_display_name"] for row in rows}
+        assert names == {"Muse", "Oura"}
+        # And they are genuinely two units, not one row seen twice.
+        assert len({row["source"]["device_id"] for row in rows}) == 2
+
+
 class TestActivitySummaryEndpoint:
     """Test suite for activity summaries endpoint."""
 

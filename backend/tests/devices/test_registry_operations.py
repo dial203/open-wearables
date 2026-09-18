@@ -6,6 +6,7 @@ every such change is recoverable from history, including the destructive one.
 """
 
 from datetime import UTC, datetime, timedelta
+from logging import getLogger
 from uuid import uuid4
 
 import pytest
@@ -15,6 +16,7 @@ from app.models import DataSource, Device, DeviceHistory, User
 from app.repositories.data_source_repository import DataSourceRepository
 from app.repositories.device_repository import DeviceRepository
 from app.schemas.enums import DeviceHistoryAction, DeviceType, LabelSource, ProviderName
+from app.services.device_service import DeviceService
 
 
 @pytest.fixture
@@ -250,3 +252,57 @@ class TestProposals:
         right = repo.create(db, user_id=user.id, device_type=DeviceType.RING)
         proposal = repo.upsert_proposal(db, user.id, left.id, right.id, score=87.666)
         assert str(proposal.score) == "87.67"
+
+
+class TestAttributionLock:
+    """Unlinking by hand has to outlive the next sync.
+
+    Detection treats attribution as write-once, but only for a source that already has
+    a device: a NULL device_id otherwise reads as "never attributed", so the next batch
+    re-attached exactly what a person had just detached. The unlink survived until the
+    following sync and then quietly undid itself, which is indistinguishable from the
+    button not working.
+    """
+
+    @staticmethod
+    def _service() -> DeviceService:
+        return DeviceService(getLogger(__name__))
+
+    def test_unlinking_records_that_the_empty_state_is_deliberate(self, db: Session, user: User) -> None:
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "Muse")
+        device_id = source.device_id
+        assert device_id is not None
+
+        self._service().unlink_data_source(db, user.id, device_id, source.id, reason=None, actor="dial@osu.edu")
+
+        db.refresh(source)
+        assert source.device_id is None
+        assert source.attribution_locked_at is not None
+
+    def test_linking_again_clears_the_lock(self, db: Session, user: User) -> None:
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "Muse")
+        device_id = source.device_id
+        service = self._service()
+
+        service.unlink_data_source(db, user.id, device_id, source.id, reason=None, actor="dial@osu.edu")
+        service.link_data_source(db, user.id, device_id, source.id, reason="put it back", actor="dial@osu.edu")
+
+        db.refresh(source)
+        assert source.device_id == device_id
+        assert source.attribution_locked_at is None
+
+    def test_a_relink_is_visible_in_the_audit_trail(self, db: Session, user: User) -> None:
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone15,3", "Muse")
+        device_id = source.device_id
+        service = self._service()
+
+        service.unlink_data_source(db, user.id, device_id, source.id, reason=None, actor="dial@osu.edu")
+        service.link_data_source(db, user.id, device_id, source.id, reason="accidental unlink", actor="dial@osu.edu")
+
+        # Not asserted in order: created_at is the transaction timestamp, so rows
+        # written in one test transaction tie and sort arbitrarily. What matters is
+        # that both halves of the round trip left a record.
+        actions = [e.action for e in db.query(DeviceHistory).filter(DeviceHistory.data_source_id == source.id).all()]
+        assert actions.count(DeviceHistoryAction.UNLINKED.value) == 1
+        assert actions.count(DeviceHistoryAction.LINKED.value) == 2  # detection, then the relink
+        assert all(e.actor for e in db.query(DeviceHistory).filter(DeviceHistory.data_source_id == source.id).all())

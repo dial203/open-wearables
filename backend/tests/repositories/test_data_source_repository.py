@@ -193,3 +193,84 @@ class TestCanonicalBrandWins:
 
         assert resolve_ingestion_route(relayed.provider, relayed.original_source_name) == (IngestionRoute.AGGREGATOR)
         assert resolve_ingestion_route(native.provider, native.original_source_name) == IngestionRoute.DIRECT
+
+
+class TestUnrecognisedWritersKeepTheirName:
+    """A HealthKit writer no brand table knows must not be filed as "Apple".
+
+    ``resolve_brand`` falls back to the platform when nothing matches, and that
+    fallback used to win over the caller's value unconditionally. On the Apple route
+    it therefore overwrote the HealthKit source name - the only field naming what
+    recorded the data - with "Apple", for every third-party app the tables had never
+    heard of. The relay then also read as first-party Apple data, because
+    ``resolve_ingestion_route`` compares this column against the platform brand.
+    """
+
+    @staticmethod
+    def _repo() -> DataSourceRepository:
+        return DataSourceRepository(DataSource)
+
+    @pytest.mark.parametrize("writer", ["Muse", "AutoSleep", "Eight Sleep", "Hume", "Bevel"])
+    def test_an_unknown_apple_writer_keeps_its_own_name(self, db: Session, writer: str) -> None:
+        user = UserFactory()
+
+        created = self._repo().ensure_data_source(
+            db,
+            user_id=user.id,
+            provider=ProviderName.APPLE,
+            device_model="iPhone15,3",
+            source=writer,
+            original_source_name=writer,
+        )
+
+        assert created.original_source_name == writer
+
+    def test_an_unknown_writer_reads_as_relayed_not_first_party(self, db: Session) -> None:
+        from app.schemas.enums.provider import IngestionRoute
+        from app.utils.device_registry import resolve_ingestion_route
+
+        user = UserFactory()
+
+        created = self._repo().ensure_data_source(
+            db,
+            user_id=user.id,
+            provider=ProviderName.APPLE,
+            device_model="iPhone15,3",
+            source="Muse",
+            original_source_name="Muse",
+        )
+
+        assert resolve_ingestion_route(created.provider, created.original_source_name) == IngestionRoute.AGGREGATOR
+
+    def test_apples_own_data_still_resolves_to_apple(self, db: Session) -> None:
+        """The fallback is still right for the case it was written for."""
+        user = UserFactory()
+
+        created = self._repo().ensure_data_source(
+            db,
+            user_id=user.id,
+            provider=ProviderName.APPLE,
+            device_model="Watch7,12",
+            source=APPLE_HEALTH_SOURCE,
+            original_source_name=APPLE_HEALTH_SOURCE,
+        )
+
+        assert created.original_source_name == "Apple"
+
+    def test_the_bulk_path_agrees_with_the_single_path(self, db: Session) -> None:
+        """Time series arrive through batch_ensure_data_sources, events through the other.
+
+        Two rules would mean one Muse source reading "Muse" and the other "Apple"
+        depending only on which path happened to create the row.
+        """
+        user = UserFactory()
+
+        ids = self._repo().batch_ensure_data_sources(
+            db,
+            provider=ProviderName.APPLE,
+            user_connection_id=None,
+            identities={(user.id, "iPhone15,3", "Muse")},
+        )
+
+        created = db.get(DataSource, next(iter(ids.values())))
+        assert created.original_source_name == "Muse"

@@ -32,6 +32,26 @@ from app.schemas.enums import DeviceType, infer_device_type_from_model, infer_de
         ("vivosmart 5", DeviceType.BAND),
         (None, DeviceType.UNKNOWN),
         ("", DeviceType.UNKNOWN),
+        # EEG headbands, checked before the generic keyword pass: "Muse S Headband"
+        # would otherwise be swallowed by the "band" substring and filed as a wristband.
+        ("Muse S Athena", DeviceType.EEG),
+        ("Muse", DeviceType.EEG),
+        ("Muse 2", DeviceType.EEG),
+        ("Dreem 3", DeviceType.EEG),
+        ("Some EEG recorder", DeviceType.EEG),
+        # A headband with no named modality is a headband, not an EEG.
+        ("Forehead Headband", DeviceType.HEADBAND),
+        # Handset model codes. A relayed stream is recognised by its model naming a
+        # phone, so a Pixel or Galaxy reading as OTHER would leave every Android app on
+        # it grouped as one device.
+        ("Pixel 9 Pro", DeviceType.PHONE),
+        ("SM-S901U", DeviceType.PHONE),
+        ("Galaxy S22", DeviceType.PHONE),
+        ("LM-V350", DeviceType.PHONE),
+        # ...but the wearables sharing those prefixes are still wearables.
+        ("Google Pixel Watch 4 (45mm)", DeviceType.WATCH),
+        ("SM-R830", DeviceType.OTHER),
+        ("SM-Q501", DeviceType.OTHER),
         ("Something Unrecognised", DeviceType.OTHER),
     ],
 )
@@ -43,6 +63,12 @@ def test_chest_strap_ranks_above_watch_by_default() -> None:
     from app.schemas.enums.device_type import DEFAULT_DEVICE_TYPE_PRIORITY
 
     assert DEFAULT_DEVICE_TYPE_PRIORITY[DeviceType.CHEST_STRAP] < DEFAULT_DEVICE_TYPE_PRIORITY[DeviceType.WATCH]
+    # EEG is the reference standard for sleep staging, as ECG is for beat-to-beat HR.
+    assert DEFAULT_DEVICE_TYPE_PRIORITY[DeviceType.EEG] < DEFAULT_DEVICE_TYPE_PRIORITY[DeviceType.CHEST_STRAP]
+    # The two types added after the table was first seeded take numbers no existing row
+    # holds: initialize_defaults only inserts what is missing, so a renumbering here
+    # would reach fresh databases only and tie with a row it did not rewrite.
+    assert len(set(DEFAULT_DEVICE_TYPE_PRIORITY.values())) == len(DEFAULT_DEVICE_TYPE_PRIORITY)
     # every type has a priority so nothing silently falls back to the 99 sentinel
     assert set(DEFAULT_DEVICE_TYPE_PRIORITY) == set(DeviceType)
 

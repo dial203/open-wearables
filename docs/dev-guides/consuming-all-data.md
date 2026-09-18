@@ -149,7 +149,7 @@ Returns `{ "items": [...], "total": N }`. Each item:
 | `id` | **Stable DataSource id — key on this.** Survives re-ingestion; immune to brand/casing noise. |
 | `provider` | Ingestion path (`apple`, `google`, `garmin`, …) |
 | `device_model` | Raw hardware string, may be null |
-| `device_type` | `chest_strap` \| `watch` \| `band` \| `ring` \| `phone` \| `scale` \| `other` \| `unknown` — always set |
+| `device_type` | `eeg` \| `chest_strap` \| `watch` \| `band` \| `ring` \| `headband` \| `phone` \| `scale` \| `other` \| `unknown` — always set |
 | `source` | Sub-source tag (Apple HealthKit / Health Connect bundle id) |
 | `original_source_name` | Canonical brand |
 | `display_name` | Pre-formatted "Provider · Model" for operator UIs |
@@ -216,10 +216,13 @@ identity needed to join back to `/data-sources`:
 "source": {
   "provider": "apple",                // the ingestion path (DataSource.provider)
   "source": "com.oura.oura",          // the writer inside that path
-  "device": "iPhone18,1",
+  "device": "iPhone18,1",             // the provider's model string, verbatim
   "device_name": "iPhone 17 Pro",     // marketing name, derived from `device`
-  "device_type": "phone",
+  "device_type": "ring",              // the registry's type where it knows one
   "data_source_id": "…",              // == items[].id from /data-sources
+  "device_id": "…",                   // == items[].id from /devices; null if unattributed
+  "device_label": "Sub 04 ring",      // the name a person set, if any
+  "device_display_name": "Oura Ring Gen4",  // what to call the unit — prefer this
   "ingestion_provider": "apple",      // alias of `provider`
   "source_tag": "com.oura.oura",      // alias of `source`
   "original_source_name": "Oura",
@@ -228,6 +231,13 @@ identity needed to join back to `/data-sources`:
 ```
 
 Use **`data_source_id`** as the join key.
+
+⚠️ **`device` and `device_name` describe what the provider reported, which is not always
+this device.** A third-party app writing through Apple Health or Health Connect usually
+passes no device record, so the platform reports the *phone that ran the app* — the
+`iPhone18,1` above is the handset, not the ring. Show **`device_display_name`** and
+group on **`device_id`**; both come from the device registry, where a person can correct
+what the provider got wrong. See [Device registry](/dev-guides/device-registry).
 
 ℹ️ Before 0.7.0 the `provider` field carried the sub-source tag rather than the
 ingestion provider, which is why `ingestion_provider` and `source_tag` exist. As of
