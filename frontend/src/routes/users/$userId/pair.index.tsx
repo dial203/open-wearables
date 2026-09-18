@@ -36,36 +36,50 @@ function PairWearablePage() {
   const { data: apiProviders, isLoading } = useOAuthProviders(true, true);
   const { data: connections } = useUserConnections(userId, isAuthenticated());
 
-  const connectedProviders = useMemo(() => {
-    if (!connections) return new Set<string>();
-    return new Set(
-      connections.filter((c) => c.status === 'active').map((c) => c.provider)
-    );
+  // How many accounts are already linked per provider, not merely whether one
+  // is: a second Whoop on the same person is a normal thing to want, so an
+  // already-connected provider stays clickable and adds another account.
+  const accountCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const connection of connections ?? []) {
+      if (connection.status !== 'active') continue;
+      counts.set(
+        connection.provider,
+        (counts.get(connection.provider) ?? 0) + 1
+      );
+    }
+    return counts;
   }, [connections]);
 
   const displayProviders = useMemo(() => {
     if (!apiProviders) return [];
     return apiProviders.map((apiProvider) => {
+      const linkedCount = accountCounts.get(apiProvider.provider) ?? 0;
       return {
         id: apiProvider.provider,
         name: apiProvider.name,
-        description: 'Connect your device',
+        description: linkedCount
+          ? `${linkedCount} account${linkedCount > 1 ? 's' : ''} linked`
+          : 'Connect your device',
         logoPath: apiProvider.icon_url
           ? `${API_CONFIG.baseUrl}${apiProvider.icon_url}`
           : '',
         isAvailable: apiProvider.is_enabled,
-        isConnected: connectedProviders.has(apiProvider.provider),
+        linkedCount,
       };
     });
-  }, [apiProviders, connectedProviders]);
+  }, [apiProviders, accountCounts]);
 
   const connectingProviderData = connectingProvider
     ? displayProviders.find((p) => p.id === connectingProvider)
     : null;
 
-  const handleConnect = (providerId: string) => {
+  const handleConnect = (providerId: string, linkedCount: number) => {
     if (connectingProvider === null) {
-      connect(providerId);
+      // Signal intent explicitly. Without it the callback would re-authorize the
+      // account already linked, which is right for "reconnect" and wrong for
+      // "add the second watch" - and the two are the same click here.
+      connect(providerId, linkedCount > 0 ? { newAccount: true } : undefined);
     }
   };
 
@@ -133,11 +147,12 @@ function PairWearablePage() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.05, duration: 0.3 }}
-                    onClick={() => handleConnect(provider.id)}
-                    disabled={provider.isConnected}
+                    onClick={() =>
+                      handleConnect(provider.id, provider.linkedCount)
+                    }
                     className={`group relative flex flex-col items-center text-center p-10 rounded-2xl bg-zinc-900/40 border transition-all duration-300 ease-out outline-none focus:ring-2 focus:ring-white/20 ${
-                      provider.isConnected
-                        ? 'border-emerald-500/20 cursor-default'
+                      provider.linkedCount > 0
+                        ? 'border-emerald-500/20 hover:bg-zinc-900/80'
                         : 'border-white/5 hover:bg-zinc-900/80 hover:border-white/10'
                     }`}
                   >
@@ -160,10 +175,15 @@ function PairWearablePage() {
 
                     {/* Connect indicator */}
                     <div className="mt-8 flex items-center gap-1.5 text-base font-medium transition-colors">
-                      {provider.isConnected ? (
+                      {provider.linkedCount > 0 ? (
                         <>
                           <Check className="w-4 h-4 text-emerald-400" />
                           <span className="text-emerald-400">Connected</span>
+                          <span className="text-zinc-500">·</span>
+                          <span className="text-zinc-300 group-hover:text-white">
+                            Add another
+                          </span>
+                          <ChevronRight className="w-4 h-4 stroke-[1.5] text-zinc-300 group-hover:text-white" />
                         </>
                       ) : (
                         <>

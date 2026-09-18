@@ -162,6 +162,50 @@ export const healthService = {
   },
 
   /**
+   * Rename one connected account, or correct the e-mail or device recorded for
+   * it. Only the fields passed are touched; an explicit null clears one.
+   */
+  async updateConnectionAccount(
+    userId: string,
+    connectionId: string,
+    patch: {
+      account_label?: string | null;
+      account_email?: string | null;
+      device_label?: string | null;
+    }
+  ): Promise<UserConnection> {
+    return apiClient.patch<UserConnection>(
+      API_ENDPOINTS.userConnectionAccount(userId, connectionId),
+      patch
+    );
+  },
+
+  /**
+   * Disconnect one account, leaving the user's other accounts with the same
+   * provider connected.
+   */
+  async disconnectConnectionAccount(
+    userId: string,
+    connectionId: string
+  ): Promise<void> {
+    await apiClient.delete(
+      API_ENDPOINTS.userConnectionAccount(userId, connectionId)
+    );
+  },
+
+  /**
+   * Revoke one account and delete only the data that came through it.
+   */
+  async purgeConnectionAccountData(
+    userId: string,
+    connectionId: string
+  ): Promise<void> {
+    await apiClient.delete(
+      API_ENDPOINTS.userConnectionAccountData(userId, connectionId)
+    );
+  },
+
+  /**
    * Get user connections for a user
    */
   async getUserConnections(userId: string): Promise<UserConnection[]> {

@@ -318,6 +318,24 @@ export interface UserConnection {
   provider_username?: string;
   scope?: string;
   id: string;
+  /**
+   * Human name for this account. A user may hold several accounts with one
+   * provider - two Whoops worn at once for a reliability study - and this is
+   * what tells them apart on screen.
+   */
+  account_label?: string | null;
+  /**
+   * Login e-mail of the provider account. The record of which account a data
+   * set came from; captured from the provider where its API exposes one and
+   * entered by hand otherwise.
+   */
+  account_email?: string | null;
+  /** Never empty: falls back through username, e-mail and finally the id. */
+  display_label?: string;
+  /** 1-based position among this user's accounts with the same provider. */
+  account_index?: number;
+  /** How many accounts this user holds with this provider. */
+  account_count?: number;
   /** Manually-set or auto-derived device behind this connection (e.g. "Whoop 5.0"). */
   device_label?: string | null;
   status: 'active' | 'revoked' | 'expired';
