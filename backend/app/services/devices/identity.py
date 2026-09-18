@@ -20,6 +20,7 @@ Several identifiers providers *do* send were previously parsed and dropped. They
 are collected here rather than at each call site so the rules stay in one place.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -214,6 +215,8 @@ _PROVIDER_LITERALS: frozenset[str] = frozenset(
         "healthkit",
         "api_response",
         "webhook",
+        # Health Connect stamps some rows with the OS itself rather than an app.
+        "android",
     }
 )
 
@@ -241,15 +244,90 @@ _PLATFORM_OWN_WRITER_PREFIXES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _is_platform_own_writer(provider_value: str, writer_id: str) -> bool:
-    """Whether a writer id belongs to the platform rather than to a third-party app."""
+# Apple's own apps, by the display name HealthKit reports as the source. Their data is
+# recorded by the iPhone or the Watch the person is wearing, not relayed from anywhere,
+# so the model string is the unit. They are listed by name because HealthKit gives us a
+# display name here far more often than the com.apple.* bundle id the prefixes above
+# would catch.
+_APPLE_FIRST_PARTY_WRITERS: frozenset[str] = frozenset(
+    {
+        "health",
+        "fitness",
+        "activity",
+        "workout",
+        "clock",
+        "sleep",
+        "breathe",
+        "mindfulness",
+        "cycle tracking",
+        "siri",
+        "home",
+    }
+)
+
+# Tokens too generic to identify hardware. A writer sharing only one of these with the
+# host's model says nothing: "Galaxy Watch" and "Galaxy S22" are two different devices.
+_GENERIC_MODEL_TOKENS: frozenset[str] = frozenset(
+    {
+        "apple",
+        "galaxy",
+        "google",
+        "lg",
+        "samsung",
+        "max",
+        "mini",
+        "plus",
+        "pro",
+        "se",
+        "ultra",
+        "my",
+        "the",
+    }
+)
+
+
+def _model_tokens(value: str) -> set[str]:
+    """Identifying tokens of a device name, for comparing two names for the same unit."""
+    raw = re.split(r"[^0-9a-z+]+", value.casefold())
+    # Purely numeric tokens are dropped: "8" from "iPhone 8 Plus" would match any writer
+    # name with an 8 in it. Model codes like "s22" and "v35" survive because they are not.
+    return {t for t in raw if t and not t.isdigit() and t not in _GENERIC_MODEL_TOKENS}
+
+
+def _writer_names_the_host(writer_id: str, device_model: str) -> bool:
+    """Whether a writer id is another name for the hardware the model string describes.
+
+    A platform often reports its own handset's data under the name the owner gave the
+    phone, or under a model name it spells differently: "Michael's S22" against
+    ``SM-S901U``, "V35 ThinQ" against ``LM-V350``, "S10+" against ``SM-G975U``. Those are
+    the phone writing about itself, not something relayed through it, so splitting them
+    off would turn one handset into several devices and throw its model away.
+
+    Compared against the marketing name as well as the raw code, since the raw code is
+    what the platform reports and the marketing name is what the owner named it after.
+    """
+    from app.utils.device_registry import humanize_device_model
+
+    writer_tokens = _model_tokens(writer_id)
+    if not writer_tokens:
+        return False
+    model_tokens = _model_tokens(device_model) | _model_tokens(humanize_device_model(device_model) or "")
+    return bool(writer_tokens & model_tokens)
+
+
+def _is_platform_own_writer(provider_value: str, writer_id: str, device_model: str) -> bool:
+    """Whether a writer id belongs to the platform or the host rather than a third party."""
     normalized = writer_id.strip()
     if any(normalized.startswith(prefix) for prefix in _PLATFORM_OWN_WRITER_PREFIXES.get(provider_value, ())):
+        return True
+    if provider_value == ProviderName.APPLE.value and normalized.casefold() in _APPLE_FIRST_PARTY_WRITERS:
         return True
     # On HealthKit the writer id is usually the source's display name, which for the
     # platform's own data is the hardware's name ("Michael's iPhone"). A writer that
     # names a phone is the phone.
-    return infer_device_type_from_source_name(normalized) is DeviceType.PHONE
+    if infer_device_type_from_source_name(normalized) is DeviceType.PHONE:
+        return True
+    return _writer_names_the_host(normalized, device_model)
 
 
 def relaying_host_model(
@@ -281,7 +359,7 @@ def relaying_host_model(
         return None
     if not _is_writer_id(provider_value, writer_id):
         return None
-    if _is_platform_own_writer(provider_value, writer_id):
+    if _is_platform_own_writer(provider_value, writer_id, device_model):
         return None
     if infer_device_type_from_model(device_model) is not DeviceType.PHONE:
         return None
