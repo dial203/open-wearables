@@ -1,0 +1,298 @@
+---
+title: "Several accounts per provider"
+description: "How one user can hold more than one Garmin, Whoop or Oura account, how each account's data stays separate, and how to label and trace them."
+---
+
+## Why this exists
+
+Open Wearables used to allow one account per provider per user: a `UNIQUE`
+index on `(user_id, provider)` in `user_connection`. For a consumer app that
+is the right model — a person has one Whoop login.
+
+It is the wrong model for validation and reliability work. A participant in a
+device-comparison study wears two units of the same brand at once, each signed
+into its own account, and the whole point of the study is to keep the two data
+streams apart and compare them. Under the old model the second account could
+not be connected at all.
+
+Now a user may hold as many accounts with one provider as they need. Each is an
+independent connection with its own tokens, its own sync cursor, its own data
+sources and its own label and login e-mail.
+
+## What identifies an account
+
+| Field | What it is |
+|---|---|
+| `account_type` | **What the account is for**: `personal`, `validation`, `reliability`, `monitoring`, `testing`, `other`. The structured field a study filters on. `NULL` means nobody has classified it — there is deliberately no default. |
+| `account_email` | The login e-mail of the provider account. The provenance record: it is what ties a data set back to the account it came from. |
+| `account_label` | Optional operator-facing name, e.g. `"P01 arm A"`. Never asked of a participant. |
+| `device_label` | Manually-set hardware behind the account, for providers whose API reports none (Whoop). |
+| `observed_devices` | Read-only. Device models this account has actually reported, humanised, most recent first — see [Devices label themselves](#devices-label-themselves). |
+| `provider_user_id` | The provider's own identifier for the account. Set automatically where the API exposes one. |
+| `display_label` | Read-only, computed. `account_label`, else `provider_username`, else `account_email`, else a short form of the id — so an account is never unlabelled on screen. |
+
+### Classification vs. e-mail
+
+They answer different questions and you want both. The e-mail says **which**
+account this is; the classification says **why it exists**, and that is what an
+analysis filters on — the validation arm separated from the participant's own
+everyday wear, the device-checkout account excluded entirely.
+
+| Value | Meaning |
+|---|---|
+| `personal` | The participant's own everyday account |
+| `validation` | Criterion or device-comparison study |
+| `reliability` | Test-retest or inter-device consistency |
+| `monitoring` | Ongoing athlete or tactical readiness monitoring |
+| `testing` | Device or integration checkout, not participant data |
+| `other` | Anything else |
+
+Stored as a plain string with an application-level enum
+(`app/schemas/enums/account_type.py`), the same way `device_type` and `provider`
+are, so the set can grow without a migration. Unknown values are rejected at the
+API boundary.
+
+### Where the e-mail comes from
+
+Whoop, Oura and Google Health expose the account e-mail through their APIs, and
+it is captured automatically on connect. **Garmin, Polar, Suunto, Strava,
+Withings, Fitbit and Ultrahuman do not** — for those, pass it when you start
+the OAuth flow, or set it afterwards through the API or the dashboard.
+
+Where a provider reports an e-mail it overwrites whatever was typed at connect
+time: the provider's value is authoritative about which login just authorised.
+
+## Connecting a second account
+
+The authorize endpoint decides, when the flow *starts*, whether this is a
+reconnect or an addition. It has to: the provider's callback carries nothing
+but an authorization code and the state we put there, so a callback cannot work
+it out on its own.
+
+```http
+GET /api/v1/oauth/{provider}/authorize
+  ?user_id=<uuid>
+  &new_account=true
+  &account_type=validation
+  &account_email=p01.left%40lab.example.edu
+  &account_label=P01%20arm%20A
+  &redirect_uri=<your callback>
+```
+
+| Parameter | Effect |
+|---|---|
+| *(none of the below)* | Unchanged behaviour: creates the first account, or re-authorizes the one that exists. |
+| `new_account=true` | Adds another account beside the ones already linked. |
+| `connection_id=<uuid>` | Re-authorizes that specific account, and refuses to touch any other. |
+| `account_type` | What the account is for. Recorded on whichever account the callback resolves. |
+| `account_label`, `account_email` | Also recorded on it. A reconnect fills a blank but never overwrites a classification or name somebody already set. |
+
+`connection_id` and `new_account` are mutually exclusive.
+
+<Warning>
+When the provider asks the person to sign in, they must sign in to the **other**
+account. Signing in to one already linked re-authorizes it — the callback
+recognises it by its `provider_user_id` — rather than creating a duplicate.
+That is deliberate: two rows for one login would double-count every sample.
+</Warning>
+
+### `new_account` is a hint, not the mechanism
+
+Where the provider reports a `provider_user_id` — Garmin, Polar, Oura, Whoop,
+Fitbit, Strava, Withings, Google Health — the callback compares it against the
+accounts the user already holds. An identifier it does not recognise **is** a
+different account, and a new connection is created whether or not
+`new_account` was passed.
+
+That is what makes the participant-facing pairing page correct. That page is
+unauthenticated, so it cannot read the connection list and cannot know a second
+Garmin is being added; relying on the flag alone would have merged the second
+account into the first. The flag still matters for the providers that report no
+identifier of their own, where the account e-mail is the only signal.
+
+The one case left deliberately ambiguous: when an existing connection has
+`provider_user_id IS NULL` (it predates us learning one, or was created by the
+SDK), a callback that now reports an id adopts it rather than creating a second
+row beside it.
+
+## Where a participant does this
+
+`/users/{user_id}/pair` — the pairing link you already send them. Tapping a
+provider now opens a short step before the redirect that asks which account
+they are signing in with (e-mail) and what the account is for (the
+classification). For providers that never report an e-mail, this is the only
+moment the person who knows it is present. The free-text name is not asked of
+a participant — it is an operator field on the dashboard.
+
+Opened by a signed-in operator, the same page reads the connection list and the
+step says "Add another Garmin account — 1 already linked". Opened by a
+participant it cannot, so it asks the same questions without the count; the
+backend rule above is what keeps the outcome correct either way.
+
+Operators can also link an account from the user's dashboard page
+(**Connected Accounts → Add account**), which names the provider, label and
+e-mail up front.
+
+### What is still unique
+
+The same external account cannot be linked twice to the same user. Two partial
+unique indexes enforce it, both limited to active rows so a revoked connection
+never blocks reconnecting:
+
+- `(user_id, provider, provider_user_id)` where the provider reports a user id.
+- `(user_id, provider, lower(account_email))` for the providers that do not.
+
+Two *different* users sharing one external account is unaffected — that is the
+linked-profiles feature, and it still fans out as before.
+
+## Reading and managing accounts
+
+`GET /users/{user_id}/connections` returns one entry per account, so it can
+contain several entries for one provider. Each carries `display_label`,
+`account_index` (1-based, oldest first, stable) and `account_count`.
+
+Anything that has to name *one* of several accounts goes through the
+per-account routes:
+
+| Route | Does |
+|---|---|
+| `GET /users/{user_id}/connections/accounts/{connection_id}` | One account. |
+| `PATCH /users/{user_id}/connections/accounts/{connection_id}` | Rename it, or correct its e-mail or device. Fields absent from the body are left alone; an explicit `null` clears one. |
+| `DELETE /users/{user_id}/connections/accounts/{connection_id}` | Disconnect that account only. |
+| `DELETE /users/{user_id}/connections/accounts/{connection_id}/data` | Revoke it and delete only the data that came through it. |
+
+The provider-scoped routes still work and mean **this provider, all of it** —
+`DELETE /users/{id}/connections/garmin` disconnects every Garmin account the
+user has. That is the right reading of "disconnect me from Garmin", but it is
+not what you want when dropping one arm of a study.
+
+## Telling two accounts apart downstream
+
+Separating the *data* is the storage problem, solved by the identity key below.
+Separating them **on screen** is a different problem, and two places got it
+wrong until this landed:
+
+- `GET /users/{id}/data-sources` built `display_name` as `"Garmin - fenix 7"`.
+  Two accounts on the same model produced the same string. It now appends the
+  account when — and only when — the user holds several with that provider:
+  `"Garmin - fenix 7 (validation · P01 arm A)"`. A single-account user's name is
+  byte-for-byte what it was, so nothing that reads this string moves.
+- The **Compare** view keyed its columns on `provider|source|device`, the old
+  data-source identity. Two Garmins reporting `fenix 7` merged into one column —
+  in the one view whose entire purpose is showing them side by side. It now keys
+  on `data_source_id`, which includes the account by construction.
+
+Every sample's `source` metadata carries `user_connection_id`, so any view that
+shows several sources together can name the account without another request:
+resolve it against `GET /users/{id}/connections`. `DataSourceInfo` in the
+frontend does exactly this and renders a classification chip, shown only when
+the user actually holds siblings.
+
+## Devices label themselves
+
+Most providers already tell us what the hardware is, and that value lands on the
+data source with the first sample — Garmin names the watch on its activities,
+Apple ships an `HKDevice`, Samsung and Health Connect carry a model string.
+Nobody should be typing those in.
+
+`GET /users/{id}/connections` returns `observed_devices` per account: the
+distinct device models that account has reported, run through the same
+`humanize_device_model` used elsewhere (so `Watch7,5` reads as
+`Apple Watch Series 8`), most recent first. The dashboard shows them with an
+"auto" marker to distinguish them from a value somebody entered.
+
+`device_label` remains the manual fallback, and is only needed for providers
+whose API reports no device at all — Whoop is the main one. Oura is filled
+automatically from `ring_configuration`.
+
+## How the data stays separate
+
+This is the part that matters for analysis, and the part that cannot be
+repaired after the fact.
+
+`data_source`'s identity is now
+`(user_id, provider, device_model, source, user_connection_id)`. Without the
+connection in the key, two Garmin accounts reporting the same `device_model`
+and the same `source` — which is exactly what two identical watches do — would
+share one `data_source`, and their samples would be indistinguishable
+afterwards.
+
+Every sample's `source` metadata carries `user_connection_id`, and
+`GET /users/{user_id}/data-sources` carries `account_label` and
+`account_email` alongside it, so a data set can always be traced back to the
+account it came from.
+
+### Rows that predate the connection
+
+A `data_source` with no `user_connection_id` — a one-time XML import, or a row
+from before this column existed — is adopted by an account on the next sync,
+**but only when the user holds a single account with that provider**. With two,
+there is no way to tell which of them those rows came from, so a new data source
+is created instead and the old one is left alone.
+
+That asymmetry is deliberate. A wrong split is visible in the data-source list
+and can be corrected; a wrong merge pools two units' samples into one stream and
+cannot be undone, and may not be noticed until it is in an analysis.
+
+## What this does not cover yet
+
+**SDK providers still hold one account per user.** Apple Health and the other
+client-SDK paths create their connection lazily on first upload, and the sync
+payload carries no account identifier, so `ensure_sdk_connection` resolves to a
+single connection per `(user, provider)`. Two phones signed into two Apple IDs
+share one connection today. The repository method accepts an `account_email` to
+address one of several, so the storage side is ready, but nothing calls it with
+one — wiring that up means adding an account identifier to the SDK sync request
+and threading it through the upload task.
+
+## Sync
+
+The pull sync walks a user's accounts one at a time and binds each one for the
+duration of its iteration, so every provider call it makes — token refresh,
+fetch, data-source resolution — acts for that account. The webhook handlers do
+the same after resolving which account an inbound notification belongs to.
+
+`sync_vendor_data` takes `connection_ids` to restrict a run to named accounts;
+`POST /providers/{provider}/users/{user_id}/sync/historical` takes
+`connection_id` for the same reason.
+
+Its result dictionary is keyed by provider when the user holds one account with
+it, and by `"{provider}:{connection_id}"` when they hold several — so existing
+consumers reading `providers_synced["garmin"]` are unaffected until a second
+Garmin appears, at which point collapsing both onto one key would have been a
+silent loss.
+
+<Note>
+**Garmin historical backfill runs one account at a time per user.** Its
+30-day chain keeps progress state in Redis keyed by user, so two concurrent
+runs would overwrite each other's window and type tracking. A backfill
+requested while another is in flight is re-queued (up to 12 attempts, 15
+minutes apart) rather than dropped, so the second account's history is
+fetched once the first finishes. Live sync and webhooks are unaffected and
+run per account concurrently.
+</Note>
+
+## For contributors: the account scope
+
+Most of `app/services/providers` resolves credentials from `(user_id,
+provider)` — written when that named exactly one row. Rewriting every signature
+to carry a connection id would have touched every provider and every call site
+behind it, so instead `app/utils/connection_context.py` holds a `ContextVar`:
+the caller that knows which account it is acting for declares it once, and
+`UserConnectionRepository` honours it.
+
+```python
+from app.utils.connection_context import active_connection
+
+with active_connection(connection.id):
+    strategy.data_247.load_and_save_all(db, user_id, ...)
+```
+
+Outside such a scope, `get_by_user_and_provider` returns the **oldest** account
+and logs a warning — deterministic, and loud enough to find. If you add a code
+path that acts on a specific account, bind it; if you see that warning in logs,
+something is guessing.
+
+A Celery worker reuses its threads, so an imperatively-bound scope
+(`bind_active_connection`) must always be cleared in a `finally` covering the
+whole task.

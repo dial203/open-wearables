@@ -16,7 +16,9 @@ import {
 import { formatDate, truncateId } from '@/lib/utils/format';
 import { copyToClipboard } from '@/lib/utils/clipboard';
 import { ConnectionCard } from '@/components/user/connection-card';
+import { AddProviderAccountDialog } from '@/components/user/add-provider-account-dialog';
 import type { SyncStatusEvent, SyncRunSummary } from '@/lib/api';
+import type { UserConnection } from '@/lib/api/types';
 import { DataSummarySection } from '@/components/user/data-summary-section';
 import { useSyncRuns } from '@/hooks/api/use-sync-status';
 
@@ -27,6 +29,7 @@ interface ProfileSectionProps {
 
 // Stable empty reference so cards for providers with no recent runs don't get a fresh [] each render.
 const EMPTY_RUNS: SyncRunSummary[] = [];
+const EMPTY_CONNECTIONS: UserConnection[] = [];
 
 export function ProfileSection({ userId, activeRuns }: ProfileSectionProps) {
   const { data: user, isLoading: userLoading } = useUser(userId);
@@ -202,13 +205,21 @@ export function ProfileSection({ userId, activeRuns }: ProfileSectionProps) {
 
         {/* Connected Providers */}
         <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-xl overflow-hidden">
-          <div className="px-6 py-4 border-b border-border/60">
-            <h2 className="text-sm font-medium text-foreground">
-              Connected Providers
-            </h2>
-            <p className="text-xs text-muted-foreground mt-1">
-              Wearable devices and health platforms connected to this user
-            </p>
+          <div className="px-6 py-4 border-b border-border/60 flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-medium text-foreground">
+                Connected Accounts
+              </h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Wearable and health platform accounts linked to this user. One
+                user may hold several accounts with the same provider; each
+                syncs and stores its data separately.
+              </p>
+            </div>
+            <AddProviderAccountDialog
+              userId={userId}
+              connections={connections ?? EMPTY_CONNECTIONS}
+            />
           </div>
           <div className="p-6">
             {connectionsLoading ? (

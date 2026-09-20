@@ -18,6 +18,7 @@ from app.schemas.sync_status import SyncSource, SyncStatus
 from app.services.providers.garmin.backfill_state import get_trace_id
 from app.services.providers.garmin.workouts import GarminWorkouts
 from app.services.sync_status_service import emit_sync_completed, new_run_id
+from app.utils.connection_context import active_connection
 from app.utils.structured_logging import log_structured
 
 logger = logging.getLogger(__name__)
@@ -106,11 +107,15 @@ def process_activity_notification(
             is_primary=is_primary,
         )
         try:
-            created_ids = garmin_workouts.process_push_activities(
-                db=db,
-                activities=[activity],
-                user_id=internal_user_id,
-            )
+            # Bind the Garmin account this notification came from: the save path
+            # resolves the connection from (user, provider) to stamp the data
+            # source, and a participant wearing two Garmins has two of them.
+            with active_connection(connection.id):
+                created_ids = garmin_workouts.process_push_activities(
+                    db=db,
+                    activities=[activity],
+                    user_id=internal_user_id,
+                )
         except IntegrityError:
             db.rollback()
             log_structured(
@@ -144,7 +149,12 @@ def process_activity_notification(
             message=f"Garmin activity received: {activity_name}",
             items_processed=len(created_ids),
             primary_user_id=None if is_primary else primary_user_id,
-            metadata={"trace_id": trace_id, "activity_id": activity_id, "activity_type": activity_type},
+            metadata={
+                "trace_id": trace_id,
+                "activity_id": activity_id,
+                "activity_type": activity_type,
+                "connection_id": str(connection.id),
+            },
         )
         results.append(
             {

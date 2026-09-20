@@ -6,6 +6,8 @@ import {
   useRecoverySummaries,
 } from '@/hooks/api/use-health';
 import { DataSourceInfo } from '@/components/common/data-source-info';
+import { useUserConnections } from '@/hooks/api/use-health';
+import { buildAccountMap } from '@/lib/utils/account';
 import { SectionHeader } from '@/components/common/section-header';
 import { formatMinutes, parseApiDate } from '@/lib/utils/format';
 import type {
@@ -39,11 +41,20 @@ interface MetricRow {
   formatSpread?: (spread: number) => string;
 }
 
-// `source` (the HealthKit / Health Connect writer) is part of the key: without it
-// every brand relayed through Apple Health collapses into a single "apple" column,
-// which is exactly the distinction this view exists to show.
+// `data_source_id` is the backend's own identity for one distinct source, and
+// it includes the connected account: a participant wearing two Garmins reports
+// the same provider, the same writer and the same device model from both, and
+// keying on those three merged the two units into a single column - in the one
+// view whose entire purpose is to show them side by side.
+//
+// The composite stays as a fallback for responses that predate the id, where it
+// remains right for the case it was written for: without `source`, every brand
+// relayed through Apple Health collapses into one "apple" column.
 const sourceKey = (source: SourceMetadata | null | undefined) =>
-  `${source?.provider ?? 'unknown'}|${source?.source ?? ''}|${source?.device ?? ''}`;
+  source?.data_source_id ??
+  `${source?.provider ?? 'unknown'}|${source?.source ?? ''}|${source?.device ?? ''}|${
+    source?.user_connection_id ?? ''
+  }`;
 
 const num = (v: number | null | undefined): number | null =>
   v === null || v === undefined ? null : v;
@@ -191,6 +202,11 @@ export function CompareSection({ userId }: CompareSectionProps) {
   const isLoading = sleepLoading || recoveryLoading;
 
   // Union of every source that reported sleep or recovery for this day.
+  // Names the account each column came from. Two Garmins on one participant
+  // are otherwise identical in this table down to the device model.
+  const { data: connections } = useUserConnections(userId);
+  const accountMap = useMemo(() => buildAccountMap(connections), [connections]);
+
   const columns = useMemo<SourceColumn[]>(() => {
     const byKey = new Map<string, SourceColumn>();
 
@@ -322,7 +338,10 @@ export function CompareSection({ userId }: CompareSectionProps) {
                       className="text-right font-medium py-2 px-3 min-w-[120px]"
                     >
                       <div className="flex flex-col items-end gap-1">
-                        <DataSourceInfo source={col.source} />
+                        <DataSourceInfo
+                          source={col.source}
+                          accounts={accountMap}
+                        />
                       </div>
                     </th>
                   ))}

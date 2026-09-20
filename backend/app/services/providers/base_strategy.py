@@ -192,11 +192,21 @@ class BaseProviderStrategy(ABC):
                 )
         """
 
-    def start_historical_sync(self, user_id: UUID, days: int) -> HistoricalSyncResult:
+    def start_historical_sync(
+        self,
+        user_id: UUID,
+        days: int,
+        connection_id: UUID | None = None,
+    ) -> HistoricalSyncResult:
         """Dispatch an async historical data sync.
 
         Default implementation works for pull-based providers. Override for
         providers that use a different mechanism (e.g. Garmin webhook backfill).
+
+        ``connection_id`` restricts the run to one of the user's accounts with
+        this provider; without it every account is backfilled, which is the
+        right default for "give me this participant's history" and the previous
+        behaviour for the single-account case.
 
         Raises UnsupportedProviderError for providers that don't support historical sync.
         """
@@ -214,6 +224,7 @@ class BaseProviderStrategy(ABC):
                 "end_date": end_date.isoformat(),
                 "providers": [self.name],
                 "is_historical": True,
+                "connection_ids": [str(connection_id)] if connection_id else None,
             },
         )
 

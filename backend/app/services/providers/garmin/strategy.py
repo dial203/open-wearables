@@ -81,13 +81,26 @@ class GarminStrategy(BaseProviderStrategy):
             health_scores=HEALTH_SCORES,
         )
 
-    def start_historical_sync(self, user_id: UUID, days: int) -> HistoricalSyncResult:
+    def start_historical_sync(
+        self,
+        user_id: UUID,
+        days: int,
+        connection_id: UUID | None = None,
+    ) -> HistoricalSyncResult:
         """Trigger Garmin's webhook-based 30-day backfill.
 
         The ``days`` parameter is ignored - Garmin limits historical access
         to 30 days before the user's consent date.
+
+        ``connection_id`` picks one of the user's Garmin accounts. Without it,
+        the oldest is backfilled: the chain's progress state is keyed by user,
+        so unlike the pull providers this cannot fan out over every account at
+        once, and asking for "all of them" would silently mean one of them.
         """
-        task = start_garmin_full_backfill.delay(str(user_id))
+        task = start_garmin_full_backfill.delay(
+            str(user_id),
+            connection_id=str(connection_id) if connection_id else None,
+        )
         return HistoricalSyncResult(
             task_id=task.id,
             method="webhook_backfill",

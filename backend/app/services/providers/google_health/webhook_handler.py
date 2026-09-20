@@ -46,6 +46,7 @@ from app.services.providers.google_health.data_247 import (
 from app.services.providers.google_health.workouts import GoogleHealthApiWorkouts
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.raw_payload_storage import store_raw_payload
+from app.utils.connection_context import active_connection
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
@@ -245,7 +246,11 @@ class GoogleWebhookHandler(BaseWebhookHandler):
 
         start, end = window
         self.connection_repo.update_last_synced_at(db, connection)
-        count = self._fetch_and_save(db, user_id, data.data_type, start, end)
+        # Bind the Google account the notification came from: the fetch below
+        # resolves a token from (user, provider), and a user may have linked
+        # more than one.
+        with active_connection(connection.id):
+            count = self._fetch_and_save(db, user_id, data.data_type, start, end)
 
         log_structured(
             logger,

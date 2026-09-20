@@ -58,10 +58,20 @@ multiple pipes. **Your app decides** which copy to trust; OW just keeps them all
 | Oura | ✅ (wired via `ring_configuration`) | Model derived, e.g. `Oura Ring Gen3 Horizon`. |
 | Whoop | ❌ | Whoop does not report a device model → **manually entered** (see below). |
 
-When a provider doesn't report a device, an operator can set one on the OW side:
-`PUT /users/{user_id}/connections/{provider}/device-label`. That label backfills
-`device_model` on that connection's sources (including previously null rows), so the
-attribution becomes complete after the fact.
+Where the provider does report one, nothing needs entering: the model lands on the
+data source with the first sample, and `GET /users/{user_id}/connections` returns it
+per account as `observed_devices`, humanised (`Watch7,5` reads as
+`Apple Watch Series 8`) and most recent first.
+
+When a provider doesn't report a device, an operator sets one:
+`PATCH /users/{user_id}/connections/accounts/{connection_id}` with `device_label`.
+That label backfills `device_model` on that account's sources (including previously
+null rows), so the attribution becomes complete after the fact.
+
+The older `PUT /users/{user_id}/connections/{provider}/device-label` still works and
+takes an optional `connection_id` query parameter. Without it, it labels the oldest
+account for that provider — unambiguous only for a user who holds one. Prefer the
+per-account route, which names the account in the path.
 
 ---
 
@@ -143,13 +153,30 @@ Returns `{ "items": [...], "total": N }`. Each item:
 | `source` | Sub-source tag (Apple HealthKit / Health Connect bundle id) |
 | `original_source_name` | Canonical brand |
 | `display_name` | Pre-formatted "Provider · Model" for operator UIs |
-| `user_id`, `user_connection_id`, `software_version` | |
+| `user_connection_id` | The connected provider account this source arrived through; null for one-time imports |
+| `account_label`, `account_email` | That account's name and login e-mail — what tells two accounts with the same provider apart |
+| `user_id`, `software_version` | |
 
 **Prefer `id` over a composite key.** The DataSource uniqueness key is
-`(user_id, provider, COALESCE(device_model,''), COALESCE(source,''))` —
+`(user_id, provider, COALESCE(device_model,''), COALESCE(source,''),
+COALESCE(user_connection_id, '00000000-0000-0000-0000-000000000000'))` —
 `original_source_name` is *not* part of it, so brand casing (`FITBIT` vs `Fitbit`)
 never splits a source, and two rows showing the same brand are genuinely distinct
-sources differing by `device_model` and/or `source`.
+sources differing by `device_model`, `source` and/or the account they came through.
+
+### One user, several accounts with the same provider
+
+A user may hold more than one account with a provider — two Garmins worn at once
+for a device comparison, say. Each is a separate connection and produces
+**separate data sources**, even when both report the identical `device_model` and
+`source`, which is exactly what two units of the same model do. That is why
+`user_connection_id` is part of the identity: without it the two units' samples
+would share one source and could not be separated afterwards.
+
+Every sample's `source` metadata carries `user_connection_id` for the same reason.
+To group by account, group on that; to name it, resolve it against
+`GET /users/{user_id}/connections`, or read `account_label` / `account_email` from
+this endpoint. See [Several accounts per provider](/dev-guides/multiple-provider-accounts).
 
 ### Direct from the maker, or relayed?
 

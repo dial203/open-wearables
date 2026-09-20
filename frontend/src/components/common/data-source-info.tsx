@@ -11,17 +11,38 @@ import {
 import { cn } from '@/lib/utils';
 import { sourceDeviceName } from '@/lib/utils/device';
 import type { SourceMetadata } from '@/lib/api/types';
+import {
+  ACCOUNT_TYPE_CLASSES,
+  UNCLASSIFIED_CLASSES,
+  type AccountDescriptor,
+} from '@/lib/utils/account';
 
 const NO_DEVICE_INFO = 'Device info not available';
 
 export function DataSourceInfo({
   source,
+  accounts,
   className = '',
 }: {
   source: SourceMetadata | null | undefined;
+  /**
+   * The user's connected accounts, keyed by connection id. Pass it wherever
+   * samples from several sources sit side by side: once a participant holds two
+   * accounts with one provider, the badge and the device model are identical
+   * across both and the account is the only thing that tells them apart.
+   * Omitted, the component renders exactly as it did before.
+   */
+  accounts?: Map<string, AccountDescriptor>;
   className?: string;
 }) {
   if (!source) return null;
+
+  const account = source.user_connection_id
+    ? accounts?.get(source.user_connection_id)
+    : undefined;
+  // Only when it would otherwise be ambiguous - a single-account user gains no
+  // information from a chip saying which of their one account this is.
+  const showAccount = account?.hasSiblings ?? false;
 
   const { label: deviceTypeLabel } = deviceTypeInfo(source.device_type);
   // The registry's name for the unit, falling back to whatever the provider's model
@@ -49,6 +70,40 @@ export function DataSourceInfo({
           Provider: {providerLabel(source.provider)}
         </TooltipContent>
       </Tooltip>
+
+      {showAccount && account && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className={cn(
+                'shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium',
+                account.type
+                  ? (ACCOUNT_TYPE_CLASSES[account.type] ?? UNCLASSIFIED_CLASSES)
+                  : UNCLASSIFIED_CLASSES
+              )}
+            >
+              {account.name ?? `${account.typeLabel} ${account.index}`}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <div className="space-y-0.5">
+              <div>
+                {providerLabel(source.provider)} account {account.index} of{' '}
+                {account.count}
+              </div>
+              <div className="text-muted-foreground">{account.typeLabel}</div>
+              {account.email && (
+                <div className="text-muted-foreground">{account.email}</div>
+              )}
+              {account.devices.length > 0 && (
+                <div className="text-muted-foreground">
+                  {account.devices.join(', ')}
+                </div>
+              )}
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      )}
 
       {showSource && (
         <Tooltip>

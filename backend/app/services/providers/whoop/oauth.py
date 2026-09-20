@@ -57,6 +57,10 @@ class WhoopOAuth(BaseOAuthTemplate):
             # Whoop API returns: user_id, email, first_name, last_name
             provider_user_id = user_data.get("user_id")
             provider_user_id = str(provider_user_id) if provider_user_id is not None else None
+            # The account e-mail is the provenance record for this connection:
+            # with several Whoop accounts on one participant it is what says
+            # which of them a night of data came from.
+            email = user_data.get("email")
 
             log_structured(
                 logger,
@@ -66,7 +70,7 @@ class WhoopOAuth(BaseOAuthTemplate):
                 task="get_provider_user_info",
                 user_id=user_id,
             )
-            return {"user_id": provider_user_id, "username": None}
+            return {"user_id": provider_user_id, "username": None, "email": email}
         except Exception as e:
             log_structured(
                 logger,
@@ -76,7 +80,7 @@ class WhoopOAuth(BaseOAuthTemplate):
                 task="get_provider_user_info",
                 user_id=user_id,
             )
-            return {"user_id": None, "username": None}
+            return {"user_id": None, "username": None, "email": None}
 
     def deregister_user(self, access_token: str, provider_user_id: str | None = None) -> None:
         """Revoke WHOOP OAuth access for this user."""

@@ -55,7 +55,9 @@ class OuraOAuth(BaseOAuthTemplate):
             user_data = response.json()
             provider_user_id = user_data.get("id")
             provider_user_id = str(provider_user_id) if provider_user_id is not None else None
-            return {"user_id": provider_user_id, "username": None}
+            # personal_info carries the account's e-mail; it is the only field
+            # that names which of a participant's rings this connection is.
+            return {"user_id": provider_user_id, "username": None, "email": user_data.get("email")}
         except httpx.HTTPStatusError as e:
             log_structured(
                 logger,

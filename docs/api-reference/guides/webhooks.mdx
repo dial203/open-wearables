@@ -238,6 +238,19 @@ Fired per ingestion batch — one event per distinct `(user, provider, series_ty
 
 Every payload envelope has `type` (the event name as a string) and `data`.
 
+<Note>
+**Both events are per account, not per provider.** A user may hold
+[several accounts with one provider](/dev-guides/multiple-provider-accounts), and
+each has its own lifecycle: connecting a second Garmin emits a second
+`connection.created`, and `DELETE /users/{id}/connections/garmin` — which revokes
+all of them — emits one `connection.revoked` per account.
+
+`connection_id` is the stable key. A consumer keyed on `(user_id, provider)` will
+see what looks like a duplicate event and, worse, will treat the first
+`connection.revoked` as "this user has left Garmin" while another account is still
+syncing.
+</Note>
+
 ### `connection.created`
 
 ```json

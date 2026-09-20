@@ -632,7 +632,7 @@
           "External: Connections"
         ],
         "summary": "Get Connections Endpoint",
-        "description": "Get all connections for a user, enriched with provider capability metadata.",
+        "description": "Get all connections for a user, enriched with provider capability metadata.\n\nA user may hold several accounts with the same provider, so this list can\ncontain more than one entry per provider. ``account_index`` / ``account_count``\nposition each one within its provider (oldest first) and ``display_label``\nnames it, so a client can render three Garmins without guessing which is which.",
         "operationId": "get_connections_endpoint_api_v1_users__user_id__connections_get",
         "security": [
           {
@@ -695,13 +695,305 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/connections/accounts/{connection_id}": {
+      "get": {
+        "tags": [
+          "External: Connections"
+        ],
+        "summary": "Get Connection Account Endpoint",
+        "description": "One connected provider account, by connection id.",
+        "operationId": "get_connection_account_endpoint_api_v1_users__user_id__connections_accounts__connection_id__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserConnectionWithCapabilities"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "External: Connections"
+        ],
+        "summary": "Update Connection Account Endpoint",
+        "description": "Rename a connected account, or correct its e-mail or the device behind it.\n\nFields absent from the body are left alone; sending an explicit ``null``\nclears one. Setting ``device_label`` also stamps it onto this account's\nalready-ingested, device-less data sources, so history and future samples\nagree on what was worn.",
+        "operationId": "update_connection_account_endpoint_api_v1_users__user_id__connections_accounts__connection_id__patch",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserConnectionAccountUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserConnectionWithCapabilities"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "External: Connections"
+        ],
+        "summary": "Disconnect Connection Account Endpoint",
+        "description": "Disconnect one account, leaving the user's other accounts with the same provider alone.",
+        "operationId": "disconnect_connection_account_endpoint_api_v1_users__user_id__connections_accounts__connection_id__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/connections/accounts/{connection_id}/data": {
+      "delete": {
+        "tags": [
+          "External: Connections"
+        ],
+        "summary": "Delete Connection Account Data Endpoint",
+        "description": "Revoke one account and delete only the data that came through it.\n\nThe user's other accounts with the same provider keep their data. Health\nscores computed without a data source are left alone, because they cannot be\nattributed to one of several accounts - use the provider-level purge to\nclear those.",
+        "operationId": "delete_connection_account_data_endpoint_api_v1_users__user_id__connections_accounts__connection_id__data_delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/connections/{provider}": {
       "delete": {
         "tags": [
           "External: Connections"
         ],
         "summary": "Disconnect Provider Endpoint",
-        "description": "Disconnect a user from a provider, revoking the connection and clearing tokens.\n\nAlso takes an SDK user token, so the mobile SDK can report a sign-out its local-only\n``signOut()`` would otherwise hide. That path skips provider deregistration: leaving an\napp is no reason to unregister the user from the provider's API.",
+        "description": "Disconnect a user from a provider, revoking the connection(s) and clearing tokens.\n\nDisconnects *every* account the user holds with this provider. To disconnect\none of several, use DELETE /users/{user_id}/connections/accounts/{connection_id}.\n\nAlso takes an SDK user token, so the mobile SDK can report a sign-out its local-only\n``signOut()`` would otherwise hide. That path skips provider deregistration: leaving an\napp is no reason to unregister the user from the provider's API.",
         "operationId": "disconnect_provider_endpoint_api_v1_users__user_id__connections__provider__delete",
         "security": [
           {
@@ -761,13 +1053,115 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/connections/{provider}/device-label": {
+      "put": {
+        "tags": [
+          "External: Connections"
+        ],
+        "summary": "Set Connection Device Label Endpoint",
+        "description": "Manually set the device model behind a connection (e.g. \"Whoop 5.0\").\n\nFills data_source.device_model for providers whose API reports no device.\nApplies to existing device-less data sources and future ingested data.\n\nPass ``connection_id`` when the user holds several accounts with this\nprovider; without it the oldest is used, which is unambiguous only for the\nsingle-account case. The PATCH .../connections/accounts/{connection_id}\nendpoint does the same thing and names the account in the path.",
+        "operationId": "set_connection_device_label_endpoint_api_v1_users__user_id__connections__provider__device_label_put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ProviderName"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which account, when the user has several",
+              "title": "Connection Id"
+            },
+            "description": "Which account, when the user has several"
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceLabelUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceLabelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/connections/{provider}/data": {
       "delete": {
         "tags": [
           "External: Connections"
         ],
         "summary": "Delete Provider Data Endpoint",
-        "description": "Delete all of a user's data for a provider and revoke the connection.",
+        "description": "Delete all of a user's data for a provider and revoke its connection(s).\n\nCovers every account the user holds with this provider. To purge one of\nseveral, use DELETE /users/{user_id}/connections/accounts/{connection_id}/data.",
         "operationId": "delete_provider_data_endpoint_api_v1_users__user_id__connections__provider__data_delete",
         "security": [
           {
@@ -923,6 +1317,18 @@
             }
           },
           {
+            "name": "filter_by_priority",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Collapse to the highest-priority source per day. Set false to return every source.",
+              "default": true,
+              "title": "Filter By Priority"
+            },
+            "description": "Collapse to the highest-priority source per day. Set false to return every source."
+          },
+          {
             "name": "X-Open-Wearables-API-Key",
             "in": "header",
             "required": false,
@@ -1048,6 +1454,18 @@
             }
           },
           {
+            "name": "filter_by_priority",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Collapse to the highest-priority source per day. Set false to return every source.",
+              "default": true,
+              "title": "Filter By Priority"
+            },
+            "description": "Collapse to the highest-priority source per day. Set false to return every source."
+          },
+          {
             "name": "X-Open-Wearables-API-Key",
             "in": "header",
             "required": false,
@@ -1171,6 +1589,18 @@
               "default": 50,
               "title": "Limit"
             }
+          },
+          {
+            "name": "filter_by_priority",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Collapse to the highest-priority source per day. Set false to return every source.",
+              "default": true,
+              "title": "Filter By Priority"
+            },
+            "description": "Collapse to the highest-priority source per day. Set false to return every source."
           },
           {
             "name": "X-Open-Wearables-API-Key",
@@ -2311,6 +2741,79 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/events/workouts/{workout_id}/fit": {
+      "get": {
+        "tags": [
+          "External: Events"
+        ],
+        "summary": "Download Workout Fit",
+        "description": "Download the raw FIT file stored for a workout.\n\nOnly Garmin delivers raw FIT files, and only when `STORE_FIT_FILES` is enabled on the\ninstance. Returns the `.fit` bytes as an attachment. Use the `has_fit_file` flag on the\nworkout list/detail responses to know which workouts have a file. Responds 404 when the\nworkout doesn't exist for this user or no FIT file is stored for it.",
+        "operationId": "download_workout_fit_api_v1_users__user_id__events_workouts__workout_id__fit_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "workout_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Workout Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/events/menstrual-cycles": {
       "get": {
         "tags": [
@@ -2875,7 +3378,7 @@
           "External: Providers"
         ],
         "summary": "Get Provider Authorization URL",
-        "description": "Initiate OAuth flow for a provider.\n\nReturns authorization URL where user should be redirected to log in.",
+        "description": "Initiate OAuth flow for a provider.\n\nA user may hold several accounts with the same provider - two Whoops worn\nsimultaneously for a reliability study, say. By default this endpoint\nbehaves as it always has: with no existing account it creates one, and with\nexactly one it re-authorizes that one. Pass ``new_account=true`` to add\nanother, or ``connection_id`` to re-authorize a specific one.\n\n``account_type``, ``account_label`` and ``account_email`` are carried through\nthe OAuth flow and recorded on whichever account the callback resolves.\n``account_type`` is what a study filters on - the validation arm separated\nfrom the participant's own everyday wear. The e-mail is what ties a data set\nback to the login it came from, so pass it for providers whose API does not\nexpose it (Garmin, Polar, Suunto, Strava, Withings).\n\nReturns authorization URL where user should be redirected to log in.",
         "operationId": "authorize_provider_api_v1_oauth__provider__authorize_get",
         "parameters": [
           {
@@ -2916,6 +3419,92 @@
               "title": "Redirect Uri"
             },
             "description": "Optional redirect URI after authorization"
+          },
+          {
+            "name": "connection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Re-authorize this existing account instead of adding another",
+              "title": "Connection Id"
+            },
+            "description": "Re-authorize this existing account instead of adding another"
+          },
+          {
+            "name": "new_account",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Add another account with this provider beside the ones already linked",
+              "default": false,
+              "title": "New Account"
+            },
+            "description": "Add another account with this provider beside the ones already linked"
+          },
+          {
+            "name": "account_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AccountType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "What this account is for: personal, validation, reliability, monitoring, testing, other",
+              "title": "Account Type"
+            },
+            "description": "What this account is for: personal, validation, reliability, monitoring, testing, other"
+          },
+          {
+            "name": "account_label",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Operator-facing name for this account, e.g. \"P01 arm A\"",
+              "title": "Account Label"
+            },
+            "description": "Operator-facing name for this account, e.g. \"P01 arm A\""
+          },
+          {
+            "name": "account_email",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Login e-mail of the provider account, when the provider does not report it",
+              "title": "Account Email"
+            },
+            "description": "Login e-mail of the provider account, when the provider does not report it"
           }
         ],
         "responses": {
@@ -3669,6 +4258,25 @@
               "title": "Days"
             },
             "description": "Days of historical data to fetch (default: 90, max: 365). Ignored for providers with their own limits (e.g. Garmin: 30 days)."
+          },
+          {
+            "name": "connection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict the backfill to one of the user's accounts with this provider",
+              "title": "Connection Id"
+            },
+            "description": "Restrict the backfill to one of the user's accounts with this provider"
           },
           {
             "name": "X-Open-Wearables-API-Key",
@@ -5094,6 +5702,148 @@
                     "type": "string"
                   },
                   "title": "Response Import Xml File Api V1 Users  User Id  Import Apple Xml Direct Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/import/polar/rr": {
+      "post": {
+        "tags": [
+          "External: Apple Health Import"
+        ],
+        "summary": "Import Polar Rr",
+        "description": "Import a Polar Flow RR-interval CSV.\n\nThe CSV is Polar Flow's per-exercise RR export (`duration,offline` header, one\nbeat-to-beat interval in ms per row). Per-beat timestamps are reconstructed from the\nsession start; the data is stored as an `rr_interval` time series on the Polar source\nand is then queryable via `/timeseries?types=rr_interval`.\n\nProvide exactly one of `workout_id` (ties to a known OW workout) or `start_time`\n(attributes by session start when the OW workout id isn't known). 404 if the workout\ndoesn't exist for this user; 400 if the CSV is malformed or the params are invalid.",
+        "operationId": "import_polar_rr_api_v1_users__user_id__import_polar_rr_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "workout_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "OW workout id this RR recording belongs to",
+              "title": "Workout Id"
+            },
+            "description": "OW workout id this RR recording belongs to"
+          },
+          {
+            "name": "start_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Session start time (ISO 8601, ideally with offset) to attribute the RR by, when the OW workout id isn't known — e.g. Polar Flow exposes only its own session id.",
+              "title": "Start Time"
+            },
+            "description": "Session start time (ISO 8601, ideally with offset) to attribute the RR by, when the OW workout id isn't known — e.g. Polar Flow exposes only its own session id."
+          },
+          {
+            "name": "device",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Device model for the RR source (e.g. 'Polar Grit X2 Pro'); used with start_time",
+              "title": "Device"
+            },
+            "description": "Device model for the RR source (e.g. 'Polar Grit X2 Pro'); used with start_time"
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_polar_rr_api_v1_users__user_id__import_polar_rr_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "title": "Response Import Polar Rr Api V1 Users  User Id  Import Polar Rr Post"
                 }
               }
             }
@@ -9309,6 +10059,902 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/devices": {
+      "get": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "List a user's devices",
+        "operationId": "list_devices_api_v1_users__user_id__devices_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "include_retired",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include devices that are no longer worn.",
+              "default": true,
+              "title": "Include Retired"
+            },
+            "description": "Include devices that are no longer worn."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Create a device by hand",
+        "description": "For hardware no provider has reported yet, or one detection cannot name.\n\nA label given here is `manual` from the start, so later detection will not\noverwrite it.",
+        "operationId": "create_device_api_v1_users__user_id__devices_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/devices/{device_id}": {
+      "get": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Get one device",
+        "operationId": "get_device_api_v1_users__user_id__devices__device_id__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Device ID",
+              "title": "Device Id"
+            },
+            "description": "Device ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Edit a device",
+        "description": "Edit the fields that are our interpretation of the hardware.\n\n`brand` and `model_raw` are not editable: they record what the provider claimed,\nand overwriting them would erase the only evidence of it. Fix the presentation\nwith `model_display`.",
+        "operationId": "update_device_api_v1_users__user_id__devices__device_id__patch",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Device ID",
+              "title": "Device Id"
+            },
+            "description": "Device ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/devices/{device_id}/retire": {
+      "post": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Retire or reactivate a device",
+        "description": "Record that a unit stopped being worn, with the date it happened.\n\nSet `effective_at` for a replacement: an identical replacement reports the same\nbrand, model and routes as the unit it replaced, so without the date pre- and\npost-swap samples pool into one device and the swap disappears from the analysis.",
+        "operationId": "retire_device_api_v1_users__user_id__devices__device_id__retire_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Device ID",
+              "title": "Device Id"
+            },
+            "description": "Device ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRetireRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/devices/{device_id}/link": {
+      "post": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Attribute a data source to a device",
+        "description": "Attribution groups data sources; it never merges them.\n\nThe same ring read from its maker's API and relayed through Apple Health stays\ntwo data sources under one device, because the relay changes freshness, rounding\nand completeness and that comparison has to remain available.",
+        "operationId": "link_data_source_api_v1_users__user_id__devices__device_id__link_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Device ID",
+              "title": "Device Id"
+            },
+            "description": "Device ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceLinkRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/devices/{device_id}/unlink": {
+      "post": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Detach a data source from a device",
+        "operationId": "unlink_data_source_api_v1_users__user_id__devices__device_id__unlink_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Device ID",
+              "title": "Device Id"
+            },
+            "description": "Device ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceLinkRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/devices/{device_id}/merge": {
+      "post": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Merge another device into this one",
+        "description": "Irreversible: the absorbed device row is deleted.\n\nEverything needed to rebuild it by hand is written to history first. Prefer\naccepting a link proposal where one exists, so the evidence is recorded with the\ndecision.",
+        "operationId": "merge_devices_api_v1_users__user_id__devices__device_id__merge_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Device ID to keep",
+              "title": "Device Id"
+            },
+            "description": "Device ID to keep"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceMergeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/devices/{device_id}/split": {
+      "post": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Split data sources onto a new device",
+        "description": "Returns the newly created device. Splitting every source off is refused.",
+        "operationId": "split_device_api_v1_users__user_id__devices__device_id__split_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Device ID to split",
+              "title": "Device Id"
+            },
+            "description": "Device ID to split"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceSplitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/devices-history": {
+      "get": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Device attribution history",
+        "description": "Append-only record of every attribution change, newest first.\n\nScoped to the user rather than the device, so entries for a device that has since\nbeen merged away still appear - those are exactly the ones needed to work out what\nhappened to data that moved.",
+        "operationId": "get_device_history_api_v1_users__user_id__devices_history_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "device_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this device's entries.",
+              "title": "Device Id"
+            },
+            "description": "Only this device's entries."
+          },
+          {
+            "name": "data_source_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this data source's entries.",
+              "title": "Data Source Id"
+            },
+            "description": "Only this data source's entries."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "description": "Max entries, newest first.",
+              "default": 200,
+              "title": "Limit"
+            },
+            "description": "Max entries, newest first."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceHistoryListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/device-link-proposals": {
+      "get": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Pending cross-route link proposals",
+        "description": "Pairs of devices that may be one unit seen by different ingest routes.\n\nNo identifier is shared across routes, so these are inferred from temporal\noverlap of the same measurement and are never applied automatically. `evidence`\ncarries what produced the score.",
+        "operationId": "list_link_proposals_api_v1_users__user_id__device_link_proposals_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkProposalListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/device-link-proposals/refresh": {
+      "post": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Re-score cross-route link proposals",
+        "description": "Re-run the scorer. Pairs a person already rejected are not revived.",
+        "operationId": "refresh_link_proposals_api_v1_users__user_id__device_link_proposals_refresh_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkProposalListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/device-link-proposals/{proposal_id}/decide": {
+      "post": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "Accept or reject a link proposal",
+        "description": "Accepting merges device_b into device_a. Rejecting is permanent.\n\nA rejection is kept forever so the deterministic scorer cannot re-raise a\nquestion that has been answered - a queue that keeps re-asking stops being read.",
+        "operationId": "decide_link_proposal_api_v1_users__user_id__device_link_proposals__proposal_id__decide_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "proposal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Proposal ID",
+              "title": "Proposal Id"
+            },
+            "description": "Proposal ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkProposalDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkProposalResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/oura/webhooks": {
       "get": {
         "tags": [
@@ -10145,6 +11791,19 @@
   },
   "components": {
     "schemas": {
+      "AccountType": {
+        "type": "string",
+        "enum": [
+          "personal",
+          "validation",
+          "reliability",
+          "monitoring",
+          "testing",
+          "other"
+        ],
+        "title": "AccountType",
+        "description": "Why this provider account is linked to this participant.\n\nA user may hold several accounts with one provider, and the provider name no\nlonger says anything about which is which. The e-mail identifies an account;\nthis says what it is *for*, which is what a study needs to filter on - the\nvalidation arm separated from the participant's own everyday data, the\ndevice-checkout account kept out of the analysis entirely.\n\nStored as a plain string rather than a database enum, matching DeviceType and\nProviderName, so a value can be added here without a migration."
+      },
       "ActivitySummary": {
         "properties": {
           "date": {
@@ -10952,6 +12611,20 @@
         "type": "object",
         "title": "Body_create_api_key_api_v1_developer_api_keys_post"
       },
+      "Body_import_polar_rr_api_v1_users__user_id__import_polar_rr_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_polar_rr_api_v1_users__user_id__import_polar_rr_post"
+      },
       "Body_import_xml_file_api_v1_users__user_id__import_apple_xml_direct_post": {
         "properties": {
           "file": {
@@ -11321,6 +12994,76 @@
               }
             ],
             "title": "Display Name"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id",
+            "description": "The physical device this source is attributed to, or `null` when it is unattributed. Unattributed is a normal resting state: detection only groups what a provider itself identifies."
+          },
+          "attribution_locked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attribution Locked At",
+            "description": "When someone detached this source from a device by hand. While set, detection leaves it unattributed instead of re-attaching it on the next sync. Linking it to a device clears it."
+          },
+          "account_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Type",
+            "description": "What the connected account is for: personal, validation, reliability, monitoring, testing, other. Null when nobody has classified it.",
+            "example": "validation"
+          },
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label",
+            "description": "Name of the connected account this source arrived through.",
+            "example": "P01 arm A"
+          },
+          "account_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Email",
+            "description": "Login e-mail of the connected account this source arrived through.",
+            "example": "p01.left@lab.example.edu"
+          },
+          "ingestion_route": {
+            "$ref": "#/components/schemas/IngestionRoute",
+            "description": "Whether this source came straight from the maker's API (`direct`) or was relayed through an aggregator platform such as Apple Health or Google Health (`aggregator`). When `aggregator`, `provider` names the platform and `original_source_name` names the brand that actually recorded the data.",
+            "default": "direct"
           }
         },
         "type": "object",
@@ -11471,6 +13214,830 @@
         "type": "object",
         "title": "DeveloperUpdate"
       },
+      "DeviceCreate": {
+        "properties": {
+          "device_type": {
+            "$ref": "#/components/schemas/DeviceType",
+            "default": "unknown"
+          },
+          "brand": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand"
+          },
+          "model_raw": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Raw",
+            "description": "Only meaningful on a hand-created device, where the person is the reporter."
+          },
+          "model_display": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Display"
+          },
+          "brand_display": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Display"
+          },
+          "serial": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serial"
+          },
+          "firmware_version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware Version"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "wear_location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wear Location"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Recorded in the device's history."
+          }
+        },
+        "type": "object",
+        "title": "DeviceCreate",
+        "description": "Create a device by hand, for hardware no provider has reported yet."
+      },
+      "DeviceDataSourceResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "device_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Model"
+          },
+          "device_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Type"
+          },
+          "original_source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Source Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "provider"
+        ],
+        "title": "DeviceDataSourceResponse",
+        "description": "A data source attributed to a device, kept whole rather than merged into it."
+      },
+      "DeviceHistoryListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceHistoryResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "DeviceHistoryListResponse"
+      },
+      "DeviceHistoryResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          },
+          "data_source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Source Id"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field"
+          },
+          "old_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Value"
+          },
+          "new_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Value"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "action",
+          "created_at"
+        ],
+        "title": "DeviceHistoryResponse"
+      },
+      "DeviceIdentityResponse": {
+        "properties": {
+          "route": {
+            "type": "string",
+            "title": "Route",
+            "description": "Ingest route that issued the claim.",
+            "examples": [
+              "oura"
+            ]
+          },
+          "id_kind": {
+            "type": "string",
+            "title": "Id Kind",
+            "examples": [
+              "oura_config_id"
+            ]
+          },
+          "id_value": {
+            "type": "string",
+            "title": "Id Value"
+          },
+          "confidence": {
+            "type": "string",
+            "title": "Confidence",
+            "description": "`strong` if the provider issued it and it distinguishes two same-model units; `weak` if it names the writing app or the hardware model, which identical units share.",
+            "examples": [
+              "strong"
+            ]
+          },
+          "first_seen_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen At"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "route",
+          "id_kind",
+          "id_value",
+          "confidence"
+        ],
+        "title": "DeviceIdentityResponse",
+        "description": "One route's identity claim about a device."
+      },
+      "DeviceLabelResponse": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "device_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Label"
+          },
+          "connection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Connection Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "device_label",
+          "connection_id"
+        ],
+        "title": "DeviceLabelResponse"
+      },
+      "DeviceLabelUpdate": {
+        "properties": {
+          "device_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Label"
+          }
+        },
+        "type": "object",
+        "title": "DeviceLabelUpdate",
+        "description": "Device identifier to attach to a connection (null to clear)."
+      },
+      "DeviceLinkRequest": {
+        "properties": {
+          "data_source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Data Source Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_source_id"
+        ],
+        "title": "DeviceLinkRequest",
+        "description": "Attribute a data source to this device, or move it here from another one."
+      },
+      "DeviceListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "DeviceListResponse"
+      },
+      "DeviceMergeRequest": {
+        "properties": {
+          "absorb_device_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Absorb Device Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "absorb_device_id"
+        ],
+        "title": "DeviceMergeRequest",
+        "description": "Fold another device into this one.\n\nIrreversible: the absorbed row is deleted. Everything needed to rebuild it by\nhand is written to history first. The data sources are re-pointed, never\ncombined - direct and relayed data differ in freshness and rounding, so the\ncomparison survives the merge."
+      },
+      "DeviceResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "brand": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand"
+          },
+          "model_raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Raw",
+            "description": "The provider's own model string, verbatim. Never normalized, never editable."
+          },
+          "model_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Display",
+            "description": "Hand-set or derived marketing name. Display only; edit this rather than model_raw."
+          },
+          "brand_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Display",
+            "description": "Hand-set brand. Display only; edit this rather than brand."
+          },
+          "host_model_raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Model Raw",
+            "description": "The phone that relayed this device's data, as the platform reported it. Set when a third-party app wrote through HealthKit or Health Connect and the only model string on the row named the phone rather than this unit. Provenance, not this device's model.",
+            "examples": [
+              "iPhone 17 Pro"
+            ]
+          },
+          "serial": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serial",
+            "description": "Hand-entered serial or asset tag. Never used to group data sources."
+          },
+          "firmware_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware Version",
+            "description": "Hand-entered firmware version, for a series that spans an update."
+          },
+          "device_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeviceType"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Device Type"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "label_source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LabelSource"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Label Source",
+            "description": "`manual` once a person sets a label; detection never overwrites one."
+          },
+          "wear_location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wear Location"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "retired_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retired At",
+            "description": "When this unit stopped being worn. Set it on a replacement: an identical replacement unit reports the same brand, model and routes, so without this date pre- and post-swap samples pool into one device."
+          },
+          "first_seen_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen At"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "identities": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceIdentityResponse"
+            },
+            "type": "array",
+            "title": "Identities",
+            "default": []
+          },
+          "data_sources": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceDataSourceResponse"
+            },
+            "type": "array",
+            "title": "Data Sources",
+            "default": []
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "description": "What to call this device on screen, derived so every consumer agrees.\n\nA label a person set wins: it is the only name that can say which of two\nidentical units this is. Then the hand-set model, then an auto label, then the\nprovider's verbatim string - showing a raw code beats guessing a friendlier name\nthat may be wrong - and finally a brand-and-type description for a device\nnothing has named yet.",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "device_type",
+          "label_source",
+          "is_active",
+          "created_at",
+          "updated_at",
+          "display_name"
+        ],
+        "title": "DeviceResponse"
+      },
+      "DeviceRetireRequest": {
+        "properties": {
+          "retired": {
+            "type": "boolean",
+            "title": "Retired",
+            "default": true
+          },
+          "effective_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective At",
+            "description": "When the unit stopped being worn. Defaults to now. Set it explicitly for a past swap."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "title": "DeviceRetireRequest"
+      },
+      "DeviceSplitRequest": {
+        "properties": {
+          "data_source_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Data Source Ids"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_source_ids"
+        ],
+        "title": "DeviceSplitRequest",
+        "description": "Move some of this device's data sources onto a new one.\n\nThe undo for a merge, and the fix for detection that grouped too eagerly.\nSplitting every source off is refused - that is a rename."
+      },
       "DeviceStateEvent": {
         "properties": {
           "eventType": {
@@ -11573,6 +14140,9 @@
       "DeviceType": {
         "type": "string",
         "enum": [
+          "chest_strap",
+          "eeg",
+          "headband",
           "watch",
           "band",
           "phone",
@@ -11686,6 +14256,118 @@
           "priority"
         ],
         "title": "DeviceTypePriorityUpdate"
+      },
+      "DeviceUpdate": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "device_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeviceType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wear_location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wear Location"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "model_display": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Display"
+          },
+          "brand_display": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Display"
+          },
+          "serial": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serial"
+          },
+          "firmware_version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firmware Version"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Recorded in the device's history."
+          }
+        },
+        "type": "object",
+        "title": "DeviceUpdate",
+        "description": "Hand edits. Only fields that are our interpretation, never the provider's report.\n\n`brand`, `model_raw` and `host_model_raw` are absent on purpose: they record what\nthe provider claimed the hardware was, and editing them in place would erase the\nonly evidence of that. Correct the presentation with `model_display` and\n`brand_display`, which sit beside the claim rather than on top of it and win\nwherever the device is named.\n\nThis is the endpoint for the common relayed case - a headband whose data reaches\nApple Health through its own app, where the platform only ever reported the phone.\nNothing there identifies the hardware, so everything about it is a hand edit."
       },
       "EndpointCreateRequest": {
         "properties": {
@@ -12338,6 +15020,15 @@
         ],
         "title": "HistoricalDataTypeSyncEndEvent"
       },
+      "IngestionRoute": {
+        "type": "string",
+        "enum": [
+          "direct",
+          "aggregator"
+        ],
+        "title": "IngestionRoute",
+        "description": "How data reached Open Wearables — straight from the maker, or relayed.\n\nConsumers use this to tell \"Oura read from Oura's own API\" apart from \"Oura\ndata relayed through Apple Health\", which are different in freshness,\ncompleteness and rounding even though both carry the same brand."
+      },
       "IntensityMinutes": {
         "properties": {
           "light": {
@@ -12539,6 +15230,140 @@
           "revoked"
         ],
         "title": "InvitationStatus"
+      },
+      "LabelSource": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "manual"
+        ],
+        "title": "LabelSource",
+        "description": "Where a device's label came from. A manual label is never overwritten by detection."
+      },
+      "LinkProposalDecision": {
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted",
+            "description": "`true` merges device_b into device_a. `false` records the rejection permanently, so the pair is never proposed again."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "title": "LinkProposalDecision"
+      },
+      "LinkProposalListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LinkProposalResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "LinkProposalListResponse"
+      },
+      "LinkProposalResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "device_a_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Device A Id"
+          },
+          "device_b_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Device B Id"
+          },
+          "score": {
+            "type": "string",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Score"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "device_a_id",
+          "device_b_id",
+          "score",
+          "status",
+          "created_at"
+        ],
+        "title": "LinkProposalResponse",
+        "description": "A suggestion that two devices are one unit seen by different routes.\n\nNever applied automatically. `evidence` carries what produced the score so a\nreviewer can judge the proposal rather than trust it."
       },
       "LiveSyncMode": {
         "type": "string",
@@ -14363,6 +17188,7 @@
           "heart_rate_recovery_one_minute",
           "walking_heart_rate_average",
           "heart_rate_variability_rmssd",
+          "rr_interval",
           "oxygen_saturation",
           "blood_glucose",
           "blood_pressure_systolic",
@@ -15093,6 +17919,18 @@
             ],
             "title": "Avg Heart Rate Bpm"
           },
+          "resting_heart_rate_bpm": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resting Heart Rate Bpm",
+            "description": "Resting heart rate recorded during this sleep. Read from the provider's resting_heart_rate series, so it is populated for providers that record one without filing a recovery score (e.g. Oura, Garmin)."
+          },
           "avg_hrv_sdnn_ms": {
             "anyOf": [
               {
@@ -15189,6 +18027,123 @@
             ],
             "example": "phone"
           },
+          "data_source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Source Id",
+            "description": "Stable DataSource id. Identical to `items[].id` from /users/{user_id}/data-sources."
+          },
+          "ingestion_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ingestion Provider",
+            "description": "The ingestion path (DataSource.provider), e.g. apple, google, garmin. Always equal to `provider`; kept as a stable name for consumers that pinned to it while `provider` still carried the sub-source tag.",
+            "example": "apple"
+          },
+          "source_tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Tag",
+            "description": "Sub-source tag (DataSource.source), e.g. an Apple HealthKit bundle id. Equal to `source`.",
+            "example": "com.oura.oura"
+          },
+          "original_source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Source Name",
+            "description": "Canonical brand the data came from (DataSource.original_source_name).",
+            "example": "Oura"
+          },
+          "ingestion_route": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ingestion Route",
+            "description": "`direct` if the data came straight from the maker's API, `aggregator` if it was relayed through a platform such as Apple Health or Google Health. When `aggregator`, `ingestion_provider` names the platform and `original_source_name` names the brand that recorded it.",
+            "example": "aggregator"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id",
+            "description": "Stable id of the physical device, or null when the source is not attributed to one. Survives a model-string change, and is shared across ingest routes once the routes have been linked. Identical to `items[].id` from /users/{user_id}/devices."
+          },
+          "device_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Label",
+            "description": "Human-assigned name for the device, if one has been set.",
+            "example": "Sub 04 fenix"
+          },
+          "device_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Display Name",
+            "description": "What to call the physical unit: its label, else its hand-set model, else the provider's model string. Null when the source is not attributed to a device. Prefer this over `device_name`, which can only ever describe what the provider reported - on a relayed stream that is the phone that ran the writing app, not the hardware that recorded the data.",
+            "example": "Muse S Athena"
+          },
+          "user_connection_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Connection Id",
+            "description": "Id of the connected provider account this data came through, or null for one-time imports. Identical to `id` from /users/{user_id}/connections."
+          },
           "device_name": {
             "anyOf": [
               {
@@ -15208,7 +18163,8 @@
           "provider",
           "device_name"
         ],
-        "title": "SourceMetadata"
+        "title": "SourceMetadata",
+        "description": "Attribution for a sample or record.\n\n``provider`` is the integration the data arrived through (apple, garmin, ...).\n``source`` is the writer inside that integration - a third-party app name for\nHealthKit/Health Connect data (\"Connect\", \"Zepp Life\"), or the provider key\nitself for native API integrations."
       },
       "StorageEstimate": {
         "properties": {
@@ -16534,6 +19490,64 @@
         "title": "UploadDataResponse",
         "description": "Response schema for data upload/sync operations.\n\nReturned when health data is queued for asynchronous processing via Celery.\nThe actual import happens in the background - this response indicates the task was queued successfully."
       },
+      "UserConnectionAccountUpdate": {
+        "properties": {
+          "account_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What this account is for: personal, validation, reliability, monitoring, testing, other"
+          },
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label",
+            "description": "Operator-facing name for this account"
+          },
+          "account_email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Email",
+            "description": "Login e-mail of the provider account"
+          },
+          "device_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Label",
+            "description": "Device behind this account, e.g. \"Whoop 5.0\""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "UserConnectionAccountUpdate",
+        "description": "Editable, human-facing fields of one connected provider account.\n\nOnly the fields present in the request body are touched; sending ``null``\nexplicitly clears one. That distinction matters here because the e-mail is\nthe record of which account a data set came from, and a partial update of an\nunrelated field must not be able to erase it."
+      },
       "UserConnectionSummary": {
         "properties": {
           "provider": {
@@ -16597,6 +19611,38 @@
             ],
             "title": "Provider Username"
           },
+          "account_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label"
+          },
+          "account_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Email"
+          },
           "scope": {
             "anyOf": [
               {
@@ -16612,6 +19658,17 @@
             "type": "string",
             "format": "uuid",
             "title": "Id"
+          },
+          "device_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Label"
           },
           "status": {
             "$ref": "#/components/schemas/ConnectionStatus"
@@ -16698,6 +19755,29 @@
             },
             "type": "array",
             "title": "Linked User Ids"
+          },
+          "account_index": {
+            "type": "integer",
+            "title": "Account Index",
+            "default": 1
+          },
+          "account_count": {
+            "type": "integer",
+            "title": "Account Count",
+            "default": 1
+          },
+          "observed_devices": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Observed Devices"
+          },
+          "display_label": {
+            "type": "string",
+            "title": "Display Label",
+            "description": "A name for this account that is never empty.\n\nFalls back through what the provider told us before giving up and using\nthe id, so a connection is always identifiable on screen and in an\nexport even when nobody has named it yet.",
+            "readOnly": true
           }
         },
         "type": "object",
@@ -16708,7 +19788,8 @@
           "status",
           "last_synced_at",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "display_label"
         ],
         "title": "UserConnectionWithCapabilities",
         "description": "UserConnectionRead enriched with provider capability metadata.\n\nExtra fields are populated by the endpoint, not from the ORM model."
@@ -17754,6 +20835,12 @@
                 "type": "null"
               }
             ]
+          },
+          "has_fit_file": {
+            "type": "boolean",
+            "title": "Has Fit File",
+            "description": "Whether a raw FIT file is stored for this workout and downloadable at /users/{user_id}/events/workouts/{workout_id}/fit (Garmin only).",
+            "default": false
           },
           "segments": {
             "anyOf": [

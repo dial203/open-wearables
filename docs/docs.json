@@ -143,6 +143,7 @@
               "dev-guides/integration-guide",
               "dev-guides/how-to-add-new-provider",
               "dev-guides/device-registry",
+              "dev-guides/multiple-provider-accounts",
               "dev-guides/data-migrations",
               "dev-guides/ngrok-setup"
             ]
@@ -213,6 +214,11 @@
             "group": "Connections",
             "pages": [
               "GET /api/v1/users/{user_id}/connections",
+              "GET /api/v1/users/{user_id}/connections/accounts/{connection_id}",
+              "PATCH /api/v1/users/{user_id}/connections/accounts/{connection_id}",
+              "DELETE /api/v1/users/{user_id}/connections/accounts/{connection_id}",
+              "DELETE /api/v1/users/{user_id}/connections/accounts/{connection_id}/data",
+              "PUT /api/v1/users/{user_id}/connections/{provider}/device-label",
               "DELETE /api/v1/users/{user_id}/connections/{provider}",
               "DELETE /api/v1/users/{user_id}/connections/{provider}/data"
             ]

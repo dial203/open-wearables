@@ -7,6 +7,7 @@ import {
   History,
   Loader2,
   Link2,
+  Mail,
   MinusCircle,
   Pencil,
   PlayCircle,
@@ -15,13 +16,23 @@ import {
   Trash2,
   TriangleAlert,
   Unlink,
+  UserRound,
   Watch,
   XCircle,
   Zap,
 } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { formatDistanceToNow } from 'date-fns';
-import { UserConnection } from '@/lib/api/types';
+import {
+  ACCOUNT_TYPES,
+  accountTypeLabel,
+  type AccountType,
+  type UserConnection,
+} from '@/lib/api/types';
+import {
+  ACCOUNT_TYPE_CLASSES,
+  UNCLASSIFIED_CLASSES,
+} from '@/lib/utils/account';
 import { API_CONFIG } from '@/lib/api/config';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -66,9 +77,9 @@ import {
   formatRelative,
 } from '@/lib/utils/sync-format';
 import {
-  useDisconnectProvider,
-  useSetConnectionDeviceLabel,
-  usePurgeProviderData,
+  useDisconnectConnectionAccount,
+  usePurgeConnectionAccountData,
+  useUpdateConnectionAccount,
   useSynchronizeDataFromProvider,
   useSyncHistoricalData,
   useGarminBackfillStatus,
@@ -266,22 +277,61 @@ function ConnectionCardComponent({
   const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
   const [showDeleteDataDialog, setShowDeleteDataDialog] = useState(false);
   const [showLastSyncs, setShowLastSyncs] = useState(false);
-  const [showDeviceDialog, setShowDeviceDialog] = useState(false);
+  const [showAccountDialog, setShowAccountDialog] = useState(false);
   const [deviceInput, setDeviceInput] = useState(connection.device_label ?? '');
-  const { mutate: setDeviceLabel, isPending: isSavingDevice } =
-    useSetConnectionDeviceLabel(connection.provider, connection.user_id);
+  const [labelInput, setLabelInput] = useState(connection.account_label ?? '');
+  const [emailInput, setEmailInput] = useState(connection.account_email ?? '');
+  const [typeInput, setTypeInput] = useState<AccountType | ''>(
+    connection.account_type ?? ''
+  );
   const [imageError, setImageError] = useState(false);
 
   const iconUrl = connection.icon_url
     ? new URL(connection.icon_url, API_CONFIG.baseUrl).toString()
     : null;
-  const displayName = providerLabel(connection.provider);
+  const providerName = providerLabel(connection.provider);
+
+  // The user may hold several accounts with this provider, so the provider name
+  // alone no longer identifies this card. account_count comes from the API; a
+  // client that predates it, or a provider with one account, reads as 1.
+  const accountCount = connection.account_count ?? 1;
+  const hasSiblings = accountCount > 1;
+  // Providers that report device metadata label themselves; the manual label is
+  // the fallback for the ones that report none (Whoop).
+  const observedDevices =
+    connection.observed_devices && connection.observed_devices.length > 0
+      ? connection.observed_devices
+      : connection.device_label
+        ? [connection.device_label]
+        : [];
+  const accountName =
+    connection.display_label ??
+    connection.account_label ??
+    connection.provider_username ??
+    connection.account_email ??
+    `${providerName} account ${connection.account_index ?? 1}`;
+  // What the destructive dialogs name. With siblings, "Delete all Garmin data"
+  // would be a lie about the blast radius.
+  const displayName = hasSiblings
+    ? `${providerName} — ${accountName}`
+    : providerName;
+
+  const { mutate: updateAccount, isPending: isSavingAccount } =
+    useUpdateConnectionAccount(connection.user_id, connection.id);
 
   const { mutate: disconnectProvider, isPending: isDisconnecting } =
-    useDisconnectProvider(connection.provider, connection.user_id);
+    useDisconnectConnectionAccount(
+      connection.user_id,
+      connection.id,
+      accountName
+    );
 
   const { mutate: purgeProviderData, isPending: isPurgingData } =
-    usePurgeProviderData(connection.provider, connection.user_id);
+    usePurgeConnectionAccountData(
+      connection.user_id,
+      connection.id,
+      accountName
+    );
 
   const { mutate: synchronizeDataFromProvider, isPending: isSynchronizing } =
     useSynchronizeDataFromProvider(connection.provider, connection.user_id);
@@ -371,9 +421,45 @@ function ConnectionCardComponent({
               )}
             </div>
             <div>
-              <h3 className="font-semibold text-card-foreground text-lg">
-                {displayName}
+              <h3 className="font-semibold text-card-foreground text-lg flex items-center gap-2">
+                {providerName}
+                {hasSiblings && (
+                  <span className="rounded-full border border-border/60 bg-muted/60 px-2 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums">
+                    {connection.account_index ?? 1} of {accountCount}
+                  </span>
+                )}
               </h3>
+              {/* The account, not the provider. With two Whoops on one
+                  participant this line is what says which one this card is. */}
+              <p className="text-sm font-medium text-foreground/90 mt-0.5 flex items-center gap-1.5">
+                <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">{accountName}</span>
+                {/* What the account is for. Shown even when unclassified, so an
+                    account nobody has classified is findable rather than silent. */}
+                <span
+                  className={cn(
+                    'shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium',
+                    connection.account_type
+                      ? (ACCOUNT_TYPE_CLASSES[connection.account_type] ??
+                          UNCLASSIFIED_CLASSES)
+                      : UNCLASSIFIED_CLASSES
+                  )}
+                >
+                  {accountTypeLabel(connection.account_type)}
+                </span>
+              </p>
+              {connection.account_email && (
+                <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                  <Mail className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{connection.account_email}</span>
+                </p>
+              )}
+              {!connection.account_email && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5 flex items-center gap-1">
+                  <TriangleAlert className="h-3 w-3 shrink-0" />
+                  No account e-mail recorded
+                </p>
+              )}
               <p className="text-sm text-muted-foreground mt-0.5">
                 Last live sync:{' '}
                 {connection.last_synced_at
@@ -382,10 +468,26 @@ function ConnectionCardComponent({
                     })
                   : 'Never'}
               </p>
-              {connection.device_label && (
+              {/* Devices this account reports, straight from the provider's own
+                  metadata; the manually-set label only when it reports none. */}
+              {observedDevices.length > 0 && (
                 <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                  <Watch className="h-3 w-3" />
-                  {connection.device_label}
+                  <Watch className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{observedDevices.join(', ')}</span>
+                  {connection.observed_devices &&
+                    connection.observed_devices.length > 0 && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="text-[10px] text-muted-foreground/70">
+                            auto
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Detected from the device metadata {providerName} sends
+                          with this account&apos;s data — not typed by anyone.
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                 </p>
               )}
               {(connection.live_sync_mode || scopeItems.length > 0) && (
@@ -486,11 +588,14 @@ function ConnectionCardComponent({
                   className="cursor-pointer"
                   onClick={() => {
                     setDeviceInput(connection.device_label ?? '');
-                    setShowDeviceDialog(true);
+                    setLabelInput(connection.account_label ?? '');
+                    setEmailInput(connection.account_email ?? '');
+                    setTypeInput(connection.account_type ?? '');
+                    setShowAccountDialog(true);
                   }}
                 >
                   <Pencil className="mr-2 h-4 w-4" />
-                  Set device model
+                  Edit account
                 </DropdownMenuItem>
                 {connection.status !== 'revoked' && (
                   <DropdownMenuItem
@@ -520,8 +625,12 @@ function ConnectionCardComponent({
                 <AlertDialogHeader>
                   <AlertDialogTitle>Disconnect {displayName}?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This will revoke the connection. The user will need to
-                    reconnect to {displayName} to resume data syncing.
+                    This revokes this account only. The user will need to
+                    reconnect it to resume syncing.
+                    {hasSiblings &&
+                      ` Their other ${accountCount - 1} ${providerName} account${
+                        accountCount > 2 ? 's' : ''
+                      } stay connected.`}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -532,45 +641,118 @@ function ConnectionCardComponent({
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-            <Dialog open={showDeviceDialog} onOpenChange={setShowDeviceDialog}>
+            <Dialog
+              open={showAccountDialog}
+              onOpenChange={setShowAccountDialog}
+            >
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Set device model</DialogTitle>
+                  <DialogTitle>Edit {providerName} account</DialogTitle>
                   <DialogDescription>
-                    Record the device behind this {connection.provider}{' '}
-                    connection (e.g. &quot;Whoop 5.0&quot;), for providers that
-                    don&apos;t report one. Applies to existing and future data.
-                    Leave empty to clear.
+                    How this account is identified. The name is what tells two
+                    accounts with the same provider apart; the e-mail is the
+                    record of which login the data came from. Leave a field
+                    empty to clear it.
                   </DialogDescription>
                 </DialogHeader>
-                <Input
-                  value={deviceInput}
-                  onChange={(e) => setDeviceInput(e.target.value)}
-                  placeholder="e.g. Whoop 5.0"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !isSavingDevice) {
-                      setDeviceLabel(deviceInput.trim() || null, {
-                        onSuccess: () => setShowDeviceDialog(false),
-                      });
-                    }
-                  }}
-                />
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium text-muted-foreground"
+                      htmlFor={`account-type-${connection.id}`}
+                    >
+                      Classification
+                    </label>
+                    <select
+                      id={`account-type-${connection.id}`}
+                      value={typeInput}
+                      onChange={(e) =>
+                        setTypeInput(e.target.value as AccountType | '')
+                      }
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      <option value="">Unclassified</option>
+                      {ACCOUNT_TYPES.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label} — {t.description}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-muted-foreground">
+                      What this account is for. Filterable across participants.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium text-muted-foreground"
+                      htmlFor={`account-label-${connection.id}`}
+                    >
+                      Account name{' '}
+                      <span className="font-normal">(optional)</span>
+                    </label>
+                    <Input
+                      id={`account-label-${connection.id}`}
+                      value={labelInput}
+                      onChange={(e) => setLabelInput(e.target.value)}
+                      placeholder="e.g. P01 arm A"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium text-muted-foreground"
+                      htmlFor={`account-email-${connection.id}`}
+                    >
+                      Account e-mail
+                    </label>
+                    <Input
+                      id={`account-email-${connection.id}`}
+                      type="email"
+                      value={emailInput}
+                      onChange={(e) => setEmailInput(e.target.value)}
+                      placeholder="e.g. p01.left@lab.example.edu"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium text-muted-foreground"
+                      htmlFor={`device-label-${connection.id}`}
+                    >
+                      Device model
+                    </label>
+                    <Input
+                      id={`device-label-${connection.id}`}
+                      value={deviceInput}
+                      onChange={(e) => setDeviceInput(e.target.value)}
+                      placeholder="e.g. Whoop 5.0"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      For providers that report no device. Applies to this
+                      account&apos;s existing and future data.
+                    </p>
+                  </div>
+                </div>
                 <DialogFooter>
                   <Button
                     variant="outline"
-                    onClick={() => setShowDeviceDialog(false)}
+                    onClick={() => setShowAccountDialog(false)}
                   >
                     Cancel
                   </Button>
                   <Button
-                    disabled={isSavingDevice}
+                    disabled={isSavingAccount}
                     onClick={() =>
-                      setDeviceLabel(deviceInput.trim() || null, {
-                        onSuccess: () => setShowDeviceDialog(false),
-                      })
+                      updateAccount(
+                        {
+                          account_type: typeInput || null,
+                          account_label: labelInput.trim() || null,
+                          account_email: emailInput.trim() || null,
+                          device_label: deviceInput.trim() || null,
+                        },
+                        { onSuccess: () => setShowAccountDialog(false) }
+                      )
                     }
                   >
-                    {isSavingDevice ? 'Saving…' : 'Save'}
+                    {isSavingAccount ? 'Saving…' : 'Save'}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -582,13 +764,16 @@ function ConnectionCardComponent({
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    Delete all {displayName} data?
+                    Delete all data from {displayName}?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    This permanently deletes every record synced from{' '}
-                    {displayName} for this user — activities, sleep, time series
-                    and health scores — and revokes the connection. Data from
-                    other providers is not affected. This cannot be undone.
+                    This permanently deletes every record that came through this
+                    account — activities, sleep, time series and health scores —
+                    and revokes it. Data from other providers
+                    {hasSiblings
+                      ? `, and from this user's other ${providerName} accounts,`
+                      : ''}{' '}
+                    is not affected. This cannot be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

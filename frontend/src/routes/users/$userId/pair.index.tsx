@@ -12,9 +12,10 @@ import { Button } from '@/components/ui/button';
 import { useOAuthConnect } from '@/hooks/use-oauth-connect';
 import { useOAuthProviders } from '@/hooks/api/use-oauth-providers';
 import { useUserConnections } from '@/hooks/api/use-health';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { API_CONFIG } from '@/lib/api/config';
 import { isAuthenticated } from '@/lib/auth/session';
+import { ACCOUNT_TYPES, type AccountType } from '@/lib/api/types';
 
 export const Route = createFileRoute('/users/$userId/pair/')({
   component: PairWearablePage,
@@ -36,37 +37,81 @@ function PairWearablePage() {
   const { data: apiProviders, isLoading } = useOAuthProviders(true, true);
   const { data: connections } = useUserConnections(userId, isAuthenticated());
 
-  const connectedProviders = useMemo(() => {
-    if (!connections) return new Set<string>();
-    return new Set(
-      connections.filter((c) => c.status === 'active').map((c) => c.provider)
-    );
+  // How many accounts are already linked per provider, not merely whether one
+  // is: a second Whoop on the same person is a normal thing to want, so an
+  // already-connected provider stays clickable and adds another account.
+  const accountCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const connection of connections ?? []) {
+      if (connection.status !== 'active') continue;
+      counts.set(
+        connection.provider,
+        (counts.get(connection.provider) ?? 0) + 1
+      );
+    }
+    return counts;
   }, [connections]);
 
   const displayProviders = useMemo(() => {
     if (!apiProviders) return [];
     return apiProviders.map((apiProvider) => {
+      const linkedCount = accountCounts.get(apiProvider.provider) ?? 0;
       return {
         id: apiProvider.provider,
         name: apiProvider.name,
-        description: 'Connect your device',
+        description: linkedCount
+          ? `${linkedCount} account${linkedCount > 1 ? 's' : ''} linked`
+          : 'Connect your device',
         logoPath: apiProvider.icon_url
           ? `${API_CONFIG.baseUrl}${apiProvider.icon_url}`
           : '',
         isAvailable: apiProvider.is_enabled,
-        isConnected: connectedProviders.has(apiProvider.provider),
+        linkedCount,
       };
     });
-  }, [apiProviders, connectedProviders]);
+  }, [apiProviders, accountCounts]);
 
   const connectingProviderData = connectingProvider
     ? displayProviders.find((p) => p.id === connectingProvider)
     : null;
 
-  const handleConnect = (providerId: string) => {
-    if (connectingProvider === null) {
-      connect(providerId);
-    }
+  // Tapping a provider opens a short step for the account details before the
+  // redirect, rather than going straight to the provider. Two reasons: most
+  // providers never tell us the e-mail of the account that authorized (Garmin,
+  // Polar, Suunto, Strava, Withings do not), and this is the only moment the
+  // person who knows it is present; and if they are wearing two of the same
+  // brand, the label is what will tell the two apart afterwards.
+  const [pendingProvider, setPendingProvider] = useState<{
+    id: string;
+    name: string;
+    linkedCount: number;
+  } | null>(null);
+  const [accountEmail, setAccountEmail] = useState('');
+  const [accountType, setAccountType] = useState<AccountType | ''>('');
+
+  const openAccountStep = (
+    providerId: string,
+    name: string,
+    linkedCount: number
+  ) => {
+    if (connectingProvider !== null) return;
+    setAccountEmail('');
+    setAccountType('');
+    setPendingProvider({ id: providerId, name, linkedCount });
+  };
+
+  const handleConnect = () => {
+    if (!pendingProvider || connectingProvider !== null) return;
+    connect(pendingProvider.id, {
+      // Only meaningful for providers that report no user id of their own. For
+      // the rest the callback recognises a second account from the provider's
+      // identifier, which is what makes this page correct for a participant:
+      // it is unauthenticated, so `linkedCount` is 0 for them whatever the
+      // truth, and the flag alone could not be relied on.
+      newAccount: pendingProvider.linkedCount > 0,
+      accountEmail: accountEmail.trim() || undefined,
+      accountType: accountType || undefined,
+    });
   };
 
   return (
@@ -112,7 +157,96 @@ function PairWearablePage() {
 
       {/* Main content */}
       <AnimatePresence mode="wait">
-        {connectionState === 'idle' && (
+        {connectionState === 'idle' && pendingProvider && (
+          <motion.div
+            key="account-step"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="relative z-10 w-full max-w-lg rounded-2xl border border-white/10 bg-zinc-900/60 p-8"
+          >
+            <h2 className="text-2xl font-medium text-white">
+              {pendingProvider.linkedCount > 0
+                ? `Add another ${pendingProvider.name} account`
+                : `Connect ${pendingProvider.name}`}
+            </h2>
+            <p className="mt-2 text-sm text-zinc-400">
+              {pendingProvider.linkedCount > 0
+                ? `${pendingProvider.linkedCount} ${pendingProvider.name} account${
+                    pendingProvider.linkedCount > 1 ? 's are' : ' is'
+                  } already linked. On the next screen, sign in to the account you want to add — signing in to one already linked just reconnects it.`
+                : `You'll sign in to ${pendingProvider.name} on the next screen.`}
+            </p>
+
+            <div className="mt-6 space-y-5">
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="pair-account-email"
+                  className="block text-sm font-medium text-zinc-300"
+                >
+                  Which {pendingProvider.name} account?
+                </label>
+                <input
+                  id="pair-account-email"
+                  type="email"
+                  autoComplete="email"
+                  value={accountEmail}
+                  onChange={(e) => setAccountEmail(e.target.value)}
+                  placeholder="the email you sign in with"
+                  className="h-11 w-full rounded-lg border border-white/10 bg-zinc-950/60 px-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-white/25 focus:ring-2 focus:ring-white/10"
+                />
+                <p className="text-xs text-zinc-500">
+                  Recorded so this data can always be traced back to the right
+                  account.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="pair-account-type"
+                  className="block text-sm font-medium text-zinc-300"
+                >
+                  What is this account for?
+                </label>
+                <select
+                  id="pair-account-type"
+                  value={accountType}
+                  onChange={(e) =>
+                    setAccountType(e.target.value as AccountType | '')
+                  }
+                  className="h-11 w-full rounded-lg border border-white/10 bg-zinc-950/60 px-3 text-sm text-zinc-100 outline-none focus:border-white/25 focus:ring-2 focus:ring-white/10"
+                >
+                  <option value="">Choose one</option>
+                  {ACCOUNT_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label} — {t.description}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-zinc-500">
+                  Helps identify which account the data came from, and keeps a
+                  study&apos;s accounts apart from everyday ones.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-8 flex items-center justify-between gap-3">
+              <Button
+                variant="ghost"
+                onClick={() => setPendingProvider(null)}
+                className="text-zinc-400 hover:text-white"
+              >
+                Back
+              </Button>
+              <Button onClick={handleConnect}>
+                Continue to {pendingProvider.name}
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          </motion.div>
+        )}
+
+        {connectionState === 'idle' && !pendingProvider && (
           <motion.div
             key="providers"
             initial={{ opacity: 0 }}
@@ -133,11 +267,16 @@ function PairWearablePage() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.05, duration: 0.3 }}
-                    onClick={() => handleConnect(provider.id)}
-                    disabled={provider.isConnected}
+                    onClick={() =>
+                      openAccountStep(
+                        provider.id,
+                        provider.name,
+                        provider.linkedCount
+                      )
+                    }
                     className={`group relative flex flex-col items-center text-center p-10 rounded-2xl bg-zinc-900/40 border transition-all duration-300 ease-out outline-none focus:ring-2 focus:ring-white/20 ${
-                      provider.isConnected
-                        ? 'border-emerald-500/20 cursor-default'
+                      provider.linkedCount > 0
+                        ? 'border-emerald-500/20 hover:bg-zinc-900/80'
                         : 'border-white/5 hover:bg-zinc-900/80 hover:border-white/10'
                     }`}
                   >
@@ -160,10 +299,15 @@ function PairWearablePage() {
 
                     {/* Connect indicator */}
                     <div className="mt-8 flex items-center gap-1.5 text-base font-medium transition-colors">
-                      {provider.isConnected ? (
+                      {provider.linkedCount > 0 ? (
                         <>
                           <Check className="w-4 h-4 text-emerald-400" />
                           <span className="text-emerald-400">Connected</span>
+                          <span className="text-zinc-500">·</span>
+                          <span className="text-zinc-300 group-hover:text-white">
+                            Add another
+                          </span>
+                          <ChevronRight className="w-4 h-4 stroke-[1.5] text-zinc-300 group-hover:text-white" />
                         </>
                       ) : (
                         <>

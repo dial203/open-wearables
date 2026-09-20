@@ -27,6 +27,12 @@ export const API_ENDPOINTS = {
     `/api/v1/users/${userId}/connections/${provider}/device-label`,
   userConnectionPurgeData: (userId: string, provider: string) =>
     `/api/v1/users/${userId}/connections/${provider}/data`,
+  // Per-account routes. The provider-scoped ones above mean "this provider, all
+  // of it"; these name one of several accounts a user holds with it.
+  userConnectionAccount: (userId: string, connectionId: string) =>
+    `/api/v1/users/${userId}/connections/accounts/${connectionId}`,
+  userConnectionAccountData: (userId: string, connectionId: string) =>
+    `/api/v1/users/${userId}/connections/accounts/${connectionId}/data`,
   providerSetting: (provider: string) => `/api/v1/oauth/providers/${provider}`,
   userWorkouts: (userId: string) => `/api/v1/users/${userId}/events/workouts`,
   userWorkoutDetail: (userId: string, workoutId: string) =>

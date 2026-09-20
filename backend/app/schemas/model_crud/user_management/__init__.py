@@ -27,10 +27,12 @@ from .user import (
     UserUpdateInternal,
 )
 from .user_connection import (
+    UserConnectionAccountUpdate,
     UserConnectionCreate,
     UserConnectionRead,
     UserConnectionUpdate,
     UserConnectionWithCapabilities,
+    account_display_label,
 )
 
 __all__ = [
@@ -59,6 +61,8 @@ __all__ = [
     "UserUpdateInternal",
     "USER_SORT_COLUMNS",
     # UserConnection
+    "UserConnectionAccountUpdate",
+    "account_display_label",
     "UserConnectionCreate",
     "UserConnectionUpdate",
     "UserConnectionRead",
