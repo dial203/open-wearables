@@ -16,6 +16,7 @@ from app.schemas.enums import (
     Resolution,
     SeriesType,
     get_series_type_from_id,
+    get_series_type_id,
     get_series_type_unit,
 )
 from app.schemas.model_crud.activities import (
@@ -36,6 +37,7 @@ from app.services.outgoing_webhooks import svix as svix_service
 from app.services.outgoing_webhooks.events import on_timeseries_batch_saved
 from app.services.priority_service import priority_service
 from app.services.services import AppService
+from app.services.sources.relay_dedup import RelayDedupPlan, build_series_plan, relay_dedup_metadata
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import encode_bucket_cursor, encode_cursor
 
@@ -91,6 +93,7 @@ def _page(
     next_cursor: str | None,
     previous_cursor: str | None,
     total_count: int | None = None,
+    relay_plan: "RelayDedupPlan | None" = None,
 ) -> PaginatedResponse[TimeSeriesSample]:
     return PaginatedResponse(
         data=data,
@@ -105,6 +108,7 @@ def _page(
             sample_count=len(data),
             start_time=params.start_datetime,
             end_time=params.end_datetime,
+            relay_dedup=relay_dedup_metadata(relay_plan),
         ),
     )
 
@@ -217,6 +221,7 @@ class TimeSeriesService(
         user_id: UUID,
         types: list[SeriesType],
         params: TimeSeriesQueryParams,
+        relay_plan: RelayDedupPlan | None = None,
     ) -> dict[int, UUID]:
         """Resolve one data source per series type, using the ranking sleep and summaries use."""
         return self.crud.winning_source_by_series_type(
@@ -226,7 +231,32 @@ class TimeSeriesService(
             user_id,
             priority_service.priority_repo.get_priority_order(db_session),
             priority_service.device_type_priority_repo.get_priority_order(db_session),
+            relay_plan,
         )
+
+    @staticmethod
+    def _relay_plan(
+        db_session: DbSession,
+        user_id: UUID,
+        types: list[SeriesType],
+        params: TimeSeriesQueryParams,
+    ) -> RelayDedupPlan | None:
+        """The redundant relays to leave out of this read, or None when the rule is off.
+
+        Skipped when the caller named a single data source: asking for one source by id is
+        asking for that source, and answering with nothing because a direct route covers
+        the same span would be obtuse.
+        """
+        if params.include_redundant_relays or params.data_source_id is not None:
+            return None
+        plan = build_series_plan(
+            db_session,
+            user_id,
+            [get_series_type_id(t) for t in types],
+            params.start_datetime,
+            params.end_datetime,
+        )
+        return plan if plan.applied else None
 
     def _aggregated_timeseries(
         self,
@@ -235,13 +265,16 @@ class TimeSeriesService(
         types: list[SeriesType],
         params: TimeSeriesQueryParams,
         source_by_type: dict[int, UUID] | None = None,
+        relay_plan: RelayDedupPlan | None = None,
     ) -> PaginatedResponse[TimeSeriesSample]:
         """Downsampled variant of :meth:`get_timeseries`.
 
         total_count stays unset: counting buckets would scan the whole requested range, which
         is the work the bucket cap exists to avoid.
         """
-        rows, truncated = self.crud.get_aggregated_samples(db_session, params, types, user_id, source_by_type)
+        rows, truncated = self.crud.get_aggregated_samples(
+            db_session, params, types, user_id, source_by_type, relay_plan
+        )
         samples, has_more = _trim_to_whole_buckets(rows, params.limit or 50, truncated)
         is_backward = bool(params.cursor and params.cursor.startswith("prev_"))
         if is_backward:
@@ -262,6 +295,7 @@ class TimeSeriesService(
             has_more=has_more,
             next_cursor=encode_bucket_cursor(samples[-1].bucket) if has_next else None,
             previous_cursor=encode_bucket_cursor(samples[0].bucket, "prev") if has_previous else None,
+            relay_plan=relay_plan,
         )
 
     @handle_exceptions
@@ -273,11 +307,14 @@ class TimeSeriesService(
         params: TimeSeriesQueryParams,
         filter_by_priority: bool = False,
     ) -> PaginatedResponse[TimeSeriesSample]:
-        source_by_type = self._winning_sources(db_session, user_id, types, params) if filter_by_priority else None
+        relay_plan = self._relay_plan(db_session, user_id, types, params)
+        source_by_type = (
+            self._winning_sources(db_session, user_id, types, params, relay_plan) if filter_by_priority else None
+        )
         if params.resolution is not Resolution.RAW:
-            return self._aggregated_timeseries(db_session, user_id, types, params, source_by_type)
+            return self._aggregated_timeseries(db_session, user_id, types, params, source_by_type, relay_plan)
 
-        samples, total_count = self.crud.get_samples(db_session, params, types, user_id, source_by_type)
+        samples, total_count = self.crud.get_samples(db_session, params, types, user_id, source_by_type, relay_plan)
 
         limit = params.limit or 50
         has_more = len(samples) > limit
@@ -325,7 +362,7 @@ class TimeSeriesService(
             for sample, data_source in samples
         ]
 
-        return _page(data, params, has_more, next_cursor, previous_cursor, total_count)
+        return _page(data, params, has_more, next_cursor, previous_cursor, total_count, relay_plan)
 
 
 timeseries_service = TimeSeriesService(log=getLogger(__name__))

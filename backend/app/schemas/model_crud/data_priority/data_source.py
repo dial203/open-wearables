@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.enums import IngestionRoute, ProviderName
+from app.schemas.enums import IngestionRoute, ProviderName, RelayVisibility
 
 
 class DataSourceBase(BaseModel):
@@ -89,8 +89,41 @@ class DataSourceResponse(BaseModel):
             "`original_source_name` names the brand that actually recorded the data."
         ),
     )
+    relay_visibility: RelayVisibility = Field(
+        RelayVisibility.AUTO,
+        description=(
+            "Override of the redundant-relay rule for this source: `auto` follows it, "
+            "`always` keeps the source visible whatever the rule says, `never` hides it "
+            "outright. Set with PATCH /users/{user_id}/data-sources/{data_source_id}."
+        ),
+    )
+    redundant_relay: bool = Field(
+        False,
+        description=(
+            "True when this source relays a maker that is also connected directly, so reads "
+            "leave it out for the span the direct route covers. It is a classification, not a "
+            "statement that the source is hidden everywhere: the span is resolved per read, and "
+            "`include_redundant_relays=true` returns the data either way."
+        ),
+    )
+    direct_provider: str | None = Field(
+        None,
+        description="The provider delivering this brand directly, when one does.",
+        example="oura",
+    )
 
     model_config = {"from_attributes": True}
+
+
+class DataSourceRelayUpdate(BaseModel):
+    """Set (or clear) a person's override of the redundant-relay rule for one source."""
+
+    relay_visibility: RelayVisibility = Field(
+        description=(
+            "`auto` to follow the rule, `always` to keep this source in every read, `never` to "
+            "hide it outright. Nothing is deleted at any setting."
+        ),
+    )
 
 
 class DataSourceListResponse(BaseModel):

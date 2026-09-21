@@ -144,11 +144,47 @@ class SourceMetadata(BaseModel):
         )
 
 
+class HiddenRelayInfo(BaseModel):
+    """One relayed source left out of this read because the maker is connected directly."""
+
+    data_source_id: UUID
+    provider: str = Field(description="The aggregator that relayed it.", example="apple")
+    brand: str | None = Field(None, description="The maker whose data it carries.", example="Oura")
+    direct_provider: str | None = Field(
+        None,
+        description="The provider that delivered the same brand directly. Null when a person hid the source by hand.",
+        example="oura",
+    )
+    covered_from: datetime | None = Field(None, description="Start of the span the direct route covers.")
+    covered_until: datetime | None = Field(None, description="End of the span the direct route covers.")
+    reason: str = Field(description="`covered_by_direct` or `hidden_by_hand`.", example="covered_by_direct")
+
+
+class RelayDedupMetadata(BaseModel):
+    """What the redundant-relay rule left out, so a gap is never silent.
+
+    Reported on every read the rule touched. An analysis that needs the relayed copies
+    back - checking the direct route for completeness, or comparing the two paths -
+    repeats the request with `include_redundant_relays=true`; nothing was deleted.
+    """
+
+    applied: bool = Field(description="Whether anything was left out of this read.")
+    hidden: list[HiddenRelayInfo] = Field(default_factory=list)
+
+
 class TimeseriesMetadata(BaseModel):
     resolution: Resolution | None = None
     sample_count: int | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None
+    relay_dedup: RelayDedupMetadata | None = Field(
+        None,
+        description=(
+            "Present when a maker's data arrived both directly and through an aggregator and the "
+            "aggregator's copy was left out for the span the direct route covers. Null when the "
+            "rule had nothing to do or the read asked for the relayed copies."
+        ),
+    )
 
 
 def _loaded_device_fields(data_source: Any) -> dict[str, Any]:

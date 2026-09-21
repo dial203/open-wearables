@@ -5,7 +5,7 @@ from app.database import DbSession
 from app.models import DataSource, ProviderPriority, UserConnection
 from app.repositories import DataSourceRepository, ProviderPriorityRepository
 from app.repositories.device_type_priority_repository import DeviceTypePriorityRepository
-from app.schemas.enums import DeviceType, ProviderName
+from app.schemas.enums import DeviceType, ProviderName, RelayVisibility
 from app.schemas.model_crud.data_priority import (
     DataSourceListResponse,
     DataSourceResponse,
@@ -17,6 +17,7 @@ from app.schemas.model_crud.data_priority import (
     ProviderPriorityResponse,
 )
 from app.schemas.model_crud.user_management import account_display_label
+from app.services.sources.relay_dedup import classify_sources
 from app.utils.device_registry import humanize_device_model, resolve_ingestion_route
 from app.utils.exceptions import handle_exceptions
 
@@ -75,6 +76,9 @@ class PriorityService:
         siblings: dict[str, int] = {}
         for connection in user_accounts:
             siblings[connection.provider] = siblings.get(connection.provider, 0) + 1
+        # Which sources relay a brand that also arrives directly. Classification only:
+        # whether a given read hides one depends on the window it asks for.
+        relay_status = classify_sources(db_session, user_id)
         items = [
             DataSourceResponse(
                 id=ds.id,
@@ -99,10 +103,65 @@ class PriorityService:
                 account_email=getattr(accounts.get(ds.user_connection_id), "account_email", None),
                 account_type=getattr(accounts.get(ds.user_connection_id), "account_type", None),
                 ingestion_route=resolve_ingestion_route(ds.provider, ds.original_source_name),
+                relay_visibility=self._relay_visibility(ds),
+                redundant_relay=ds.id in relay_status,
+                direct_provider=getattr(relay_status.get(ds.id), "direct_provider", None),
             )
             for ds in sources
         ]
         return DataSourceListResponse(items=items, total=len(items))
+
+    @staticmethod
+    def _relay_visibility(data_source: DataSource) -> RelayVisibility:
+        """The stored override, or `auto` for a row written before the column existed."""
+        try:
+            return RelayVisibility(data_source.relay_visibility or RelayVisibility.AUTO)
+        except ValueError:
+            return RelayVisibility.AUTO
+
+    @handle_exceptions
+    def set_relay_visibility(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        data_source_id: UUID,
+        visibility: RelayVisibility,
+    ) -> DataSourceResponse | None:
+        """Override the redundant-relay rule for one source, or put it back on `auto`.
+
+        Returns None when the source is not this user's, which the route turns into a 404 -
+        a source id is not a capability, and answering for somebody else's would say
+        whether it exists.
+        """
+        data_source = (
+            db_session.query(DataSource)
+            .filter(DataSource.id == data_source_id, DataSource.user_id == user_id)
+            .one_or_none()
+        )
+        if data_source is None:
+            return None
+        data_source.relay_visibility = visibility.value
+        db_session.commit()
+        db_session.refresh(data_source)
+        relay_status = classify_sources(db_session, user_id)
+        return DataSourceResponse(
+            id=data_source.id,
+            user_id=data_source.user_id,
+            provider=data_source.provider,
+            user_connection_id=data_source.user_connection_id,
+            device_model=data_source.device_model,
+            software_version=data_source.software_version,
+            source=data_source.source,
+            device_type=data_source.device_type,
+            original_source_name=data_source.original_source_name,
+            display_name=self._build_display_name(data_source),
+            device_id=data_source.device_id,
+            attribution_locked_at=data_source.attribution_locked_at,
+            ingestion_route=resolve_ingestion_route(data_source.provider, data_source.original_source_name),
+            relay_visibility=self._relay_visibility(data_source),
+            redundant_relay=data_source.id in relay_status,
+            direct_provider=getattr(relay_status.get(data_source.id), "direct_provider", None),
+        )
 
     @staticmethod
     def _account_label(connection: UserConnection | None) -> str | None:

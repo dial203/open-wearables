@@ -59,6 +59,7 @@ from app.services.outgoing_webhooks.events import on_menstrual_cycle_created, on
 from app.services.priority_service import priority_service
 from app.services.scores.sleep_service import sleep_score_service
 from app.services.services import AppService
+from app.services.sources.relay_dedup import RelayDedupPlan, build_event_plan, relay_dedup_metadata
 from app.utils.conversion import as_dict_list, as_float, as_model, minutes_to_seconds
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import encode_cursor
@@ -706,6 +707,29 @@ class EventRecordService(
             for record, data_source, detail in dispatches:
                 self._emit_event_record_webhook(record, data_source, detail)
 
+    def _relay_plan(
+        self,
+        db_session: DbSession,
+        query_params: EventRecordQueryParams,
+        user_id: str,
+    ) -> RelayDedupPlan | None:
+        """The redundant relays to leave out of this read, or None when the rule is off.
+
+        Skipped when the caller named a single data source: asking for one source by id is
+        asking for that source.
+        """
+        if query_params.include_redundant_relays or query_params.data_source_id is not None:
+            return None
+        categories = [query_params.category] if query_params.category else []
+        plan = build_event_plan(
+            db_session,
+            UUID(user_id),
+            categories,
+            query_params.start_datetime,
+            query_params.end_datetime,
+        )
+        return plan if plan.applied else None
+
     @handle_exceptions
     def _get_records_with_filters(
         self,
@@ -713,16 +737,21 @@ class EventRecordService(
         query_params: EventRecordQueryParams,
         user_id: str,
         restrict_to_record_ids: Query | None = None,
-    ) -> tuple[list[tuple[EventRecord, DataSource]], int]:
+    ) -> tuple[list[tuple[EventRecord, DataSource]], int, RelayDedupPlan | None]:
         self.logger.debug(f"Fetching event records with filters: {query_params.model_dump()}")
 
+        relay_plan = self._relay_plan(db_session, query_params, user_id)
         records, total_count = self.crud.get_records_with_filters(
-            db_session, query_params, user_id, restrict_to_record_ids=restrict_to_record_ids
+            db_session,
+            query_params,
+            user_id,
+            restrict_to_record_ids=restrict_to_record_ids,
+            relay_plan=relay_plan,
         )
 
         self.logger.debug(f"Retrieved {len(records)} event records out of {total_count} total")
 
-        return records, total_count
+        return records, total_count, relay_plan
 
     @handle_exceptions
     def get_records_response(
@@ -731,7 +760,7 @@ class EventRecordService(
         query_params: EventRecordQueryParams,
         user_id: str,
     ) -> list[EventRecordResponse]:
-        records, _ = self._get_records_with_filters(db_session, query_params, user_id)
+        records, _, _plan = self._get_records_with_filters(db_session, query_params, user_id)
 
         return [self._build_response(record, data_source) for record, data_source in records]
 
@@ -758,7 +787,7 @@ class EventRecordService(
         params.category = "workout"
         with_zones = WorkoutInclude.ZONES in include
         with_segments = WorkoutInclude.SEGMENTS in include
-        records, total_count = self._get_records_with_filters(db_session, params, str(user_id))
+        records, total_count, relay_plan = self._get_records_with_filters(db_session, params, str(user_id))
         # Ensure total_count is always an int (not None)
         total_count = total_count if total_count is not None else 0
 
@@ -854,6 +883,7 @@ class EventRecordService(
                 sample_count=len(data),
                 start_time=params.start_datetime,
                 end_time=params.end_datetime,
+                relay_dedup=relay_dedup_metadata(relay_plan),
             ),
         )
 
@@ -909,7 +939,7 @@ class EventRecordService(
                 db_session, str(user_id), params, provider_order, device_type_order
             )
 
-        records, total_count = self._get_records_with_filters(
+        records, total_count, relay_plan = self._get_records_with_filters(
             db_session, params, str(user_id), restrict_to_record_ids=restrict_to_record_ids
         )
         # Ensure total_count is always an int (not None)
@@ -990,6 +1020,7 @@ class EventRecordService(
                 sample_count=len(data),
                 start_time=params.start_datetime,
                 end_time=params.end_datetime,
+                relay_dedup=relay_dedup_metadata(relay_plan),
             ),
         )
 
@@ -1004,7 +1035,7 @@ class EventRecordService(
         # Cycles can end in the future (predicted end of cycle), so filtering by
         # end_datetime would exclude current/upcoming cycles. Filter by start_datetime only.
         params.end_datetime = None
-        records, total_count = self._get_records_with_filters(db_session, params, str(user_id))
+        records, total_count, relay_plan = self._get_records_with_filters(db_session, params, str(user_id))
         total_count = total_count if total_count is not None else 0
 
         limit = params.limit or 20
@@ -1070,6 +1101,7 @@ class EventRecordService(
                 sample_count=len(data),
                 start_time=params.start_datetime,
                 end_time=params.end_datetime,
+                relay_dedup=relay_dedup_metadata(relay_plan),
             ),
         )
 
