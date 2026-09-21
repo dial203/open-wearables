@@ -49,6 +49,7 @@ class UserConnectionUpdate(BaseModel):
     account_label: str | None = None
     account_email: str | None = None
     device_label: str | None = None
+    sensor_label: str | None = None
     scope: str | None = None
     status: ConnectionStatus | None = None
     last_synced_at: datetime | None = None
@@ -62,6 +63,7 @@ class UserConnectionRead(UserConnectionBase):
 
     id: UUID
     device_label: str | None = None
+    sensor_label: str | None = None
     status: ConnectionStatus
     last_synced_at: datetime | None
     created_at: datetime
@@ -117,8 +119,18 @@ class UserConnectionAccountUpdate(BaseModel):
     account_label: str | None = Field(None, max_length=100, description="Operator-facing name for this account")
     account_email: EmailStr | None = Field(None, description="Login e-mail of the provider account")
     device_label: str | None = Field(None, max_length=100, description='Device behind this account, e.g. "Whoop 5.0"')
+    sensor_label: str | None = Field(
+        None,
+        max_length=100,
+        description=(
+            'A sensor worn under the device this provider names, e.g. "Polar H10" on an account whose '
+            "activities are recorded by a watch. Strava reports the device that uploaded and nothing about "
+            "a strap paired to it, so this is declared rather than detected. When set, the reported model "
+            "becomes the recorder (device.host_model_raw) and this names the unit."
+        ),
+    )
 
-    @field_validator("account_label", "device_label")
+    @field_validator("account_label", "device_label", "sensor_label")
     @classmethod
     def _blank_to_none(cls, value: str | None) -> str | None:
         """An all-whitespace label is an unset label, not a label made of spaces."""

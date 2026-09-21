@@ -75,14 +75,64 @@ validation study.
 
 ### Naming the device behind an account
 
-For an account whose uploads carry no device at all, set `device_label` on the
-connection. Every device-less activity from that account then inherits it, including
-already-ingested ones:
+Two fields, answering different questions. They are not alternatives, and which one
+you need depends on what Strava reported.
+
+`device_label` — **Strava reported no device.** The label fills in for it, on future
+syncs and on already-ingested device-less rows:
 
 ```bash
-PATCH /api/v1/user-connections/{connection_id}
+PATCH /api/v1/users/{user_id}/connections/accounts/{connection_id}
 {"device_label": "COROS PACE 3", "account_label": "P01 arm B", "account_type": "validation"}
 ```
+
+`sensor_label` — **Strava reported the wrong thing.** `device_name` is the device that
+*uploaded*; a chest strap paired to that watch appears in no field Strava exposes
+(`gear` covers bikes and shoes only), and an activity with `has_heartrate` looks
+identical whether a strap or a wrist optical sensor produced it. So for the usual
+validation arrangement — an ECG strap as the reference, recorded through a watch — the
+reference instrument is invisible and its data arrives attributed to the wrist:
+
+```bash
+PATCH /api/v1/users/{user_id}/connections/accounts/{connection_id}
+{"sensor_label": "Polar H10", "account_label": "Gold standard HR", "account_type": "personal"}
+```
+
+With that set, the watch becomes the *recorder*: it moves to `device.host_model_raw`,
+the same place an aggregator's relaying handset goes, and the strap becomes the device
+— correctly typed as `chest_strap`, which is what ranks it above wrist optical sensors
+when priority resolves overlapping data. Nothing is destroyed: `data_source.device_model`
+still holds Strava's report verbatim.
+
+This is a declaration, not a detection. Nothing in the payload can be read to infer it,
+which is why it is a field a person fills.
+
+### One account per device
+
+A device's identity claims are keyed per user, so on most routes two accounts
+reporting the same model resolve to one device row. On Strava they do not: the model
+key is scoped to the connected athlete, because a study running an account per
+wearable with two devices of the same model would otherwise pool two units into one
+row with no visible symptom.
+
+The cost is the recoverable direction — one physical unit paired to two accounts in
+turn reads as two devices, which you merge deliberately via
+`POST /api/v1/users/{user_id}/devices/{id}/merge`.
+
+<Note>
+**Upgrading an existing database.** Strava device claims stored before this change are
+unscoped, so the first sync afterwards creates a duplicate device beside each existing
+one. Run the backfill once to rewrite them in place instead:
+
+```bash
+docker compose exec app uv run python scripts/data_migrations/scope_strava_model_claims_by_account.py
+docker compose exec app uv run python scripts/data_migrations/scope_strava_model_claims_by_account.py --apply
+```
+
+It reports any device whose Strava sources span more than one account and leaves it
+alone — each of those is either one unit shared between two logins or two units
+already pooled, and only you can tell which.
+</Note>
 
 ### Historical backfill
 

@@ -175,6 +175,12 @@ def update_connection_account_endpoint(
     clears one. Setting ``device_label`` also stamps it onto this account's
     already-ingested, device-less data sources, so history and future samples
     agree on what was worn.
+
+    ``device_label`` and ``sensor_label`` answer different questions and are not
+    alternatives. The first names hardware the provider never reported at all, and
+    is only consulted when nothing was. The second says that what the provider *did*
+    report is the recorder rather than the unit - the watch a chest strap was paired
+    to - and applies whether or not a model came through.
     """
     _account_or_404(db, user_id, connection_id)
     updated = user_connection_service.update_account(db, user_id, connection_id, body, set(body.model_fields_set))

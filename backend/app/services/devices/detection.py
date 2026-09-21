@@ -31,7 +31,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.database import DbSession
-from app.models import DataSource, Device, EventRecord
+from app.models import DataSource, Device, EventRecord, UserConnection
 from app.repositories.device_repository import SYSTEM_ACTOR, DeviceRepository
 from app.schemas.enums import (
     STRONG_IDENTITY_KINDS,
@@ -90,13 +90,24 @@ class DeviceDetectionService:
             return None
 
         provider = getattr(data_source.provider, "value", data_source.provider)
-        claims = list(claims_from_data_source(provider, data_source.device_model, data_source.source))
+        account_scope, declared_sensor = self._account_context(db_session, data_source)
+        claims = list(
+            claims_from_data_source(
+                provider,
+                data_source.device_model,
+                data_source.source,
+                account_scope,
+                declared_sensor,
+            )
+        )
         if extra_claims:
             claims.extend(extra_claims)
         if not claims:
             return None
 
-        device, conflicts = self._resolve(db_session, data_source.user_id, provider, data_source, claims)
+        device, conflicts = self._resolve(
+            db_session, data_source.user_id, provider, data_source, claims, declared_sensor
+        )
         if device is None:
             return None
 
@@ -143,6 +154,27 @@ class DeviceDetectionService:
             )
         return device
 
+    @staticmethod
+    def _account_context(db_session: DbSession, data_source: DataSource) -> tuple[str | None, str | None]:
+        """(account scope, declared sensor) for the connection this source arrived through.
+
+        The scope is the provider's own id for the account rather than the connection
+        row's, because it has to survive a disconnect and reconnect: the row is
+        replaced, the athlete is not, and a scope that changed would split one unit's
+        history in half every time somebody re-authorised.
+
+        Both are None for a source with no connection - a one-off file import, or a
+        row that predates connections being recorded - which leaves every rule below
+        behaving exactly as it did before either existed.
+        """
+        if data_source.user_connection_id is None:
+            return None, None
+        connection = db_session.get(UserConnection, data_source.user_connection_id)
+        if connection is None:
+            return None, None
+        scope = connection.provider_user_id or str(connection.id)
+        return scope, connection.sensor_label
+
     def _resolve(
         self,
         db_session: DbSession,
@@ -150,6 +182,7 @@ class DeviceDetectionService:
         provider: str,
         data_source: DataSource,
         claims: list[IdentityClaim],
+        declared_sensor: str | None = None,
     ) -> tuple[Device | None, set[UUID]]:
         """Find the device these claims name, or create one. Returns (device, conflicts)."""
         conflicts: set[UUID] = set()
@@ -174,7 +207,8 @@ class DeviceDetectionService:
         # a third-party app relaying through HealthKit or Health Connect reports the
         # host that ran it. Every app on that host reports the same string, so grouping
         # on it pools unrelated brands into one device.
-        host_model = relaying_host_model(provider, data_source.device_model, data_source.source)
+        writer = declared_sensor or data_source.source
+        host_model = relaying_host_model(provider, data_source.device_model, writer, bool(declared_sensor))
 
         # 2. Within-route match on the grouping key: the provider's own model string,
         #    or - where a third-party app is relaying - that app paired with the host it
@@ -199,7 +233,7 @@ class DeviceDetectionService:
             return None, conflicts
 
         if host_model is not None:
-            device = self._create_relayed(db_session, user_id, provider, data_source, host_model)
+            device = self._create_relayed(db_session, user_id, provider, data_source, host_model, declared_sensor)
         else:
             device = self.repo.create(
                 db_session,
@@ -221,8 +255,9 @@ class DeviceDetectionService:
         provider: str,
         data_source: DataSource,
         host_model: str,
+        declared_sensor: str | None = None,
     ) -> Device:
-        """Create the device behind a stream whose only model string named the relay host.
+        """Create the device behind a stream whose only model string named its carrier.
 
         Everything the platform reported about hardware describes the phone, so none of
         it is written where it would read as this device's own: ``model_raw`` stays
@@ -232,8 +267,18 @@ class DeviceDetectionService:
         than an answer. Correcting it is the point: ``model_display``, ``brand_display``
         and the type are all editable, and a hand-set label pins the device against
         later detection.
+
+        A declared sensor takes the same shape and the same treatment. A chest strap
+        recorded through a watch is a relay by another name - the watch carried the
+        strap's beats exactly as a phone carries a headband's - so the watch goes to
+        ``host_model_raw`` and the strap becomes the device. The difference is only in
+        where the knowledge came from: the relay case is inferred from the model
+        naming a phone, and this one was declared on the connection because no
+        provider exposes it. The label it produces is stronger, not weaker, for that.
         """
-        writer = data_source.source
+        # A declared sensor plays the writer's part here: it is the instrument that
+        # produced the data, and the reported model is the recorder that carried it.
+        writer = declared_sensor or data_source.source
         brand = relayed_brand(_provider_enum(provider), writer)
 
         # Not data_source.device_type: that was inferred from the host's model and says
@@ -254,7 +299,11 @@ class DeviceDetectionService:
             label=writer,
             label_source=LabelSource.AUTO,
             actor=SYSTEM_ACTOR,
-            reason=f"Relayed through {provider} by {writer or 'an unnamed app'} on {host_model}",
+            reason=(
+                f"Declared sensor {writer} recorded by {host_model}"
+                if declared_sensor
+                else f"Relayed through {provider} by {writer or 'an unnamed app'} on {host_model}"
+            ),
             detected=True,
         )
 

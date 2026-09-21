@@ -125,6 +125,32 @@ class DataSourceRepository(
             query = query.filter(UserConnection.id == user_connection_id)
         return query.order_by(UserConnection.created_at.asc()).limit(1).scalar()
 
+    def _connection_sensor_label(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: ProviderName,
+        user_connection_id: UUID | None = None,
+    ) -> str | None:
+        """A sensor a person declared was worn under whatever the provider named.
+
+        Used only to classify the data source, never to overwrite the provider's
+        reported model - that stays in device_model verbatim, and the device registry
+        is where the two are told apart (detection._create_relayed).
+
+        Scoped to one connection for the same reason the device label is: a user with
+        a reference strap on one account and none on another must not have the first
+        account's declaration applied to the second.
+        """
+        query = db_session.query(UserConnection.sensor_label).filter(
+            UserConnection.user_id == user_id,
+            UserConnection.provider == provider.value,
+            UserConnection.sensor_label.isnot(None),
+        )
+        if user_connection_id is not None:
+            query = query.filter(UserConnection.id == user_connection_id)
+        return query.order_by(UserConnection.created_at.asc()).limit(1).scalar()
+
     def set_connection_device_label(
         self,
         db_session: DbSession,
@@ -232,6 +258,15 @@ class DataSourceRepository(
         if device_model is None:
             device_model = self._connection_device_label(db_session, user_id, provider, user_connection_id)
 
+        # A sensor the account declared. It never replaces device_model - the
+        # provider's report is kept verbatim, and the registry is where recorder and
+        # sensor are separated - but it does decide what kind of device this source
+        # is, because device_type is what ranks sources against each other. Left to
+        # the reported model, an ECG strap recorded through a watch is classified as a
+        # watch, and the reference instrument ends up ranked below the wrist sensors
+        # it exists to be compared against.
+        declared_sensor = self._connection_sensor_label(db_session, user_id, provider, user_connection_id)
+
         original_source_name = self._resolve_original_source_name(provider, device_model, source, original_source_name)
 
         existing = self.get_by_connection_identity(
@@ -261,7 +296,7 @@ class DataSourceRepository(
                 # Always store a value (including "unknown"): consumers key off
                 # device_type to separate real wearables from phone/app relays, and a
                 # NULL forces them back to guessing from model strings.
-                device_type = self._infer_device_type(device_model, original_source_name, source)
+                device_type = self._infer_device_type(device_model, original_source_name, source, declared_sensor)
                 object.__setattr__(existing, "device_type", device_type.value)
                 updated = True
             if updated:
@@ -272,7 +307,7 @@ class DataSourceRepository(
         provider_priority_repo = ProviderPriorityRepository(ProviderPriority)
         provider_priority_repo.ensure_provider_exists(db_session, provider)
 
-        device_type = self._infer_device_type(device_model, original_source_name, source)
+        device_type = self._infer_device_type(device_model, original_source_name, source, declared_sensor)
 
         create_payload = DataSourceCreate(
             id=uuid4(),
@@ -365,8 +400,15 @@ class DataSourceRepository(
         device_model: str | None,
         original_source_name: str | None,
         source: str | None = None,
+        declared_sensor: str | None = None,
     ) -> DeviceType:
         """Classify a data source from the strongest device signal available.
+
+        ``declared_sensor`` wins over everything: it is the one signal a person
+        supplied rather than a provider, about the one thing no provider reports. It
+        is consulted only when it names a recognisable type, so a free-text note
+        ("reference strap") falls through to the inference below rather than
+        flattening a perfectly good model string to UNKNOWN.
 
         ``source`` is the provider's own label for what recorded the sample - for
         HealthKit, the device name ("Michael's Apple Watch Ultra 3"). ``device_model``
@@ -376,6 +418,11 @@ class DataSourceRepository(
         model says phone and the label names something worn, the label wins. A real
         wearable model (Watch7,x) is never downgraded by this.
         """
+        if declared_sensor:
+            from_sensor = infer_device_type_from_source_name(declared_sensor)
+            if from_sensor is not DeviceType.UNKNOWN:
+                return from_sensor
+
         from_model = infer_device_type_from_model(device_model)
 
         if from_model == DeviceType.PHONE:
@@ -416,6 +463,15 @@ class DataSourceRepository(
         # through this bulk path) land on a device-less source while events land on the
         # labelled one, splitting a single device across two data sources.
         label_cache: dict[UUID, str | None] = {}
+        # Same reason, for the declared sensor: it decides device_type, and a time
+        # series classified as a watch beside an event record classified as a chest
+        # strap would rank the same unit two different ways.
+        sensor_cache: dict[UUID, str | None] = {}
+
+        def _declared_sensor(user_id: UUID) -> str | None:
+            if user_id not in sensor_cache:
+                sensor_cache[user_id] = self._connection_sensor_label(db_session, user_id, provider, user_connection_id)
+            return sensor_cache[user_id]
 
         def _stored_device_model(user_id: UUID, device_model: str | None) -> str | None:
             if device_model is not None:
@@ -502,7 +558,9 @@ class DataSourceRepository(
                 # otherwise one Muse source would read "Muse" and the other "Apple"
                 # depending only on which path happened to create the row first.
                 original_source_name = self._resolve_original_source_name(provider, device_model, source, None)
-                device_type = self._infer_device_type(device_model, original_source_name, source)
+                device_type = self._infer_device_type(
+                    device_model, original_source_name, source, _declared_sensor(user_id)
+                )
                 values.append(
                     {
                         "id": uuid4(),

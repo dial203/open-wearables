@@ -103,6 +103,22 @@ class UserConnection(BaseDbModel):
     # provider passes None.
     device_label: Mapped[str_100 | None]
 
+    # A sensor worn under the device the provider names, e.g. "Polar H10" on a
+    # connection whose activities are recorded by a watch.
+    #
+    # Strava reports the device that *uploaded* an activity, never the strap paired
+    # to it; Garmin's activity deviceName behaves the same way. For the usual
+    # validation arrangement - an ECG strap as the reference, recorded through a
+    # watch - that leaves the reference instrument named nowhere, and its data
+    # attributed to the wrist. Nothing can infer it either: an activity with
+    # has_heartrate looks the same whichever sensor produced it.
+    #
+    # So it is declared, not detected. When set, the provider's reported model is
+    # treated as the recorder and moves to device.host_model_raw - the same place an
+    # aggregator's relaying handset goes - and this names the unit. The provider's
+    # report survives untouched in data_source.device_model.
+    sensor_label: Mapped[str_100 | None]
+
     # OAuth tokens (optional for SDK-based providers like Apple)
     access_token: Mapped[str | None]
     refresh_token: Mapped[str | None]
