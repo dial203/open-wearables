@@ -1,12 +1,24 @@
 import { formatBuildTimestamp } from '@/lib/utils/build-info';
 
+/**
+ * Where each half of the footer's version block comes from. Hardcoded rather
+ * than derived from a git remote: a remote lives in `.git/config`, which the
+ * Docker build context does not carry, and these two move roughly never.
+ */
+const UPSTREAM_REPO_URL = 'https://github.com/the-momentum/open-wearables';
+const FORK_REPO_URL = 'https://github.com/dial203/open-wearables';
+
 function Row({
   label,
+  labelHref,
+  labelTitle,
   version,
   commit,
   updatedAt,
 }: {
   label: string;
+  labelHref: string;
+  labelTitle: string;
   version: string;
   commit: string;
   updatedAt: string;
@@ -15,7 +27,17 @@ function Row({
 
   return (
     <dl className="grid grid-cols-[2.5rem_1fr]">
-      <dt className="row-span-2 text-muted-foreground/60">{label}</dt>
+      <dt className="row-span-2">
+        <a
+          href={labelHref}
+          target="_blank"
+          rel="noreferrer noopener"
+          title={labelTitle}
+          className="text-muted-foreground/60 underline-offset-2 transition-colors hover:text-foreground hover:underline"
+        >
+          {label}
+        </a>
+      </dt>
       <dd>
         v{version}
         {hasCommit ? (
@@ -53,12 +75,16 @@ export function VersionFooter() {
     >
       <Row
         label="OW"
+        labelHref={UPSTREAM_REPO_URL}
+        labelTitle="Upstream Open Wearables on GitHub"
         version={__APP_VERSION__}
         commit={__UPSTREAM_COMMIT__}
         updatedAt={__UPSTREAM_UPDATED_AT__}
       />
       <Row
         label="fork"
+        labelHref={FORK_REPO_URL}
+        labelTitle="This fork on GitHub"
         version={__FORK_VERSION__}
         commit={__FORK_COMMIT__}
         updatedAt={__FORK_UPDATED_AT__}
