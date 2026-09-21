@@ -8,6 +8,8 @@ one data_source and could not be separated again afterwards, which is the one
 failure mode in this feature that is not recoverable.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy.orm import Session
 
@@ -142,6 +144,82 @@ class TestOrphanAdoption:
             provider=ProviderName.OURA,
             user_connection_id=first.id,
             device_model="Oura Gen3",
+        )
+        db.commit()
+
+        assert created.id != orphan.id
+        assert orphan.user_connection_id is None
+
+    def test_linking_a_second_account_does_not_orphan_the_first_accounts_history(
+        self, db: Session, repo: DataSourceRepository
+    ) -> None:
+        """A row written while only one account existed still belongs to that account.
+
+        Asking how many accounts exist *now* made linking a second one retroactively
+        unclaim every older row, so the device forked into the connection-less row plus
+        a new one and both kept being written - a doubled series for anything that pools
+        by device or provider.
+        """
+        user = UserFactory()
+        orphan = repo.ensure_data_source(db, user_id=user.id, provider=ProviderName.GARMIN, device_model="Venu X1")
+        db.commit()
+
+        first = UserConnectionFactory(
+            user=user,
+            provider="garmin",
+            provider_user_id="g-1",
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        UserConnectionFactory(
+            user=user,
+            provider="garmin",
+            provider_user_id="g-2",
+            created_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        )
+        object.__setattr__(orphan, "created_at", datetime(2026, 1, 2, tzinfo=timezone.utc))
+        db.commit()
+
+        adopted = repo.ensure_data_source(
+            db,
+            user_id=user.id,
+            provider=ProviderName.GARMIN,
+            user_connection_id=first.id,
+            device_model="Venu X1",
+        )
+        db.commit()
+
+        assert adopted.id == orphan.id
+        assert adopted.user_connection_id == first.id
+
+    def test_a_row_written_while_both_accounts_were_live_is_never_adopted(
+        self, db: Session, repo: DataSourceRepository
+    ) -> None:
+        """Either account could have produced it, so it forks rather than guessing."""
+        user = UserFactory()
+        orphan = repo.ensure_data_source(db, user_id=user.id, provider=ProviderName.GARMIN, device_model="Venu X1")
+        db.commit()
+
+        first = UserConnectionFactory(
+            user=user,
+            provider="garmin",
+            provider_user_id="g-1",
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        UserConnectionFactory(
+            user=user,
+            provider="garmin",
+            provider_user_id="g-2",
+            created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+        object.__setattr__(orphan, "created_at", datetime(2026, 1, 3, tzinfo=timezone.utc))
+        db.commit()
+
+        created = repo.ensure_data_source(
+            db,
+            user_id=user.id,
+            provider=ProviderName.GARMIN,
+            user_connection_id=first.id,
+            device_model="Venu X1",
         )
         db.commit()
 
