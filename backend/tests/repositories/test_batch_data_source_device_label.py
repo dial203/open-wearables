@@ -47,9 +47,16 @@ class _FakeSession:
         pass
 
 
-def _repo(label: str | None) -> DataSourceRepository:
+def _repo(label: str | None, sensor: str | None = None) -> DataSourceRepository:
+    """The repository with its connection lookups stubbed out.
+
+    _FakeSession stands in for "no connection table", so every lookup that would
+    reach it has to be answered here instead - the sensor label as much as the
+    device label, since both are read on this path.
+    """
     repo = DataSourceRepository()
     repo._connection_device_label = lambda *_a, **_k: label  # type: ignore[method-assign]
+    repo._connection_sensor_label = lambda *_a, **_k: sensor  # type: ignore[method-assign]
     return repo
 
 
