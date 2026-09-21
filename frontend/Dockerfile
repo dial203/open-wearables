@@ -10,10 +10,22 @@ WORKDIR /app
 ARG VITE_API_URL=http://localhost:8000
 ENV VITE_API_URL=${VITE_API_URL}
 
-# Fork and upstream version metadata. The build context is ./frontend with .git
-# excluded, so the build cannot read git: it falls back to the committed
-# fork-version.json (see `make fork-stamp`). CI can override with these instead
-# of a stamp commit.
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile
+
+# Copy source files
+COPY . .
+
+# Fork and upstream version metadata, for the footer. The build context is
+# ./frontend with .git excluded, so the build cannot read git: CI passes these
+# (see .github/workflows/build.yml) and an unset one falls back to the committed
+# fork-version.json from `make fork-stamp`.
+#
+# Deliberately below `pnpm install`: FORK_COMMIT changes on every commit, and an
+# ENV above the install layer would bust the dependency cache on each build.
 ARG FORK_VERSION=
 ARG FORK_COMMIT=
 ARG FORK_UPDATED_AT=
@@ -24,15 +36,6 @@ ENV FORK_COMMIT=${FORK_COMMIT}
 ENV FORK_UPDATED_AT=${FORK_UPDATED_AT}
 ENV UPSTREAM_COMMIT=${UPSTREAM_COMMIT}
 ENV UPSTREAM_UPDATED_AT=${UPSTREAM_UPDATED_AT}
-
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-
-# Install dependencies
-RUN pnpm install --frozen-lockfile
-
-# Copy source files
-COPY . .
 
 # Build the application in production mode
 ENV NODE_ENV=production

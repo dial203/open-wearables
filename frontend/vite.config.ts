@@ -105,6 +105,11 @@ function resolveUpstreamMeta() {
 const fork = resolveForkMeta();
 const upstream = resolveUpstreamMeta();
 
+// When this bundle was built, as opposed to when the code it contains was
+// written. The two diverge when a deployment is serving an older image than the
+// branch it was built from, which is otherwise invisible from the UI.
+const builtAt = new Date().toISOString();
+
 const config = defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(version),
@@ -113,6 +118,7 @@ const config = defineConfig({
     __FORK_UPDATED_AT__: JSON.stringify(fork.updatedAt),
     __UPSTREAM_COMMIT__: JSON.stringify(upstream.commit),
     __UPSTREAM_UPDATED_AT__: JSON.stringify(upstream.updatedAt),
+    __BUILT_AT__: JSON.stringify(builtAt),
   },
   build: {
     outDir: 'dist',

@@ -264,3 +264,19 @@ Template:
   sequentially rather than concurrently — a second request is re-queued, not
   dropped. Making it concurrent means re-keying the whole backfill state module
   and was judged not worth the risk against the value.
+
+## Fork version: CI supplies the commit, the stamp supplies the rest
+
+- **Area**: frontend, tooling
+- **Status**: active; refines "Fork version in the sidebar footer"
+- **On conflict**: keep ours
+- **Why**: the first version of this leaned on committed `frontend/fork-version.json`
+  for every Docker build, and deployed images went stale immediately — `build.yml`
+  pushes an image on every merge to main, but the stamp only moves when someone runs
+  `make fork-stamp`, so the footer sat at one commit while 36 more landed. The deploy
+  path never runs `make build`, so the Makefile's stamp step never fired. CI now passes
+  `FORK_COMMIT` and `FORK_UPDATED_AT` from the pushed commit, which is exact by
+  construction and cannot drift. The stamp keeps only what a human changes — the fork
+  version and the upstream sync point — so staleness there is a real signal rather
+  than an artefact. The args sit below `pnpm install` in the Dockerfile: they change on
+  every commit, and above it they would bust the dependency layer cache on each build.

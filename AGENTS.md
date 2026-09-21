@@ -106,21 +106,39 @@ make fork-stamp   # refresh frontend/fork-version.json (v=0.2.0 to bump the fork
 The sidebar footer shows both versions, each with the date its code last moved:
 
 ```
-OW    v0.9.0 · ff8527a      # upstream's release, and the newest upstream commit merged in
-      2026-09-17 14:30 UTC
-fork  v0.1.0 · fa819b7      # this fork's version, and the commit built from
-      2026-09-18 18:33 UTC
+OW    v0.9.0 · 4aa4dbf      # upstream's release, and the newest upstream commit merged in
+      2026-09-18 11:59 UTC
+fork  v0.1.0 · 15fbc66      # this fork's version, and the commit built from
+      2026-09-21 17:37 UTC
 ```
 
 Upstream's version comes from `frontend/package.json` (synced from upstream — do not
 edit it) and its date from the merge base with `upstream/main`, so two syncs a month
-apart are distinguishable even though both are "v0.9.0". The fork's values come from
-`frontend/fork-version.json`, which is committed because the frontend image is built
-from a `./frontend` context with no `.git` in it. A host build reads git directly, so
-the stamp only needs refreshing before building an image — `make build` runs
-`make fork-stamp` for you, and bumping the fork version is `make fork-stamp v=<semver>`.
-Stamping the upstream date needs the `upstream` remote (`make fork-setup`); without it
-the previous value is kept.
+apart are distinguishable even though both are "v0.9.0".
+
+Each value is resolved at build time from the first source that has it:
+
+| | Deployed image (`build.yml` → GHCR) | Host build / `pnpm dev` | Local `make build` |
+|---|---|---|---|
+| fork commit + date | CI build args, from the pushed commit | live git | the stamp |
+| fork version | the stamp | the stamp | the stamp |
+| upstream commit + date | the stamp | live git (merge base) | the stamp |
+
+The stamp is `frontend/fork-version.json`, committed because the frontend image is
+built from a `./frontend` context with no `.git` in it. **The fork's commit and date
+must not depend on it in a deployed image** — the stamp only moves when someone runs
+`make fork-stamp`, so an image that read it would freeze at whenever that last
+happened, which is what `build.yml` passing `FORK_COMMIT`/`FORK_UPDATED_AT` prevents.
+
+What the stamp still owns is the fork version (bump it with `make fork-stamp v=<semver>`)
+and the upstream sync point, both of which change only when a person changes them.
+**Run `make fork-stamp` as part of every upstream merge**, alongside `make fork-diff`
+and `make fork-tag`; it needs the `upstream` remote (`make fork-setup`) and keeps the
+previous value without it.
+
+The tooltip on the footer also carries the image's build time. If that is recent but
+the fork date is old, the code genuinely has not changed; if the build time is old, the
+deployment is serving a stale image and has not pulled.
 
 - **[docs/fork/DIVERGENCE.md](docs/fork/DIVERGENCE.md)** - generated. Every file that
   differs from upstream, marked fork-only or modified. A file that is *not* listed is
@@ -130,7 +148,8 @@ the previous value is kept.
   divergence exists and, on a sync conflict, whether to keep ours or take theirs.
 
 When you change a file that also exists upstream, add a DECISIONS.md entry. When you
-merge upstream, run `make fork-diff` and `make fork-tag` and commit both.
+merge upstream, run `make fork-diff`, `make fork-tag` and `make fork-stamp`, and commit
+all three.
 The `upstream-sync/<date>` tags are the bisect anchors: `git diff upstream-sync/<date>..HEAD`
 is exactly "what have we changed since a known-good base".
 
