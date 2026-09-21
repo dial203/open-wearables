@@ -37,6 +37,7 @@ from .provider import (
     IngestionRoute,
     ProviderName,
 )
+from .relay_visibility import RelayVisibility
 from .sdk_connection_outcome import SdkConnectionOutcome
 from .series_types import (
     SERIES_TYPE_DEFINITIONS,
@@ -91,6 +92,7 @@ __all__ = [
     "WORKOUTS_WITH_PACE",
     "IngestionRoute",
     "ProviderName",
+    "RelayVisibility",
     "DEFAULT_PROVIDER_PRIORITY",
     "HealthScoreCategory",
     "SdkConnectionOutcome",

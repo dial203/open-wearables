@@ -47,7 +47,31 @@ export interface DataSource {
    * leaves it unattributed rather than re-attaching it on the next sync.
    */
   attribution_locked_at: string | null;
-  is_enabled: boolean;
+  /**
+   * Not sent by the API today - no endpoint enables or disables a source. Kept as an
+   * optional field so the existing call below still type-checks; read it as unknown.
+   */
+  is_enabled?: boolean;
+  /** `direct` straight from the maker's API, `aggregator` relayed by a platform. */
+  ingestion_route: IngestionRoute;
+  /**
+   * True when this source relays a maker that is also connected directly, so reads
+   * leave it out for the span the direct route covers. A classification, not a
+   * statement that it is hidden everywhere - the span is resolved per read.
+   */
+  redundant_relay: boolean;
+  /** The provider delivering this brand directly, when one does. */
+  direct_provider: string | null;
+  /** A person's override of that rule. `auto` follows it. */
+  relay_visibility: RelayVisibility;
+}
+
+export type IngestionRoute = 'direct' | 'aggregator';
+
+export type RelayVisibility = 'auto' | 'always' | 'never';
+
+export interface RelayVisibilityUpdate {
+  relay_visibility: RelayVisibility;
 }
 
 export interface DataSourceEnabledUpdate {
@@ -146,6 +170,23 @@ export const priorityService = {
     try {
       const response = await apiClient.patch<DataSource>(
         `/api/v1/users/${userId}/data-sources/${dataSourceId}`,
+        data
+      );
+      return response;
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw ApiError.networkError((error as Error).message);
+    }
+  },
+
+  async setRelayVisibility(
+    userId: string,
+    dataSourceId: string,
+    data: RelayVisibilityUpdate
+  ): Promise<DataSource> {
+    try {
+      const response = await apiClient.patch<DataSource>(
+        `/api/v1/users/${userId}/data-sources/${dataSourceId}/relay-visibility`,
         data
       );
       return response;

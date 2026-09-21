@@ -1,7 +1,7 @@
 import contextlib
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import LiteralString, NamedTuple
+from typing import TYPE_CHECKING, LiteralString, NamedTuple
 from typing import cast as typing_cast
 from uuid import UUID
 
@@ -71,6 +71,11 @@ from app.schemas.responses.activity import (
 from app.utils.dates import as_utc
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import decode_bucket_cursor, decode_cursor
+
+if TYPE_CHECKING:
+    # Imported for the annotation only: the plan is built in the service layer, which
+    # is what holds the rule, and passed down so this layer stays a query builder.
+    from app.services.sources.relay_dedup import RelayDedupPlan
 
 # Identity tuple: (user_id, device_model, source)
 DataSourceIdentity = tuple[UUID, str | None, str | None]
@@ -411,6 +416,7 @@ class DataPointSeriesRepository(
         types: list[SeriesType],
         user_id: UUID,
         source_by_type: dict[int, UUID] | None = None,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> tuple[list[tuple[DataPointSeries, DataSource]], int | None]:
         """Get data points with filtering and keyset pagination.
 
@@ -430,6 +436,7 @@ class DataPointSeriesRepository(
             params.start_datetime,
             params.end_datetime,
             source_by_type,
+            relay_plan,
         )
 
         total_count = query.count() if params.cursor is None else None
@@ -468,6 +475,7 @@ class DataPointSeriesRepository(
         types: list[SeriesType],
         user_id: UUID,
         source_by_type: dict[int, UUID] | None = None,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> tuple[list[AggregatedSample], bool]:
         """Bucket samples into fixed-width windows, one row per (bucket, source, series type).
 
@@ -485,7 +493,10 @@ class DataPointSeriesRepository(
 
         if not backward:
             start = (
-                self._first_sample_at_or_after(db_session, params, types, user_id, start, end, source_by_type) or start
+                self._first_sample_at_or_after(
+                    db_session, params, types, user_id, start, end, source_by_type, relay_plan
+                )
+                or start
             )
             if start is None:
                 return [], False
@@ -527,6 +538,7 @@ class DataPointSeriesRepository(
             start,
             end,
             source_by_type,
+            relay_plan,
         )
 
         rows = query.all()
@@ -546,7 +558,8 @@ class DataPointSeriesRepository(
         # the requested range we skipped actually holds data.
         skipped = (requested_start, start) if backward else (end, requested_end)
         has_more = skipped[0] != skipped[1] and (
-            self._first_sample_at_or_after(db_session, params, types, user_id, *skipped, source_by_type) is not None
+            self._first_sample_at_or_after(db_session, params, types, user_id, *skipped, source_by_type, relay_plan)
+            is not None
         )
         return samples, has_more
 
@@ -564,11 +577,23 @@ class DataPointSeriesRepository(
         start: datetime | None,
         end: datetime | None,
         source_by_type: dict[int, UUID] | None = None,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> Query:
         """Filters shared by every sample read. Assumes DataSource is already joined."""
         if types:
             query = query.filter(self.model.series_type_definition_id.in_([get_series_type_id(t) for t in types]))
         query = query.filter(*source_filter_conditions(params, self.model.data_source_id))
+        if relay_plan is not None:
+            # Applied here rather than in the service so every read path - raw, bucketed
+            # and the probes that size a page - drops the same rows. A page whose count
+            # included copies its rows then omit would page wrong.
+            query = query.filter(
+                *relay_plan.conditions(
+                    self.model.data_source_id,
+                    key_column=self.model.series_type_definition_id,
+                    timestamp_column=self.model.recorded_at,
+                )
+            )
         if start is not None:
             query = query.filter(self.model.recorded_at >= start)
         if end is not None:
@@ -589,6 +614,7 @@ class DataPointSeriesRepository(
         user_id: UUID,
         provider_order: dict,
         device_type_order: dict,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> dict[int, UUID]:
         """Best-ranked data source per series type, among those holding data in the window.
 
@@ -597,7 +623,7 @@ class DataPointSeriesRepository(
         winner is resolved per series type, so a watch with heart rate but no GPS keeps the
         heart rate and yields only the GPS series to the next source.
         """
-        ranked = self._ranked_sources(db_session, params, user_id, provider_order, device_type_order)
+        ranked = self._ranked_sources(db_session, params, user_id, provider_order, device_type_order, relay_plan)
         type_ids = [get_series_type_id(t) for t in types] if types else SERIES_TYPE_IDS
         if not ranked or not type_ids:
             return {}
@@ -646,6 +672,7 @@ class DataPointSeriesRepository(
         user_id: UUID,
         provider_order: dict,
         device_type_order: dict,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> list[DataSource]:
         """The caller's sources, best first. Honours the source filters, so priority picks a
         winner from what the request actually asked for rather than from everything owned."""
@@ -653,8 +680,15 @@ class DataPointSeriesRepository(
             DataSource.user_id == user_id,
             *source_filter_conditions(params, DataSource.id),
         )
+        candidates = query.all()
+        if relay_plan is not None:
+            # A redundant relay must not win its series type: this mode reads one source per
+            # type, and the winner's rows are then filtered out span by span, which would
+            # return an empty series instead of the direct source's.
+            hidden = relay_plan.hidden_source_ids
+            candidates = [source for source in candidates if source.id not in hidden]
         return sorted(
-            query.all(),
+            candidates,
             key=lambda s: (
                 provider_order.get(s.provider, _UNRANKED),
                 device_type_order.get(s.device_type, _UNRANKED),
@@ -671,6 +705,7 @@ class DataPointSeriesRepository(
         start: datetime | None,
         end: datetime | None,
         source_by_type: dict[int, UUID] | None = None,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> datetime | None:
         """Timestamp of the earliest matching sample in the range, or None if there is none."""
         return self._apply_sample_filters(
@@ -682,6 +717,7 @@ class DataPointSeriesRepository(
             start,
             end,
             source_by_type,
+            relay_plan,
         ).scalar()
 
     def _resolve_window(

@@ -1,6 +1,7 @@
 from .data_source import (
     DataSourceCreate,
     DataSourceListResponse,
+    DataSourceRelayUpdate,
     DataSourceResponse,
     DataSourceUpdate,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "DataSourceUpdate",
     "DataSourceResponse",
     "DataSourceListResponse",
+    "DataSourceRelayUpdate",
     # DeviceTypePriority
     "DeviceTypePriorityBase",
     "DeviceTypePriorityCreate",

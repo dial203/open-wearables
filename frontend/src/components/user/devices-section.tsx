@@ -57,7 +57,11 @@ import type {
   Device,
   DeviceDataSource,
 } from '@/lib/api/services/device.service';
-import { useUserDataSources } from '@/hooks/api/use-priorities';
+import {
+  useSetRelayVisibility,
+  useUserDataSources,
+} from '@/hooks/api/use-priorities';
+import { useConfig } from '@/hooks/api/use-config';
 import type { DataSource } from '@/lib/api/services/priority.service';
 import { useUserConnections } from '@/hooks/api/use-health';
 import { AccountChip } from '@/components/common/account-chip';
@@ -233,6 +237,7 @@ export function DevicesSection({ userId }: { userId: string }) {
       )}
 
       <UnattributedSources
+        userId={userId}
         sources={unattributed}
         accounts={accounts}
         onLink={(source) => setLinking(source)}
@@ -301,14 +306,21 @@ function SourceAccount({
  * registry for good, however deliberate or accidental the detach was.
  */
 function UnattributedSources({
+  userId,
   sources,
   accounts,
   onLink,
 }: {
+  userId: string;
   sources: DataSource[];
   accounts: Map<string, AccountDescriptor>;
   onLink: (source: DataSource) => void;
 }) {
+  const setRelayVisibility = useSetRelayVisibility();
+  const config = useConfig();
+  // Older backends do not send the flag, and the rule is on by default there too.
+  const dedupEnabled = config.data?.relay_dedup_enabled !== false;
+
   if (sources.length === 0) return null;
 
   return (
@@ -346,6 +358,48 @@ function UnattributedSources({
               >
                 detached
               </Badge>
+            )}
+            {dedupEnabled &&
+              source.redundant_relay &&
+              source.relay_visibility === 'auto' && (
+                <Badge
+                  variant="outline"
+                  title={`This brand also arrives directly from ${source.direct_provider ?? 'its maker'}. Reads leave this copy out for the span the direct connection covers; nothing is deleted.`}
+                >
+                  duplicate of {source.direct_provider ?? 'direct'}
+                </Badge>
+              )}
+            {source.relay_visibility !== 'auto' && (
+              <Badge
+                variant="outline"
+                title="Set by hand. The duplicate rule does not apply to this source."
+              >
+                {source.relay_visibility === 'always'
+                  ? 'always shown'
+                  : 'always hidden'}
+              </Badge>
+            )}
+            {(source.redundant_relay || source.relay_visibility !== 'auto') && (
+              <button
+                type="button"
+                disabled={setRelayVisibility.isPending}
+                onClick={() =>
+                  setRelayVisibility.mutate({
+                    userId,
+                    dataSourceId: source.id,
+                    visibility:
+                      source.relay_visibility === 'auto' ? 'always' : 'auto',
+                  })
+                }
+                className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+                title={
+                  source.relay_visibility === 'auto'
+                    ? 'Keep this source in every read, whatever the duplicate rule says'
+                    : 'Follow the duplicate rule again'
+                }
+              >
+                {source.relay_visibility === 'auto' ? 'Keep it' : 'Reset'}
+              </button>
             )}
             <button
               type="button"

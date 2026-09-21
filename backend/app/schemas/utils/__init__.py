@@ -5,6 +5,8 @@ from .archival import (
     StorageEstimate,
 )
 from .metadata import (
+    HiddenRelayInfo,
+    RelayDedupMetadata,
     SourceMetadata,
     TimeseriesMetadata,
 )
@@ -30,6 +32,8 @@ __all__ = [
     "PaginatedResponse",
     "OldPaginatedResponse",
     # Metadata
+    "HiddenRelayInfo",
+    "RelayDedupMetadata",
     "SourceMetadata",
     "TimeseriesMetadata",
 ]

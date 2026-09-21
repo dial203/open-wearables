@@ -1,5 +1,6 @@
 import contextlib
 from datetime import date, datetime, timedelta
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import UUID as SQL_UUID
@@ -37,6 +38,11 @@ from app.schemas.model_crud.activities import (
 )
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import decode_cursor
+
+if TYPE_CHECKING:
+    # Annotation only: the rule lives in the service layer and hands the plan down, so
+    # this layer stays a query builder.
+    from app.services.sources.relay_dedup import RelayDedupPlan
 
 # Identity tuple: (user_id, device_model, source)
 DataSourceIdentity = tuple[UUID, str | None, str | None]
@@ -274,6 +280,7 @@ class EventRecordRepository(
         query_params: EventRecordQueryParams,
         user_id: str,
         restrict_to_record_ids: Query | None = None,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> tuple[list[tuple[EventRecord, DataSource]], int]:
         query: Query = (
             db_session.query(EventRecord, DataSource)
@@ -305,6 +312,18 @@ class EventRecordRepository(
             filters.append(EventRecord.source_name.ilike(f"%{query_params.source_name}%"))
 
         filters.extend(source_filter_conditions(query_params, EventRecord.data_source_id))
+
+        if relay_plan is not None:
+            # The aggregator's copy of a maker that is also connected directly, for the
+            # span the direct route covers. Applied before the count so the page size and
+            # the rows agree.
+            filters.extend(
+                relay_plan.conditions(
+                    EventRecord.data_source_id,
+                    key_column=EventRecord.category,
+                    timestamp_column=EventRecord.start_datetime,
+                )
+            )
 
         if query_params.start_datetime:
             filters.append(EventRecord.start_datetime >= query_params.start_datetime)
@@ -387,6 +406,7 @@ class EventRecordRepository(
         query_params: EventRecordQueryParams,
         provider_order: dict,
         device_type_order: dict,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> Query:
         """Subquery of sleep record ids belonging to the top-priority source per night.
 
@@ -418,6 +438,19 @@ class EventRecordRepository(
             DataSource.user_id == UUID(user_id),
             EventRecord.category == "sleep",
         ]
+        if relay_plan is not None:
+            # Rank on the rows the caller will actually receive. Without this a redundant
+            # relay can win a night on rows that the same plan then filters out, and the
+            # night comes back empty even though the direct source recorded it. Applied as
+            # row conditions rather than by dropping the source, so on a night the direct
+            # route does not cover, the relay is still ranked and still wins.
+            filters.extend(
+                relay_plan.conditions(
+                    EventRecord.data_source_id,
+                    key_column=EventRecord.category,
+                    timestamp_column=EventRecord.start_datetime,
+                )
+            )
         if query_params.start_datetime:
             filters.append(EventRecord.start_datetime >= query_params.start_datetime)
         if query_params.end_datetime:

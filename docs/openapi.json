@@ -2172,6 +2172,18 @@
             }
           },
           {
+            "name": "include_redundant_relays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out.",
+              "default": false,
+              "title": "Include Redundant Relays"
+            },
+            "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out."
+          },
+          {
             "name": "filter_by_priority",
             "in": "query",
             "required": false,
@@ -2416,6 +2428,18 @@
               ],
               "title": "Data Source Id"
             }
+          },
+          {
+            "name": "include_redundant_relays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out.",
+              "default": false,
+              "title": "Include Redundant Relays"
+            },
+            "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out."
           },
           {
             "name": "X-Open-Wearables-API-Key",
@@ -2687,6 +2711,18 @@
               ],
               "title": "Data Source Id"
             }
+          },
+          {
+            "name": "include_redundant_relays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out.",
+              "default": false,
+              "title": "Include Redundant Relays"
+            },
+            "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out."
           },
           {
             "name": "filter_by_priority",
@@ -2962,6 +2998,18 @@
               ],
               "title": "Data Source Id"
             }
+          },
+          {
+            "name": "include_redundant_relays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out.",
+              "default": false,
+              "title": "Include Redundant Relays"
+            },
+            "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out."
           },
           {
             "name": "X-Open-Wearables-API-Key",
@@ -7934,6 +7982,95 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/data-sources/{data_source_id}/relay-visibility": {
+      "patch": {
+        "tags": [
+          "External: Data Sources"
+        ],
+        "summary": "Set whether a relayed source is hidden when its maker is connected directly",
+        "description": "Override the redundant-relay rule for one source.\n\nReads leave out an aggregator's copy of a maker that is also connected directly,\nfor the span the direct route covers. `always` exempts this source from that -\nfor a relay carrying something the maker's own API does not - and `never` hides\nit outright. No setting deletes anything: `include_redundant_relays=true` still\nreturns every row.",
+        "operationId": "set_relay_visibility_api_v1_users__user_id__data_sources__data_source_id__relay_visibility_patch",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "data_source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Data source ID",
+              "title": "Data Source Id"
+            },
+            "description": "Data source ID"
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataSourceRelayUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSourceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/webhooks/endpoints": {
       "get": {
         "tags": [
@@ -12751,11 +12888,16 @@
           "outgoing_webhooks_enabled": {
             "type": "boolean",
             "title": "Outgoing Webhooks Enabled"
+          },
+          "relay_dedup_enabled": {
+            "type": "boolean",
+            "title": "Relay Dedup Enabled"
           }
         },
         "type": "object",
         "required": [
-          "outgoing_webhooks_enabled"
+          "outgoing_webhooks_enabled",
+          "relay_dedup_enabled"
         ],
         "title": "ConfigResponse",
         "description": "Instance feature flags for the admin panel. Additive-only: append new flags,\nnever remove or repurpose, so the frontend stays backward compatible."
@@ -12901,6 +13043,20 @@
           "total"
         ],
         "title": "DataSourceListResponse"
+      },
+      "DataSourceRelayUpdate": {
+        "properties": {
+          "relay_visibility": {
+            "$ref": "#/components/schemas/RelayVisibility",
+            "description": "`auto` to follow the rule, `always` to keep this source in every read, `never` to hide it outright. Nothing is deleted at any setting."
+          }
+        },
+        "type": "object",
+        "required": [
+          "relay_visibility"
+        ],
+        "title": "DataSourceRelayUpdate",
+        "description": "Set (or clear) a person's override of the redundant-relay rule for one source."
       },
       "DataSourceResponse": {
         "properties": {
@@ -13064,6 +13220,30 @@
             "$ref": "#/components/schemas/IngestionRoute",
             "description": "Whether this source came straight from the maker's API (`direct`) or was relayed through an aggregator platform such as Apple Health or Google Health (`aggregator`). When `aggregator`, `provider` names the platform and `original_source_name` names the brand that actually recorded the data.",
             "default": "direct"
+          },
+          "relay_visibility": {
+            "$ref": "#/components/schemas/RelayVisibility",
+            "description": "Override of the redundant-relay rule for this source: `auto` follows it, `always` keeps the source visible whatever the rule says, `never` hides it outright. Set with PATCH /users/{user_id}/data-sources/{data_source_id}.",
+            "default": "auto"
+          },
+          "redundant_relay": {
+            "type": "boolean",
+            "title": "Redundant Relay",
+            "description": "True when this source relays a maker that is also connected directly, so reads leave it out for the span the direct route covers. It is a classification, not a statement that the source is hidden everywhere: the span is resolved per read, and `include_redundant_relays=true` returns the data either way.",
+            "default": false
+          },
+          "direct_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direct Provider",
+            "description": "The provider delivering this brand directly, when one does.",
+            "example": "oura"
           }
         },
         "type": "object",
@@ -14955,6 +15135,87 @@
         "type": "object",
         "title": "HeartRateStats",
         "description": "Heart rate statistics for a period."
+      },
+      "HiddenRelayInfo": {
+        "properties": {
+          "data_source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Data Source Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "The aggregator that relayed it.",
+            "example": "apple"
+          },
+          "brand": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand",
+            "description": "The maker whose data it carries.",
+            "example": "Oura"
+          },
+          "direct_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direct Provider",
+            "description": "The provider that delivered the same brand directly. Null when a person hid the source by hand.",
+            "example": "oura"
+          },
+          "covered_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covered From",
+            "description": "Start of the span the direct route covers."
+          },
+          "covered_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covered Until",
+            "description": "End of the span the direct route covers."
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "description": "`covered_by_direct` or `hidden_by_hand`.",
+            "example": "covered_by_direct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_source_id",
+          "provider",
+          "reason"
+        ],
+        "title": "HiddenRelayInfo",
+        "description": "One relayed source left out of this read because the maker is connected directly."
       },
       "HistoricalDataSyncStartEvent": {
         "properties": {
@@ -16848,6 +17109,38 @@
         ],
         "title": "RefreshTokenRequest",
         "description": "Request to exchange refresh token for new access token."
+      },
+      "RelayDedupMetadata": {
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "title": "Applied",
+            "description": "Whether anything was left out of this read."
+          },
+          "hidden": {
+            "items": {
+              "$ref": "#/components/schemas/HiddenRelayInfo"
+            },
+            "type": "array",
+            "title": "Hidden"
+          }
+        },
+        "type": "object",
+        "required": [
+          "applied"
+        ],
+        "title": "RelayDedupMetadata",
+        "description": "What the redundant-relay rule left out, so a gap is never silent.\n\nReported on every read the rule touched. An analysis that needs the relayed copies\nback - checking the direct route for completeness, or comparing the two paths -\nrepeats the request with `include_redundant_relays=true`; nothing was deleted."
+      },
+      "RelayVisibility": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "always",
+          "never"
+        ],
+        "title": "RelayVisibility",
+        "description": "Per-source override of the redundant-relay rule.\n\nThe rule itself is derived, not stored: whether an Apple Health copy of a Garmin\nis redundant depends on whether the Garmin connection still delivers, which\nchanges when a token expires or an account is revoked. Persisting \"redundant\" on\nthe row would freeze an answer that has to be recomputed. What *is* worth storing\nis a person's decision to override it, which nothing should recompute away.\n\n``AUTO`` is the resting state and the only value the system ever sets itself."
       },
       "Resolution": {
         "type": "string",
@@ -19392,6 +19685,17 @@
               }
             ],
             "title": "End Time"
+          },
+          "relay_dedup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RelayDedupMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present when a maker's data arrived both directly and through an aggregator and the aggregator's copy was left out for the span the direct route covers. Null when the rule had nothing to do or the read asked for the relayed copies."
           }
         },
         "type": "object",

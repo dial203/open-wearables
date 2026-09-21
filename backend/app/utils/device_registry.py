@@ -109,6 +109,7 @@ PROVIDER_BRANDS: dict[ProviderName, str] = {
     ProviderName.OURA: "Oura",
     ProviderName.FITBIT: "Fitbit",
     ProviderName.ULTRAHUMAN: "Ultrahuman",
+    ProviderName.WITHINGS: "Withings",
 }
 
 # --- Aggregator platforms --------------------------------------------------------
@@ -282,3 +283,26 @@ def humanize_device_model(device_model: str | None) -> str | None:
     # fall through to the full hardware registry so a current Apple Watch shows as
     # "Apple Watch Series 10 46mm (GPS)" rather than the raw "Watch7,9".
     return DEVICE_NAMES.get(device_model)
+
+
+# --- Brand -> the provider that would deliver it directly -------------------------
+# The inverse of PROVIDER_BRANDS, minus the aggregator platforms. A platform is left
+# out deliberately: "Apple" reaching us through Apple Health is first-party data, not
+# a relay of something we could read elsewhere, so it must never resolve to a direct
+# alternative. What remains are the makers with an API of their own, which is exactly
+# the set that makes an aggregator's copy redundant.
+DIRECT_PROVIDER_BY_BRAND: dict[str, ProviderName] = {
+    brand.casefold(): provider for provider, brand in PROVIDER_BRANDS.items() if provider not in AGGREGATOR_PROVIDERS
+}
+
+
+def direct_provider_for_brand(brand: str | None) -> ProviderName | None:
+    """The maker's own provider for a brand string, or None when there is no direct route.
+
+    ``None`` for a brand nothing here can serve directly - "Zepp", "Eight Sleep", a
+    third-party HealthKit writer - which is the answer that keeps those relays visible:
+    the aggregator is the only way that data reaches us at all.
+    """
+    if not brand:
+        return None
+    return DIRECT_PROVIDER_BY_BRAND.get(brand.strip().casefold())

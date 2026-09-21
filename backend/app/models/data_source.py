@@ -2,8 +2,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Index, text
-from sqlalchemy.orm import Mapped
+from sqlalchemy import Index, String, text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import BaseDbModel
 from app.mappings import (
@@ -88,6 +88,15 @@ class DataSource(BaseDbModel):
     # detach silently undoes itself. Attribution is already write-once for a source
     # that *has* a device; this gives the empty state the same protection.
     attribution_locked_at: Mapped[datetime | None]
+    # A person's override of the redundant-relay rule: auto (follow it), always (never
+    # hide this source), never (hide it outright). See app/schemas/enums/relay_visibility.py
+    # and app/services/sources/relay_dedup.py.
+    #
+    # Only the override is stored. Redundancy itself is derived per read, because it
+    # depends on what the direct route has actually delivered - a token that expires
+    # tonight makes yesterday's answer wrong, and a stored flag would keep asserting it.
+    relay_visibility: Mapped[str] = mapped_column(String(32), server_default=text("'auto'"))
+
     # Not eager-loaded: attribution is read per sample on the timeseries paths, and a
     # lazy load there would be one query per row. Callers that want the device's label
     # join it explicitly; SourceMetadata falls back to the id alone when they have not.

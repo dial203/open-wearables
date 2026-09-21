@@ -200,6 +200,7 @@ class OpenWearablesClient:
         resolution: str = "raw",
         limit: int = 100,
         cursor: str | None = None,
+        include_redundant_relays: bool = False,
     ) -> dict[str, Any]:
         """
         Get granular time-series samples for a user within a time range.
@@ -212,6 +213,8 @@ class OpenWearablesClient:
             resolution: One of "raw", "1min", "5min", "15min", "1hour"
             limit: Page size (1-100)
             cursor: Opaque pagination cursor returned by a previous call
+            include_redundant_relays: Keep an aggregator's copy of a maker that is also
+                connected directly (off by default, so a device is not counted twice)
 
         Returns:
             Paginated response with time-series samples
@@ -223,6 +226,8 @@ class OpenWearablesClient:
             "resolution": resolution,
             "limit": limit,
         }
+        if include_redundant_relays:
+            params["include_redundant_relays"] = True
         if cursor:
             params["cursor"] = cursor
         return await self._request("GET", f"/api/v1/users/{user_id}/timeseries", params=params)

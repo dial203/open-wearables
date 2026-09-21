@@ -3,6 +3,7 @@ import {
   priorityService,
   type ProviderPriorityBulkUpdate,
   type DeviceTypePriorityBulkUpdate,
+  type RelayVisibility,
 } from '@/lib/api/services/priority.service';
 import { queryKeys } from '@/lib/query/keys';
 import { toast } from 'sonner';
@@ -96,6 +97,40 @@ export function useUpdateDataSourceEnabled() {
       });
       toast.success(
         `Data source ${variables.isEnabled ? 'enabled' : 'disabled'}`
+      );
+    },
+    onError: (error) => {
+      toast.error(`Failed to update data source: ${getErrorMessage(error)}`);
+    },
+  });
+}
+
+export function useSetRelayVisibility() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      userId,
+      dataSourceId,
+      visibility,
+    }: {
+      userId: string;
+      dataSourceId: string;
+      visibility: RelayVisibility;
+    }) =>
+      priorityService.setRelayVisibility(userId, dataSourceId, {
+        relay_visibility: visibility,
+      }),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.priorities.dataSources(variables.userId),
+      });
+      toast.success(
+        variables.visibility === 'always'
+          ? 'Source will be shown even where the direct connection covers it'
+          : variables.visibility === 'never'
+            ? 'Source hidden from reads'
+            : 'Source follows the duplicate rule again'
       );
     },
     onError: (error) => {

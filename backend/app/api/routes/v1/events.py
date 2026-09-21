@@ -41,6 +41,18 @@ def list_workouts(
     source: str | None = None,
     device_model: str | None = None,
     data_source_id: UUID | None = None,
+    include_redundant_relays: Annotated[
+        bool,
+        Query(
+            description=(
+                "Keep the aggregator's copy of a maker that is also connected directly. Off by "
+                "default: data relayed through Apple Health, Google Health or Health Connect is "
+                "left out for the span in which the maker's own API delivered the same data, so a "
+                "device connected both ways is not counted twice. Nothing is deleted - set this to "
+                "read the relayed copies back. `metadata.relay_dedup` lists what was left out."
+            ),
+        ),
+    ] = False,
 ) -> PaginatedResponse[Workout]:
     """Returns workout sessions."""
     params = EventRecordQueryParams(
@@ -54,6 +66,7 @@ def list_workouts(
         source=source,
         device_model=device_model,
         data_source_id=data_source_id,
+        include_redundant_relays=include_redundant_relays,
     )
     return event_record_service.get_workouts(db, user_id, params, include=include)
 
@@ -82,6 +95,18 @@ def list_sleep_sessions(
     source: str | None = None,
     device_model: str | None = None,
     data_source_id: UUID | None = None,
+    include_redundant_relays: Annotated[
+        bool,
+        Query(
+            description=(
+                "Keep the aggregator's copy of a maker that is also connected directly. Off by "
+                "default: data relayed through Apple Health, Google Health or Health Connect is "
+                "left out for the span in which the maker's own API delivered the same data, so a "
+                "device connected both ways is not counted twice. Nothing is deleted - set this to "
+                "read the relayed copies back. `metadata.relay_dedup` lists what was left out."
+            ),
+        ),
+    ] = False,
     filter_by_priority: Annotated[
         bool,
         Query(
@@ -100,6 +125,7 @@ def list_sleep_sessions(
         source=source,
         device_model=device_model,
         data_source_id=data_source_id,
+        include_redundant_relays=include_redundant_relays,
     )
     return event_record_service.get_sleep_sessions(
         db, user_id, params, filter_by_priority=filter_by_priority, include=include
@@ -144,6 +170,18 @@ def list_menstrual_cycles(
     source: str | None = None,
     device_model: str | None = None,
     data_source_id: UUID | None = None,
+    include_redundant_relays: Annotated[
+        bool,
+        Query(
+            description=(
+                "Keep the aggregator's copy of a maker that is also connected directly. Off by "
+                "default: data relayed through Apple Health, Google Health or Health Connect is "
+                "left out for the span in which the maker's own API delivered the same data, so a "
+                "device connected both ways is not counted twice. Nothing is deleted - set this to "
+                "read the relayed copies back. `metadata.relay_dedup` lists what was left out."
+            ),
+        ),
+    ] = False,
 ) -> PaginatedResponse[MenstrualCycleRecord]:
     """Returns menstrual cycle records."""
     params = EventRecordQueryParams(
@@ -155,6 +193,7 @@ def list_menstrual_cycles(
         source=source,
         device_model=device_model,
         data_source_id=data_source_id,
+        include_redundant_relays=include_redundant_relays,
     )
     return event_record_service.get_menstrual_cycles(db, user_id, params)
 

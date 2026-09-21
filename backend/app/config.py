@@ -142,6 +142,18 @@ class Settings(BaseSettings):
         600  # How often to run the fill-missing-resilience-scores task (default: 10 min)
     )
 
+    # DUPLICATE HANDLING
+    # One switch for the whole redundant-relay rule: when a maker is connected both
+    # directly and through an aggregator (Apple Health, Google Health, Health Connect,
+    # Samsung Health, Strava), reads leave out the aggregator's copy for the span the
+    # direct route actually covers. See app/services/sources/relay_dedup.py.
+    #
+    # Set RELAY_DEDUP_ENABLED=false to turn it off instance-wide and get the old
+    # behaviour back - every source in every read, exactly as before. Nothing is ever
+    # deleted either way, so flipping this is reversible at any time and needs no
+    # migration, no re-sync and no data repair.
+    relay_dedup_enabled: bool = True
+
     # SYNC RUN TRACKING
     sync_run_tracking_enabled: bool = True
     # Persist live runs too. WARNING: space-consuming — one row per webhook and per SDK
