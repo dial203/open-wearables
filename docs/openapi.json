@@ -20223,6 +20223,19 @@
             ],
             "title": "Device Label",
             "description": "Device behind this account, e.g. \"Whoop 5.0\""
+          },
+          "sensor_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensor Label",
+            "description": "A sensor worn under the device this provider names, e.g. \"Polar H10\" on an account whose activities are recorded by a watch. Strava reports the device that uploaded and nothing about a strap paired to it, so this is declared rather than detected. When set, the reported model becomes the recorder (device.host_model_raw) and this names the unit."
           }
         },
         "additionalProperties": false,
@@ -20351,6 +20364,17 @@
               }
             ],
             "title": "Device Label"
+          },
+          "sensor_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensor Label"
           },
           "status": {
             "$ref": "#/components/schemas/ConnectionStatus"
