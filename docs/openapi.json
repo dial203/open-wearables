@@ -10317,6 +10317,71 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/devices/source-activity": {
+      "get": {
+        "tags": [
+          "Internal: Devices"
+        ],
+        "summary": "What each of a user's data sources reported recently",
+        "description": "Evidence for deciding what an unidentified device is, and whose account it is on.\n\nA source named \"Bluetooth Device\" or a bare bundle id identifies nothing. What it\nreported does: nights of sleep and a morning readiness score describe a ring or a\nband, a run of cycling workouts describes a head unit, and a source that has gone\nquiet describes a device that came off.\n\nThe account travels with each row - label, classification and login e-mail -\nbecause for a participant wearing two of one brand that is the other half of the\nsame question.",
+        "operationId": "source_activity_api_v1_users__user_id__devices_source_activity_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "User ID",
+              "title": "User Id"
+            },
+            "description": "User ID"
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 365,
+              "minimum": 1,
+              "description": "How far back to count. Clamped; the counts are aggregates over the largest tables.",
+              "default": 30,
+              "title": "Days"
+            },
+            "description": "How far back to count. Clamped; the counts are aggregates over the largest tables."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceActivityListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/devices/{device_id}": {
       "get": {
         "tags": [
@@ -11940,6 +12005,47 @@
         ],
         "title": "AccountType",
         "description": "Why this provider account is linked to this participant.\n\nA user may hold several accounts with one provider, and the provider name no\nlonger says anything about which is which. The e-mail identifies an account;\nthis says what it is *for*, which is what a study needs to filter on - the\nvalidation arm separated from the participant's own everyday data, the\ndevice-checkout account kept out of the analysis entirely.\n\nStored as a plain string rather than a database enum, matching DeviceType and\nProviderName, so a value can be added here without a migration."
+      },
+      "ActivityBucket": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "Event category, score category, or time-series code, as stored.",
+            "examples": [
+              "sleep"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Rows in the window.",
+            "examples": [
+              14
+            ]
+          },
+          "first_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First At",
+            "description": "Earliest row in the window."
+          },
+          "last_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last At",
+            "description": "Most recent row in the window."
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "count",
+          "first_at",
+          "last_at"
+        ],
+        "title": "ActivityBucket",
+        "description": "One kind of thing a source reported, and how much of it."
       },
       "ActivitySummary": {
         "properties": {
@@ -18334,6 +18440,183 @@
           "source"
         ],
         "title": "SleepSummary"
+      },
+      "SourceActivityListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SourceActivityResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "window_days": {
+            "type": "integer",
+            "title": "Window Days",
+            "description": "How far back the counts reach.",
+            "examples": [
+              30
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "window_days"
+        ],
+        "title": "SourceActivityListResponse"
+      },
+      "SourceActivityResponse": {
+        "properties": {
+          "data_source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Data Source Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "device_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Model"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id",
+            "description": "The device this source is attributed to, or null when unattributed."
+          },
+          "user_connection_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Connection Id"
+          },
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label",
+            "examples": [
+              "P01 arm A"
+            ]
+          },
+          "account_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Email",
+            "examples": [
+              "p01.left@lab.example.edu"
+            ]
+          },
+          "account_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Type",
+            "description": "personal, validation, reliability, monitoring, testing, other. Null when unclassified.",
+            "examples": [
+              "validation"
+            ]
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityBucket"
+            },
+            "type": "array",
+            "title": "Events",
+            "description": "Sleep sessions, workouts, naps - by the category the provider gave."
+          },
+          "scores": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityBucket"
+            },
+            "type": "array",
+            "title": "Scores",
+            "description": "Readiness, recovery, strain, sleep score - whatever the provider scores."
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityBucket"
+            },
+            "type": "array",
+            "title": "Metrics",
+            "description": "Time-series codes, most rows first. What separates a strap from a ring."
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At",
+            "description": "Most recent row of any kind in the window, or null when the source reported nothing in it. Null is informative: a source that has gone quiet is a device that came off, or a pairing that broke."
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_source_id",
+          "provider"
+        ],
+        "title": "SourceActivityResponse",
+        "description": "A per-source preview: what arrived, when, and through which account."
       },
       "SourceMetadata": {
         "properties": {

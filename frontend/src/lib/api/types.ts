@@ -354,7 +354,15 @@ export const ACCOUNT_TYPES: {
   { value: 'other', label: 'Other', description: 'Anything else' },
 ];
 
-export function accountTypeLabel(type: AccountType | null | undefined): string {
+/**
+ * Widened past `AccountType` on purpose: the column is a plain string server-side so
+ * the set can grow without a migration, and an API that has added a classification
+ * this build does not know about should render it as unclassified rather than fail to
+ * compile against it.
+ */
+export function accountTypeLabel(
+  type: AccountType | string | null | undefined
+): string {
   return ACCOUNT_TYPES.find((t) => t.value === type)?.label ?? 'Unclassified';
 }
 

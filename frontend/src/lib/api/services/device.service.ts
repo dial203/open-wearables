@@ -82,6 +82,45 @@ export interface Device {
   data_sources: DeviceDataSource[];
 }
 
+/** One kind of thing a source reported in the window, and how much of it. */
+export interface ActivityBucket {
+  /** Event category, score category, or time-series code, as stored. */
+  label: string;
+  count: number;
+  first_at: string;
+  last_at: string;
+}
+
+/**
+ * What a data source has reported lately, and which account it came through.
+ *
+ * The registry says where a stream came from; this says what is in it. For a source
+ * whose name identifies nothing — "Bluetooth Device", a bare bundle id — the shape of
+ * the data is the only evidence of what the hardware is and where it is worn.
+ */
+export interface SourceActivity {
+  data_source_id: string;
+  provider: string;
+  source: string | null;
+  device_model: string | null;
+  device_id: string | null;
+  user_connection_id: string | null;
+  account_label: string | null;
+  account_email: string | null;
+  account_type: string | null;
+  events: ActivityBucket[];
+  scores: ActivityBucket[];
+  metrics: ActivityBucket[];
+  /** Null when the source reported nothing in the window — a device that came off. */
+  last_seen_at: string | null;
+}
+
+export interface SourceActivityListResponse {
+  items: SourceActivity[];
+  total: number;
+  window_days: number;
+}
+
 export interface DeviceListResponse {
   items: Device[];
   total: number;
@@ -170,6 +209,20 @@ export const deviceService = {
     try {
       return await apiClient.get<DeviceListResponse>(
         `/api/v1/users/${userId}/devices?include_retired=${includeRetired}`
+      );
+    } catch (error) {
+      rethrow(error);
+    }
+  },
+
+  /** What each of the user's sources reported in the last `days` days. */
+  async sourceActivity(
+    userId: string,
+    days = 30
+  ): Promise<SourceActivityListResponse> {
+    try {
+      return await apiClient.get<SourceActivityListResponse>(
+        `/api/v1/users/${userId}/devices/source-activity?days=${days}`
       );
     } catch (error) {
       rethrow(error);
