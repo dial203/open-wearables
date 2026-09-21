@@ -347,7 +347,11 @@ class TestPolarWorkoutsAPIRequests:
 
     @patch("app.services.providers.templates.base_workouts.make_authenticated_request")
     def test_get_workouts_from_api_default_params(self, mock_request: MagicMock, db: Session) -> None:
-        """Test getting workouts with default parameters."""
+        """Test getting workouts with default parameters.
+
+        ``samples`` defaults on: it is the only way AccessLink v3 returns RR intervals
+        (sample type 11), and dropping them was silently discarding the chest-strap data.
+        """
         # Arrange
         from app.models import EventRecord, User
         from app.repositories.event_record_repository import EventRecordRepository
@@ -384,7 +388,7 @@ class TestPolarWorkoutsAPIRequests:
         mock_request.assert_called_once()
         call_kwargs = mock_request.call_args[1]
         assert call_kwargs["endpoint"] == "/v3/exercises"
-        assert call_kwargs["params"]["samples"] == "false"
+        assert call_kwargs["params"]["samples"] == "true"
         assert call_kwargs["params"]["zones"] == "false"
         assert call_kwargs["params"]["route"] == "false"
 
