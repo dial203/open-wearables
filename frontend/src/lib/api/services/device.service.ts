@@ -33,6 +33,17 @@ export interface DeviceDataSource {
   device_model: string | null;
   device_type: string | null;
   original_source_name: string | null;
+  /**
+   * The connected account this source arrived through, or null for a one-time
+   * import. A unit re-paired to a second account of the same provider reports
+   * the identical provider/source/model triple down both, so this is the only
+   * thing that separates the two stretches of data.
+   */
+  user_connection_id: string | null;
+  /** Denormalised from the connection, so the row reads on its own. */
+  account_label: string | null;
+  account_email: string | null;
+  account_type: string | null;
 }
 
 export interface Device {

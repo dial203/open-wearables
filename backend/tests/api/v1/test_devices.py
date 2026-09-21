@@ -5,7 +5,7 @@ not a fallback - they are how the ambiguous cases get resolved. What they must
 guarantee is that no edit is silent and no edit crosses a user boundary.
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.models import DataSource, User
 from app.repositories.data_source_repository import DataSourceRepository
 from app.schemas.enums import DeviceType, ProviderName
-from tests.factories import UserFactory
+from tests.factories import UserConnectionFactory, UserFactory
 
 
 @pytest.fixture
@@ -25,6 +25,27 @@ def other_user(db: Session) -> User:
 def _ensure(db: Session, user: User, provider: ProviderName, model: str | None, source: str | None) -> DataSource:
     data_source = DataSourceRepository().ensure_data_source(
         db, user_id=user.id, provider=provider, device_model=model, source=source
+    )
+    db.commit()
+    return data_source
+
+
+def _ensure_for(
+    db: Session,
+    user: User,
+    provider: ProviderName,
+    model: str | None,
+    source: str | None,
+    connection_id: UUID,
+) -> DataSource:
+    """The same, but attributed to one of the user's provider accounts."""
+    data_source = DataSourceRepository().ensure_data_source(
+        db,
+        user_id=user.id,
+        provider=provider,
+        device_model=model,
+        source=source,
+        user_connection_id=connection_id,
     )
     db.commit()
     return data_source
@@ -372,3 +393,88 @@ class TestProposals:
         remaining = client.get(f"/api/v1/users/{user.id}/devices", headers=auth_headers).json()
         assert remaining["total"] == 1
         assert len(remaining["items"][0]["data_sources"]) == 2
+
+
+class TestDataSourceAccountProvenance:
+    """Which account a device's data arrived through.
+
+    One physical unit re-paired from a validation account to the participant's
+    own login reports the identical provider/source/model triple down both. The
+    registry keeps the two sources apart, but until the account travelled with
+    them the screen could not say which pairing a stretch of data belonged to,
+    which is the whole point of recording the pairing.
+    """
+
+    def test_each_source_names_the_account_it_arrived_through(
+        self, client: TestClient, db: Session, user: User, auth_headers: dict[str, str]
+    ) -> None:
+        first = UserConnectionFactory(
+            user=user,
+            provider="garmin",
+            account_label="P01 arm A",
+            account_email="p01.a@lab.example.edu",
+            account_type="validation",
+        )
+        second = UserConnectionFactory(
+            user=user,
+            provider="garmin",
+            account_label="P01 own",
+            account_email="p01.own@example.com",
+            account_type="personal",
+        )
+        db.commit()
+
+        # The same unit, reported identically down both pairings.
+        _ensure_for(db, user, ProviderName.GARMIN, "Garmin Cirqa", "garmin", first.id)
+        _ensure_for(db, user, ProviderName.GARMIN, "Garmin Cirqa", "garmin", second.id)
+
+        response = client.get(f"/api/v1/users/{user.id}/devices", headers=auth_headers)
+        assert response.status_code == 200
+
+        sources = [ds for device in response.json()["items"] for ds in device["data_sources"]]
+        assert len(sources) == 2
+        by_connection = {ds["user_connection_id"]: ds for ds in sources}
+        assert by_connection[str(first.id)]["account_label"] == "P01 arm A"
+        assert by_connection[str(first.id)]["account_email"] == "p01.a@lab.example.edu"
+        assert by_connection[str(first.id)]["account_type"] == "validation"
+        assert by_connection[str(second.id)]["account_label"] == "P01 own"
+        assert by_connection[str(second.id)]["account_type"] == "personal"
+
+    def test_an_unnamed_account_still_gets_a_stable_name(
+        self, client: TestClient, db: Session, user: User, auth_headers: dict[str, str]
+    ) -> None:
+        """An account connected before anyone labelled it is not left blank.
+
+        A blank would read as "no account", which is a different fact from
+        "an account nobody has named yet".
+        """
+        connection = UserConnectionFactory(
+            user=user,
+            provider="garmin",
+            provider_username=None,
+            account_label=None,
+            account_email=None,
+        )
+        db.commit()
+        _ensure_for(db, user, ProviderName.GARMIN, "Garmin Cirqa", "garmin", connection.id)
+
+        response = client.get(f"/api/v1/users/{user.id}/devices", headers=auth_headers)
+        source = response.json()["items"][0]["data_sources"][0]
+
+        assert source["user_connection_id"] == str(connection.id)
+        assert source["account_label"] == f"garmin ({str(connection.id)[:8]})"
+        assert source["account_type"] is None
+
+    def test_a_one_time_import_names_no_account(
+        self, client: TestClient, db: Session, user: User, auth_headers: dict[str, str]
+    ) -> None:
+        """An XML or manual import belongs to no account, and must not borrow one."""
+        _ensure(db, user, ProviderName.GARMIN, "fenix 8", "garmin")
+
+        response = client.get(f"/api/v1/users/{user.id}/devices", headers=auth_headers)
+        source = response.json()["items"][0]["data_sources"][0]
+
+        assert source["user_connection_id"] is None
+        assert source["account_label"] is None
+        assert source["account_email"] is None
+        assert source["account_type"] is None

@@ -13399,6 +13399,63 @@
               }
             ],
             "title": "Original Source Name"
+          },
+          "user_connection_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Connection Id"
+          },
+          "account_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Label",
+            "description": "Name of the connected account this source arrived through.",
+            "examples": [
+              "P01 arm A"
+            ]
+          },
+          "account_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Email",
+            "description": "Login e-mail of the connected account this source arrived through.",
+            "examples": [
+              "p01.left@lab.example.edu"
+            ]
+          },
+          "account_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Type",
+            "description": "What that account is for: personal, validation, reliability, monitoring, testing, other. Null when nobody has classified it.",
+            "examples": [
+              "validation"
+            ]
           }
         },
         "type": "object",

@@ -59,6 +59,9 @@ import type {
 } from '@/lib/api/services/device.service';
 import { useUserDataSources } from '@/hooks/api/use-priorities';
 import type { DataSource } from '@/lib/api/services/priority.service';
+import { useUserConnections } from '@/hooks/api/use-health';
+import { AccountChip } from '@/components/common/account-chip';
+import { buildAccountMap, type AccountDescriptor } from '@/lib/utils/account';
 
 const DEVICE_TYPES = [
   'chest_strap',
@@ -107,6 +110,12 @@ export function DevicesSection({ userId }: { userId: string }) {
   );
   const { data: proposals } = useLinkProposals(userId);
   const { data: allSources } = useUserDataSources(userId);
+  // Which account each source arrived through. The same physical unit re-paired
+  // to a second account of one provider produces rows identical down to the
+  // model string, so without this the registry cannot say which pairing a
+  // stretch of data belongs to.
+  const { data: connections } = useUserConnections(userId);
+  const accounts = useMemo(() => buildAccountMap(connections), [connections]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [linking, setLinking] = useState<DataSource | null>(null);
@@ -213,6 +222,7 @@ export function DevicesSection({ userId }: { userId: string }) {
               key={device.id}
               userId={userId}
               device={device}
+              accounts={accounts}
               onEdit={() => setEditing(device)}
               onSplit={() => setSplitting(device)}
               onMerge={() => setMerging(device)}
@@ -224,6 +234,7 @@ export function DevicesSection({ userId }: { userId: string }) {
 
       <UnattributedSources
         sources={unattributed}
+        accounts={accounts}
         onLink={(source) => setLinking(source)}
       />
 
@@ -264,6 +275,23 @@ export function DevicesSection({ userId }: { userId: string }) {
 }
 
 /**
+ * The account a source arrived through, when the user holds more than one with
+ * that provider. Silent otherwise, and silent for a one-time import, which
+ * belongs to no account at all.
+ */
+function SourceAccount({
+  connectionId,
+  accounts,
+}: {
+  connectionId: string | null;
+  accounts: Map<string, AccountDescriptor>;
+}) {
+  const account = connectionId ? accounts.get(connectionId) : undefined;
+  if (!account?.hasSiblings) return null;
+  return <AccountChip account={account} />;
+}
+
+/**
  * Data sources attributed to no device.
  *
  * Detection only groups what a provider itself identifies, so an unattributed source
@@ -274,9 +302,11 @@ export function DevicesSection({ userId }: { userId: string }) {
  */
 function UnattributedSources({
   sources,
+  accounts,
   onLink,
 }: {
   sources: DataSource[];
+  accounts: Map<string, AccountDescriptor>;
   onLink: (source: DataSource) => void;
 }) {
   if (sources.length === 0) return null;
@@ -305,6 +335,10 @@ function UnattributedSources({
               {source.source ? ` · ${source.source}` : ''}
               {source.device_model ? ` · ${source.device_model}` : ''}
             </span>
+            <SourceAccount
+              connectionId={source.user_connection_id}
+              accounts={accounts}
+            />
             {source.attribution_locked_at && (
               <Badge
                 variant="outline"
@@ -424,6 +458,7 @@ function LinkDataSourceDialog({
 function DeviceCard({
   userId,
   device,
+  accounts,
   onEdit,
   onSplit,
   onMerge,
@@ -431,6 +466,7 @@ function DeviceCard({
 }: {
   userId: string;
   device: Device;
+  accounts: Map<string, AccountDescriptor>;
   onEdit: () => void;
   onSplit: () => void;
   onMerge: () => void;
@@ -443,6 +479,21 @@ function DeviceCard({
   const strongClaims = device.identities.filter(
     (i) => i.confidence === 'strong'
   );
+
+  // The accounts this unit's data came through, in the order the sources list
+  // them. Summarised in the header so "which pairing is this one?" is answerable
+  // without expanding the sources - the question the registry could not answer
+  // when the same unit had been paired to two accounts in turn.
+  const deviceAccounts = useMemo(() => {
+    const seen = new Map<string, AccountDescriptor>();
+    for (const ds of device.data_sources) {
+      const account = ds.user_connection_id
+        ? accounts.get(ds.user_connection_id)
+        : undefined;
+      if (account?.hasSiblings) seen.set(account.id, account);
+    }
+    return [...seen.values()];
+  }, [device.data_sources, accounts]);
 
   return (
     <Card className={device.is_active ? 'p-4' : 'p-4 opacity-60'}>
@@ -494,6 +545,15 @@ function DeviceCard({
             {device.firmware_version ? ` · fw ${device.firmware_version}` : ''}
           </p>
 
+          {deviceAccounts.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Paired via</span>
+              {deviceAccounts.map((account) => (
+                <AccountChip key={account.id} account={account} />
+              ))}
+            </div>
+          )}
+
           <div className="mt-3 space-y-1">
             <p className="text-xs font-medium text-muted-foreground">
               Data sources ({device.data_sources.length})
@@ -515,6 +575,10 @@ function DeviceCard({
                       {ds.source ? ` · ${ds.source}` : ''}
                       {ds.device_model ? ` · ${ds.device_model}` : ''}
                     </span>
+                    <SourceAccount
+                      connectionId={ds.user_connection_id}
+                      accounts={accounts}
+                    />
                     <button
                       type="button"
                       onClick={() =>

@@ -40,6 +40,31 @@ class DeviceDataSourceResponse(BaseModel):
     device_model: str | None = None
     device_type: str | None = None
     original_source_name: str | None = None
+    # Which connected account this source arrived through. One physical unit can
+    # be paired with two accounts in turn - a validation arm re-paired to the
+    # participant's own login, say - and the provider then reports the identical
+    # provider/source/model triple down each. Without the account these rows are
+    # indistinguishable on screen, and so is the question of which pairing a
+    # given block of data belongs to.
+    user_connection_id: UUID | None = None
+    account_label: str | None = Field(
+        None,
+        description="Name of the connected account this source arrived through.",
+        examples=["P01 arm A"],
+    )
+    account_email: str | None = Field(
+        None,
+        description="Login e-mail of the connected account this source arrived through.",
+        examples=["p01.left@lab.example.edu"],
+    )
+    account_type: str | None = Field(
+        None,
+        description=(
+            "What that account is for: personal, validation, reliability, monitoring, "
+            "testing, other. Null when nobody has classified it."
+        ),
+        examples=["validation"],
+    )
 
     model_config = {"from_attributes": True}
 
