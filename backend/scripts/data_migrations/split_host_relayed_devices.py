@@ -202,6 +202,68 @@ def _drop_host_claims(db: Session, repo: DeviceRepository, device: Device, host_
     return removed
 
 
+def _existing_relayed_device(
+    db: Session, repo: DeviceRepository, user_id: UUID, provider: str, writer: str | None, host_model: str
+) -> Device | None:
+    """The device detection already made for this writer, if there is one.
+
+    Detection creates it as soon as new data arrives, but attribution is write-once,
+    so the sources stay on the pooled handset and the new device sits empty. Splitting
+    into a second device would then leave the pair: one holding the claim, one holding
+    the data, with nothing to say they are the same unit. The sources move onto the
+    device that already exists instead.
+    """
+    if not writer:
+        return None
+    claim = grouping_claim(provider, writer, host_model)
+    if claim is None:
+        return None
+    return repo.find_by_claim(db, user_id, claim)
+
+
+def _adopt(
+    db: Session,
+    repo: DeviceRepository,
+    pooled: Device,
+    target: Device,
+    sources: list[DataSource],
+    writer: str | None,
+    host_model: str,
+    provider: str,
+) -> None:
+    """Move a writer's sources off the handset and onto its existing device."""
+    for data_source in sources:
+        repo.attach_data_source(
+            db,
+            data_source,
+            target,
+            actor=ACTOR,
+            reason=f"Relayed by {writer or 'an unnamed app'} on {host_model}, not recorded by it",
+        )
+    _reclassify(db, repo, target, writer, host_model, provider)
+    _move_writer_claim(db, repo, pooled, target, writer)
+    _drop_host_claims(db, repo, target, host_model)
+
+
+def _withdraw_host_proposals(db: Session, repo: DeviceRepository, pooled: Device, separated: set[UUID]) -> int:
+    """Reject the pending "same device?" pairs between the handset and what just left it.
+
+    Those proposals exist because detection saw the writer's claim resolve to a new
+    device while the source still sat on the phone, and had no way to tell a re-paired
+    unit from a mis-filed one. The split answers the question: they are not the same
+    device, and the phone is not a ring. Leaving them pending asks the operator to
+    merge the migration back, and accepting one is the irreversible direction.
+    """
+    withdrawn = 0
+    for proposal in repo.pending_proposals(db, pooled.user_id):
+        pair = {proposal.device_a_id, proposal.device_b_id}
+        if pooled.id not in pair or not (pair - {pooled.id}) & separated:
+            continue
+        repo.decide_proposal(db, proposal, accepted=False, actor=ACTOR)
+        withdrawn += 1
+    return withdrawn
+
+
 def run(db: Session, dry_run: bool, user_id: UUID | None = None) -> int:
     """Rework every device that was built from a relaying host. Returns how many."""
     repo = DeviceRepository()
@@ -255,8 +317,14 @@ def run(db: Session, dry_run: bool, user_id: UUID | None = None) -> int:
         # own. A device that also holds sources the provider did describe keeps those
         # instead, and all of its relayed writers move out, so the two never mix.
         stays = writers[0] if not direct else None
+        separated: set[UUID] = set()
         for writer in writers:
             if writer == stays:
+                continue
+            existing = _existing_relayed_device(db, repo, device.user_id, provider, writer, host_model)
+            if existing is not None and existing.id != device.id:
+                _adopt(db, repo, device, existing, by_writer[writer], writer, host_model, provider)
+                separated.add(existing.id)
                 continue
             moved_ids = [ds.id for ds in by_writer[writer]]
             new_device = repo.split(db, device, moved_ids, actor=ACTOR, reason=f"Relayed by {writer} on {host_model}")
@@ -264,12 +332,14 @@ def run(db: Session, dry_run: bool, user_id: UUID | None = None) -> int:
             _move_writer_claim(db, repo, device, new_device, writer)
             _add_grouping_claim(db, repo, new_device, writer, host_model, provider)
             _drop_host_claims(db, repo, new_device, host_model)
+            separated.add(new_device.id)
 
         if stays is not None:
             _reclassify(db, repo, device, stays, host_model, provider)
             _add_grouping_claim(db, repo, device, stays, host_model, provider)
         if not direct:
             _drop_host_claims(db, repo, device, host_model)
+        _withdraw_host_proposals(db, repo, device, separated)
         # The session runs without autoflush, and the next device's lookups have to see
         # the claims this one moved and removed.
         db.flush()

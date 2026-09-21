@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.models import DataSource, Device, DeviceIdentity, User
 from app.repositories.device_repository import DeviceRepository
 from app.schemas.enums import DeviceIdentityKind, DeviceType, IdentityConfidence, LabelSource, ProviderName
+from app.services.devices.identity import grouping_claim
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "data_migrations" / "split_host_relayed_devices.py"
 
@@ -230,3 +231,104 @@ def test_re_running_is_a_no_op(db: Session) -> None:
 
     assert run(db, dry_run=False) == 0
     assert len(_devices(db, user)) == 2
+
+
+def _detected_relayed_device(db: Session, user: User, writer: str, host_model: str) -> Device:
+    """What detection makes of a writer once the relay rule is in place.
+
+    It creates the device the moment new data arrives, but attribution is write-once,
+    so the writer's sources stay on the pooled handset and this sits empty. A database
+    that ran the relay release before this backfill is full of these.
+    """
+    repo = DeviceRepository()
+    device = repo.create(
+        db,
+        user_id=user.id,
+        device_type=DeviceType.UNKNOWN.value,
+        brand=None,
+        model_raw=None,
+        host_model_raw=host_model,
+        label=writer,
+        actor="test",
+        detected=True,
+    )
+    claim = grouping_claim(ProviderName.APPLE.value, writer, host_model)
+    assert claim is not None
+    repo.add_claim(db, device, claim, actor="test")
+    db.flush()
+    return device
+
+
+def test_a_writer_detection_already_made_a_device_for_is_adopted_not_twinned(db: Session) -> None:
+    """Splitting into a second device would leave the claim and the data apart.
+
+    The device detection created holds the grouping claim; a fresh split holds the
+    samples. Neither says it is the other, and the registry ends up with two entries
+    per unit - which is the confusion this backfill exists to remove.
+    """
+    user = _user(db)
+    _pooled_phone_device(db, user, ["Oura", "WHOOP", "Fitness"])
+    existing = _detected_relayed_device(db, user, "Oura", "iPhone 17 Pro")
+
+    run(db, dry_run=False)
+
+    devices = _devices(db, user)
+    assert [d.label for d in devices].count("Oura") == 1
+    by_source = {ds.source: ds.device_id for ds in db.query(DataSource).filter(DataSource.user_id == user.id).all()}
+    assert by_source["Oura"] == existing.id
+    # "Fitness" is the platform's own writer, so it names the handset honestly and stays.
+    assert by_source["Fitness"] != existing.id
+    assert not [d for d in devices if not DeviceRepository().data_sources_for_device(db, d.id)]
+
+
+def test_the_handsets_stale_link_proposals_are_withdrawn(db: Session) -> None:
+    """They ask whether a phone and a ring are one device. The split is the answer.
+
+    Detection raised them because the writer's claim resolved elsewhere while the
+    source still sat on the phone, and it cannot tell a re-paired unit from a mis-filed
+    one. Left pending they invite the operator to merge the migration back, and
+    accepting one is the direction that cannot be undone.
+    """
+    user = _user(db)
+    phone = _pooled_phone_device(db, user, ["Oura", "Fitness"])
+    repo = DeviceRepository()
+    relayed = _detected_relayed_device(db, user, "Oura", "iPhone 17 Pro")
+    repo.upsert_proposal(
+        db,
+        user_id=user.id,
+        device_a=phone.id,
+        device_b=relayed.id,
+        score=60,
+        evidence={"reason": "identity_claim_conflict", "route": "apple"},
+        actor="test",
+    )
+    db.flush()
+    assert len(repo.pending_proposals(db, user.id)) == 1
+
+    run(db, dry_run=False)
+
+    assert repo.pending_proposals(db, user.id) == []
+
+
+def test_an_unrelated_proposal_on_the_handset_is_left_alone(db: Session) -> None:
+    """Only the pairs this run separated are answered; the rest are still questions."""
+    user = _user(db)
+    phone = _pooled_phone_device(db, user, ["Oura", "Fitness"])
+    repo = DeviceRepository()
+    other = repo.create(
+        db,
+        user_id=user.id,
+        device_type=DeviceType.PHONE.value,
+        brand="Apple",
+        model_raw="iPhone 15",
+        actor="test",
+        detected=True,
+    )
+    db.flush()
+    repo.upsert_proposal(db, user_id=user.id, device_a=phone.id, device_b=other.id, score=60, actor="test")
+    db.flush()
+
+    run(db, dry_run=False)
+
+    pending = repo.pending_proposals(db, user.id)
+    assert [{p.device_a_id, p.device_b_id} for p in pending] == [{phone.id, other.id}]
