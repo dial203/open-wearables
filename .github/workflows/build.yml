@@ -48,8 +48,15 @@ jobs:
       - name: Derive fork version metadata
         id: fork
         run: |
-          echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "updated_at=$(git log -1 --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+          commit="$(git rev-parse --short HEAD)"
+          updated_at="$(git log -1 --format=%cI HEAD)"
+          # Echoed so a footer showing an unexpected date can be checked against
+          # what this build actually passed in, without a rebuild.
+          echo "fork commit=$commit updated_at=$updated_at"
+          {
+            echo "commit=$commit"
+            echo "updated_at=$updated_at"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Derive image tags & labels
         id: meta
