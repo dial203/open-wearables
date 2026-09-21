@@ -77,6 +77,22 @@ if TYPE_CHECKING:
     # is what holds the rule, and passed down so this layer stays a query builder.
     from app.services.sources.relay_dedup import RelayDedupPlan
 
+
+def _relay_conditions(relay_plan: "RelayDedupPlan | None", model: type[DataPointSeries]) -> list[ColumnElement[bool]]:
+    """Rows a daily aggregate must not count, or nothing when the rule is off.
+
+    Kept here so every aggregate applies the rule the same way: on the rows going into
+    the sum, keyed by series type and bounded by the span the direct route covers.
+    """
+    if relay_plan is None:
+        return []
+    return relay_plan.conditions(
+        model.data_source_id,
+        key_column=model.series_type_definition_id,
+        timestamp_column=model.recorded_at,
+    )
+
+
 # Identity tuple: (user_id, device_model, source)
 DataSourceIdentity = tuple[UUID, str | None, str | None]
 
@@ -954,6 +970,7 @@ class DataPointSeriesRepository(
         user_id: UUID,
         start_date: datetime,
         end_date: datetime,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> list[ActivityAggregateResult]:
         """Get daily activity aggregates from time-series data.
 
@@ -1047,6 +1064,10 @@ class DataPointSeriesRepository(
                 self.model.series_type_definition_id.in_(
                     [steps_id, energy_id, basal_energy_id, hr_id, distance_id, flights_id, active_time_id]
                 ),
+                # Leave out an aggregator's copy of a brand that is also connected
+                # directly, so a day is not summed twice. Applied inside the aggregate
+                # rather than to its result: a redundant row must never reach the sum.
+                *_relay_conditions(relay_plan, self.model),
             )
             .group_by(
                 local_date,
@@ -1091,6 +1112,7 @@ class DataPointSeriesRepository(
         start_date: datetime,
         end_date: datetime,
         active_threshold: int = 30,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> list[ActiveMinutesResult]:
         """Get daily active/sedentary minutes from step data.
 
@@ -1133,6 +1155,7 @@ class DataPointSeriesRepository(
                 local_date < cast(end_date, Date),
                 self.model.series_type_definition_id == steps_id,
                 self.model.is_daily_total.isnot(True),
+                *_relay_conditions(relay_plan, self.model),
             )
             .group_by(
                 local_date,
@@ -1193,6 +1216,7 @@ class DataPointSeriesRepository(
         light_max: int,
         moderate_max: int,
         vigorous_max: int,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> list[IntensityMinutesResult]:
         """Get daily intensity minutes from heart rate data.
 
@@ -1235,6 +1259,7 @@ class DataPointSeriesRepository(
                 local_date >= cast(start_date, Date),
                 local_date < cast(end_date, Date),
                 self.model.series_type_definition_id == hr_id,
+                *_relay_conditions(relay_plan, self.model),
             )
             .group_by(
                 local_date,

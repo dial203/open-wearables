@@ -448,8 +448,9 @@ class TestGetSleepSummaries:
 
 class TestGetRecoverySummaries:
     def test_rmssd_input_is_exposed_as_rmssd_not_sdnn(
-        self, service: SummariesService, monkeypatch: pytest.MonkeyPatch
+        self, db: Session, service: SummariesService, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Takes a real session: the service now resolves the relay rule before reading."""
         row = {
             "recovery_date": date(2026, 1, 2),
             "provider": "whoop",
@@ -463,11 +464,11 @@ class TestGetRecoverySummaries:
             "hrv_rmssd_milli": 63.2,
             "spo2_percentage": 98.4,
         }
-        monkeypatch.setattr(service.health_score_repo, "get_recovery_summaries", lambda *_: [row])
+        monkeypatch.setattr(service.health_score_repo, "get_recovery_summaries", lambda *_args, **_kwargs: [row])
         monkeypatch.setattr(service, "_filter_by_priority", lambda *_args, **_kwargs: [row])
 
         result = service.get_recovery_summaries(
-            db_session=None,
+            db_session=db,
             user_id=uuid4(),
             start_date=_dt("2026-01-01T00:00:00+00:00"),
             end_date=_dt("2026-01-03T00:00:00+00:00"),

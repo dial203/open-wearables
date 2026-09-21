@@ -6,7 +6,8 @@ description: "How Open Wearables leaves out an aggregator's copy of a maker that
 ## In one paragraph
 
 If the same brand reaches Open Wearables twice — once from the maker's API, once
-relayed by Apple Health or another aggregator — reads show it once. The relayed
+relayed by Apple Health or another aggregator — reads show it once, and daily
+summaries count it once. The relayed
 copy is left out only for the span the direct connection actually covers, and
 only for the data types it actually delivers. Nothing is deleted, every read can
 ask for the hidden copies back, and one environment variable turns the whole
@@ -99,9 +100,10 @@ GET /api/v1/users/{user_id}/timeseries?types=heart_rate&start_time=...&end_time=
 GET /api/v1/users/{user_id}/timeseries?types=heart_rate&include_redundant_relays=true&start_time=...&end_time=...
 ```
 
-Applies to the time series and event (workout, sleep, menstrual cycle)
-endpoints. A read that names a single `data_source_id` is never filtered:
-asking for a source by id is asking for that source.
+Applies to the time series endpoint, the event endpoints (workout, sleep,
+menstrual cycle) and the daily summaries below. A read that names a single
+`data_source_id` is never filtered: asking for a source by id is asking for
+that source.
 
 ## Nothing disappears silently
 
@@ -151,20 +153,40 @@ it depends on what the direct route has actually delivered — and that changes
 when a token expires, a backfill lands, or an account is revoked. A stored flag
 would go on asserting an answer that had stopped being true.
 
-## What the rule does not touch
+## Daily aggregates
 
-Only the endpoints that return individual samples and records apply it: the
-time series endpoint and the event endpoints (workouts, sleep, menstrual
-cycles). These still count both copies, exactly as before:
+A second copy does the most damage in a summary. It is not a duplicate row
+someone can ignore — it is a wrong number. 7,000 steps read as 14,000, two
+nights of sleep for one night, a recovery score counted twice, and nothing
+about the figure looks wrong once it is in an analysis.
 
-- `/summaries/*` — daily aggregates are computed in SQL over all rows.
-- Health scores, which are derived from the records as stored.
-- Dashboard counts and any per-provider statistics.
+The daily summaries therefore apply the same rule, to the rows going *into* the
+aggregate rather than to its result:
 
-That is a deliberate boundary rather than an oversight: an aggregate rewritten
-mid-series would change historical numbers that may already be in an analysis.
-If you need deduplicated daily aggregates, pull the samples with the time series
-endpoint and aggregate them yourself, or raise it as a follow-up.
+| Endpoint | Deduplicated on |
+| --- | --- |
+| `/summaries/activity` | samples per series type (steps, energy, distance, HR, floors, active time), including the archived daily rows, plus the workout totals folded in |
+| `/summaries/sleep` | sleep sessions per night |
+| `/summaries/recovery` | recovery scores per day |
+
+Each takes `include_redundant_relays=true` to count every copy, and each reports
+what it left out in `metadata.relay_dedup`. A summary and the records behind it
+are resolved with the same spans, so the two never disagree about what counts.
+
+Two deliberate details:
+
+- **The activity summary measures coverage over the archive too**, because it
+  reads archived days. Raw sample reads do not: archiving removes the direct
+  rows from the live table, and counting archived coverage there would hide the
+  relay over days whose direct data the read can no longer return — turning a
+  duplicate into a hole.
+- **Scores and archived days get a day's tolerance** rather than minutes. A day
+  is the unit being deduplicated: a relayed recovery score can land hours from
+  the direct one and still be the same day.
+
+Still untouched: `/summaries/body` (latest and averaged readings, not a daily
+aggregate), dashboard counts and per-provider statistics, which describe what
+was ingested rather than what was measured.
 
 ## Limits worth knowing
 

@@ -35,6 +35,17 @@ def get_activity_summary(
         bool,
         Query(description="Collapse to the highest-priority source per day. Set false to return every source."),
     ] = True,
+    include_redundant_relays: Annotated[
+        bool,
+        Query(
+            description=(
+                "Count the aggregator's copy of a maker that is also connected directly. Off by "
+                "default: relayed rows are left out of the aggregate for the span the maker's own "
+                "API covers, so a day is not summed twice. Nothing is deleted - set this to "
+                "aggregate every copy. `metadata.relay_dedup` lists what was left out."
+            ),
+        ),
+    ] = False,
 ) -> PaginatedResponse[ActivitySummary]:
     """Returns daily aggregated activity metrics.
 
@@ -43,7 +54,15 @@ def get_activity_summary(
     start_datetime = parse_query_datetime(start_date)
     end_datetime = parse_query_end_datetime(end_date)
     return summaries_service.get_activity_summaries(
-        db, user_id, start_datetime, end_datetime, cursor, limit, sort_order, filter_by_priority=filter_by_priority
+        db,
+        user_id,
+        start_datetime,
+        end_datetime,
+        cursor,
+        limit,
+        sort_order,
+        filter_by_priority=filter_by_priority,
+        include_redundant_relays=include_redundant_relays,
     )
 
 
@@ -60,12 +79,30 @@ def get_sleep_summary(
         bool,
         Query(description="Collapse to the highest-priority source per day. Set false to return every source."),
     ] = True,
+    include_redundant_relays: Annotated[
+        bool,
+        Query(
+            description=(
+                "Count the aggregator's copy of a maker that is also connected directly. Off by "
+                "default: relayed rows are left out of the aggregate for the span the maker's own "
+                "API covers, so a day is not summed twice. Nothing is deleted - set this to "
+                "aggregate every copy. `metadata.relay_dedup` lists what was left out."
+            ),
+        ),
+    ] = False,
 ) -> PaginatedResponse[SleepSummary]:
     """Returns daily sleep metrics."""
     start_datetime = parse_query_datetime(start_date)
     end_datetime = parse_query_end_datetime(end_date)
     return summaries_service.get_sleep_summaries(
-        db, user_id, start_datetime, end_datetime, cursor, limit, filter_by_priority=filter_by_priority
+        db,
+        user_id,
+        start_datetime,
+        end_datetime,
+        cursor,
+        limit,
+        filter_by_priority=filter_by_priority,
+        include_redundant_relays=include_redundant_relays,
     )
 
 
@@ -82,6 +119,17 @@ def get_recovery_summary(
         bool,
         Query(description="Collapse to the highest-priority source per day. Set false to return every source."),
     ] = True,
+    include_redundant_relays: Annotated[
+        bool,
+        Query(
+            description=(
+                "Count the aggregator's copy of a maker that is also connected directly. Off by "
+                "default: relayed rows are left out of the aggregate for the span the maker's own "
+                "API covers, so a day is not summed twice. Nothing is deleted - set this to "
+                "aggregate every copy. `metadata.relay_dedup` lists what was left out."
+            ),
+        ),
+    ] = False,
 ) -> PaginatedResponse[RecoverySummary]:
     """Returns daily recovery metrics (recovery score, HRV, resting HR, SpO2).
 
@@ -97,7 +145,14 @@ def get_recovery_summary(
     start_datetime = parse_query_datetime(start_date)
     end_datetime = parse_query_end_datetime(end_date)
     return summaries_service.get_recovery_summaries(
-        db, user_id, start_datetime, end_datetime, cursor, limit, filter_by_priority=filter_by_priority
+        db,
+        user_id,
+        start_datetime,
+        end_datetime,
+        cursor,
+        limit,
+        filter_by_priority=filter_by_priority,
+        include_redundant_relays=include_redundant_relays,
     )
 
 
