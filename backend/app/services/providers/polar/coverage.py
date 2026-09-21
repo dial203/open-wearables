@@ -15,6 +15,8 @@ TIMESERIES: frozenset[SeriesType] = frozenset(
         *ACTIVITY_SERIES.values(),  # /v3/users/activities
         SeriesType.heart_rate,  # /v3/users/sleep + /v3/users/continuous-heart-rate + /v3/users/wrist-ecg
         SeriesType.heart_rate_variability_rmssd,  # /v3/users/spo2 + /v3/users/wrist-ecg
+        SeriesType.rr_interval,  # v4 training-sessions rrSamples, else /v3/exercises sample type 11
+        SeriesType.pulse_to_pulse_interval,  # v4 /ppi-samples (optical, not ECG)
         SeriesType.oxygen_saturation,  # /v3/users/spo2
         SeriesType.skin_temperature,  # /v3/users/sleep-skin-temperature + /v3/users/body-temperature (SKIN)
         SeriesType.skin_temperature_deviation,  # /v3/users/sleep-skin-temperature (deviation_from_baseline)

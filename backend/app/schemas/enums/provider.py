@@ -22,6 +22,12 @@ class ProviderName(str, Enum):
     HEALTH_CONNECT = "health_connect"
     GOOGLE_HEALTH = "google_health"
     POLAR = "polar"
+    # Token holder for Polar's AccessLink v4 API, which is a separate OAuth server
+    # (auth.polar.com) with scoped tokens — not a second Polar account. Declared
+    # *after* POLAR on purpose: from_source_string matches by substring in
+    # definition order, so a "polar_v4" source still resolves to POLAR and the data
+    # it carries files under the user's existing Polar data source.
+    POLAR_V4 = "polar_v4"
     SUUNTO = "suunto"
     WHOOP = "whoop"
     STRAVA = "strava"

@@ -7,6 +7,11 @@ from app.schemas.providers.polar.sleepwise import (
     SleepInertia,
 )
 
+# AccessLink exercise sample type ids (docs appendix "Exercise sample types").
+# 11 is the beat-to-beat RR interval in ms, present only when the session was recorded
+# with a Polar H6/H7/H9/H10 chest strap — the ECG-derived source for true HRV.
+RR_INTERVAL_SAMPLE_TYPE = "11"
+
 HYPNOGRAM_STAGE_MAP: dict[int, SleepStageType] = {
     0: SleepStageType.AWAKE,
     1: SleepStageType.REM,
