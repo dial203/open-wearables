@@ -159,7 +159,8 @@
             "group": "Deployment",
             "pages": [
               "deployment/docker",
-              "deployment/railway"
+              "deployment/railway",
+              "deployment/osu-container-services"
             ]
           },
           {

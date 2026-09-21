@@ -1,0 +1,129 @@
+---
+title: "Deploying at Ohio State (OTDI Container Services)"
+description: "Run an Open Wearables instance on Ohio State University's managed Kubernetes platform, including the data-classification and approval steps that come first."
+---
+
+This guide covers deploying Open Wearables on university infrastructure at The
+Ohio State University. It is written for the OSU case but the shape of it —
+classify the data, pick a platform that is approved for that classification,
+get the application risk-assessed, then deploy — applies at most universities.
+
+<Note>
+  Everything below reflects publicly documented OSU service information. Pricing,
+  namespace provisioning, and ingress details are behind the authenticated
+  service catalog and have to be confirmed with OTDI.
+</Note>
+
+## Which OSU service fits
+
+| Service | Fit for Open Wearables |
+|---------|------------------------|
+| [OTDI Container Services](https://it.osu.edu/otdi-container-services) | **Yes.** Managed Kubernetes with managed PostgreSQL, SSL, DNS, and Shibboleth/DUO integration |
+| [OTDI Web Hosting](https://web.osu.edu/) | **No.** Shared LAMP hosting (PHP/MySQL over SFTP) for CMS sites. It cannot run Python services, Postgres, Redis, or long-lived worker processes |
+| [Ohio State AWS](https://it.osu.edu/ohio-state-amazon-web-services) / [Azure](https://it.osu.edu/ohio-state-azure) | **Yes, with more work.** University-contracted accounts with integrated billing. You own the whole stack — ECS/EKS or VMs, RDS, ElastiCache, load balancers, patching |
+
+Container Services is the shorter path: a managed cluster, a managed database,
+certificates and DNS handled for you, and a platform that is already assessed
+against the university's security standards. Ohio State AWS makes sense if you
+already have an AWS account for other project work or need services the cluster
+does not offer.
+
+## Step 1: Classify the data before anything else
+
+Open Wearables stores per-participant physiological time series plus OAuth
+tokens for each participant's wearable account. If those records are
+identifiable and collected under a research protocol, they are Research Health
+Information, which Ohio State classifies as **S4 (Restricted)** — the
+university's highest tier, requiring MFA, encryption, unique accounts,
+minimum-necessary access, and access auditing.
+
+Run the [Institutional Data Policy
+calculator](https://it.osu.edu/data/institutional-data-policy) against your
+actual data set and keep the output. It determines what the rest of this
+process looks like:
+
+- **S4** — the platform must be approved for S4, and the application itself
+  needs a risk assessment. Contact `securemyresearch@osu.edu` early; loop in
+  your IRB protocol, since where the data lives is a protocol detail.
+- **S3 or below** (de-identified, coded with the key held outside the system)
+  — materially lighter. Deploying a coded-only instance and holding the
+  linking key elsewhere is worth considering on its own merits.
+
+<Warning>
+  If any participant is a patient in the Wexner Medical Center context, or the
+  data comes from the medical record, it is PHI under HIPAA rather than RHI,
+  and the Wexner Medical Center risk assessment team owns that review. The
+  rules differ.
+</Warning>
+
+## Step 2: Get the application risk-assessed
+
+Ohio State's guidance is explicit: a platform being approved does not approve
+the application running on it. An application that interacts with S4 data and
+has not already been assessed must be submitted for a risk assessment. For
+Open Wearables the assessment will want:
+
+- What the system stores, and for how long (`docs/developer-portal/settings/data-lifecycle`)
+- Authentication and authorization model for the portal
+- Third-party data flows — each provider's API (Garmin, Whoop, Oura, Fitbit, …),
+  and where OAuth secrets and tokens are stored
+- Egress: Sentry if you enable it, Resend for transactional email, S3 if you
+  enable Apple Health XML imports
+- That the source is open and self-hosted, so no participant data leaves
+  university infrastructure except to the provider APIs
+
+Start this in parallel with Step 3 — it is usually the long pole.
+
+## Step 3: Request the service
+
+1. Confirm classification and approach with your college IT / security
+   coordinator and `securemyresearch@osu.edu`.
+2. Open the [OTDI Container Services](https://it.osu.edu/otdi-container-services)
+   service catalog entry for pricing, and get budget approval in Workday.
+3. Submit the request. Ask specifically for:
+   - Development and production namespaces
+   - A managed PostgreSQL instance (Open Wearables needs PostgreSQL, not MySQL)
+   - Two DNS names with certificates — one for the portal, one for the API
+   - Confirmation of the container registry to push to, or that pulling the
+     published Docker Hub images is permitted
+   - The namespace's PodSecurity policy and allowed uid range
+4. Ask whether Shibboleth can front the portal. Open Wearables has its own
+   authentication; putting Shibboleth in front of the portal hostname is the
+   cleanest way to satisfy an S4 MFA requirement without changing the app.
+
+## Step 4: Deploy
+
+Manifests are in [`deploy/osu/`](https://github.com/the-momentum/open-wearables/tree/main/deploy/osu):
+API, Celery worker, Celery beat, frontend, an in-cluster Redis, and an Ingress,
+tied together with Kustomize. They assume managed PostgreSQL rather than a
+database pod.
+
+```bash
+# 1. Fill in the REPLACE- values in kustomization.yaml, configmap.yaml, ingress.yaml
+# 2. Create the secret from an uncommitted env file
+kubectl create secret generic ow-secrets --from-env-file=secrets.env
+
+# 3. Apply
+kubectl apply -k deploy/osu
+kubectl rollout status deploy/ow-api
+```
+
+See [`deploy/osu/README.md`](https://github.com/the-momentum/open-wearables/blob/main/deploy/osu/README.md)
+for the secret list and the constraints that matter — the API and beat
+deployments each stay at one replica, and both images run as root by default so
+the manifests force a non-root uid.
+
+## Step 5: Register OAuth redirect URIs
+
+Provider OAuth applications point at `API_BASE_URL`, so they can only be
+registered once the API hostname is live. Each provider's developer console
+needs the redirect URI for your deployment — see the
+[provider integration guides](/providers/supported). Several providers also
+require the callback host to be reachable from the public internet for webhook
+delivery; confirm that your ingress is not restricted to the campus network if
+you rely on webhooks rather than polling.
+
+## Related
+
+- [Deploying with Docker](/deployment/docker) — image tags, environment variables, Compose reference
+- [Data Lifecycle settings](/developer-portal/settings/data-lifecycle) — retention and archival, useful for the risk assessment

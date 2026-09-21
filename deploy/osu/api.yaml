@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ow-api
+spec:
+  selector:
+    app: ow-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ow-api
+spec:
+  # Keep this at 1. scripts/start/app.sh runs `alembic upgrade head` plus the
+  # seed scripts before starting uvicorn; concurrent replicas would race on the
+  # migration. To scale out, move those steps into a Job that runs before the
+  # rollout and change the command to start FastAPI directly.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ow-api
+  template:
+    metadata:
+      labels:
+        app: ow-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: api
+          image: themomentum/open-wearables-backend:0.7.0
+          command: ["scripts/start/app.sh"]
+          envFrom:
+            - configMapRef:
+                name: ow-config
+            - secretRef:
+                name: ow-secrets
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          # Migrations and seeding run before the port opens, so give startup a
+          # long budget (up to 5 min) and keep liveness off until it succeeds.
+          startupProbe:
+            httpGet:
+              path: /openapi.json
+              port: 8000
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /openapi.json
+              port: 8000
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /openapi.json
+              port: 8000
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: tmp
+          emptyDir: {}

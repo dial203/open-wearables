@@ -1,0 +1,46 @@
+# Two hostnames: one for the portal, one for the API. The API needs its own
+# public hostname because provider OAuth redirect URIs and inbound webhooks
+# (Garmin, Strava, Withings, ...) are registered against API_BASE_URL.
+#
+# Confirm three things with OTDI before applying:
+#   1. ingressClassName - the value their clusters use.
+#   2. TLS - whether they issue the certificate into a Secret you reference
+#      (as below) or terminate TLS at a load balancer in front of the cluster,
+#      in which case drop the `tls:` block.
+#   3. DNS - osu.edu hostnames are requested through OTDI, not created by you.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ow
+  annotations:
+    # Apple Health XML exports are uploaded straight to object storage, but
+    # other request bodies (bulk API writes) can still be large.
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: REPLACE-WITH-OTDI-INGRESS-CLASS
+  tls:
+    - hosts:
+        - wearables.osu.edu
+        - wearables-api.osu.edu
+      secretName: ow-tls
+  rules:
+    - host: wearables.osu.edu
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ow-frontend
+                port:
+                  number: 3000
+    - host: wearables-api.osu.edu
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ow-api
+                port:
+                  number: 8000
