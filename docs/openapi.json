@@ -774,7 +774,7 @@
           "External: Connections"
         ],
         "summary": "Update Connection Account Endpoint",
-        "description": "Rename a connected account, or correct its e-mail or the device behind it.\n\nFields absent from the body are left alone; sending an explicit ``null``\nclears one. Setting ``device_label`` also stamps it onto this account's\nalready-ingested, device-less data sources, so history and future samples\nagree on what was worn.",
+        "description": "Rename a connected account, or correct its e-mail or the device behind it.\n\nFields absent from the body are left alone; sending an explicit ``null``\nclears one. Setting ``device_label`` also stamps it onto this account's\nalready-ingested, device-less data sources, so history and future samples\nagree on what was worn.\n\n``device_label`` and ``sensor_label`` answer different questions and are not\nalternatives. The first names hardware the provider never reported at all, and\nis only consulted when nothing was. The second says that what the provider *did*\nreport is the recorder rather than the unit - the watch a chest strap was paired\nto - and applies whether or not a model came through.",
         "operationId": "update_connection_account_endpoint_api_v1_users__user_id__connections_accounts__connection_id__patch",
         "security": [
           {
