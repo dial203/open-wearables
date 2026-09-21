@@ -1,55 +1,127 @@
+# Open Wearables API: Apache reverse proxy (Istio-facing, :8080) in front of
+# the FastAPI container (:8000).
+#
+# ACCESS MODEL - read before changing the gateway below.
+# This host serves every API call the browser and the mobile SDK make, plus
+# provider OAuth callbacks (/api/v1/oauth/*) and inbound provider webhooks
+# (/api/v1/*/webhooks). None of those can sit behind Shibboleth: an XHR that
+# gets redirected to the IdP fails, and provider webhook calls carry no OSU
+# identity at all. So this host is either public (protected only by Open
+# Wearables' own bearer tokens) or restricted to OSU address space, in which
+# case participants can only enroll and sync from campus or VPN.
+#
+# The default below is public, because a field study with off-campus
+# participants does not work otherwise. To restrict it, change the gateway in
+# the VirtualService to istio-system/istio-internal-gateway.
 apiVersion: v1
-kind: Service
+kind: ConfigMap
 metadata:
   name: ow-api
-spec:
-  selector:
-    app: ow-api
-  ports:
-    - name: http
-      port: 8000
-      targetPort: 8000
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-api
+data:
+  local.conf: |
+    ServerName https://PLACEHOLDER_API_DNS:443
+
+    # The pod-level hop from Apache to FastAPI is plain HTTP; tell the app the
+    # original request was HTTPS so it builds correct OAuth redirect URIs.
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Ssl on
+
+    # No Shibboleth Location blocks here - see the note at the top of this file.
+  error.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+      <head><meta charset="utf-8"><title>Error</title></head>
+      <body><h1>An error occurred.</h1></body>
+    </html>
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ow-api
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-api
+    middleware.ocio.osu.edu/billing: PLACEHOLDER_NAMESPACE
 spec:
-  # Keep this at 1. scripts/start/app.sh runs `alembic upgrade head` plus the
-  # seed scripts before starting uvicorn; concurrent replicas would race on the
-  # migration. To scale out, move those steps into a Job that runs before the
-  # rollout and change the command to start FastAPI directly.
+  # Keep this at 1. scripts/start/app.sh runs `alembic upgrade head` and the
+  # seed scripts before uvicorn binds; concurrent replicas race on the
+  # migration. To scale out, move those into a Job and start FastAPI directly.
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: ow-api
+      app.kubernetes.io/name: ow-api
   template:
     metadata:
       labels:
-        app: ow-api
+        app.kubernetes.io/name: ow-api
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1001
-        fsGroup: 1001
+      restartPolicy: Always
+      imagePullSecrets:
+        - name: PLACEHOLDER_NAMESPACE-registry-pull
       containers:
-        - name: api
-          image: themomentum/open-wearables-backend:0.7.0
+        - name: apacheshib
+          image: registry.containers.it.osu.edu/ocio/docker-apacheshib-revproxy
+          imagePullPolicy: Always
+          securityContext:
+            runAsUser: 48
+          ports:
+            - name: http-alt
+              containerPort: 8080
+          env:
+            - name: APACHESHIB_HOST
+              value: 'PLACEHOLDER_API_DNS'
+            - name: APACHESHIB_EMAIL
+              value: PLACEHOLDER_EMAIL
+            - name: APACHESHIB_PROXY_FLAGS
+              value: 'ping=3 keepalive=On disablereuse=On'
+            - name: APACHESHIB_TARGET
+              value: "http://localhost:8000"
+          livenessProbe:
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+            httpGet:
+              scheme: HTTP
+              port: 8080
+              path: /kube-service-check
+              httpHeaders:
+                - name: Host
+                  value: localhost
+          volumeMounts:
+            - name: ow-api
+              mountPath: /var/www/html/error.html
+              subPath: error.html
+              readOnly: true
+            - name: ow-api
+              mountPath: /etc/httpd/conf/local.conf
+              subPath: local.conf
+              readOnly: true
+
+        - name: app
+          image: PLACEHOLDER_REGISTRY/open-wearables-backend:0.7.0
+          imagePullPolicy: Always
           command: ["scripts/start/app.sh"]
+          securityContext:
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
           envFrom:
             - configMapRef:
                 name: ow-config
             - secretRef:
                 name: ow-secrets
           ports:
-            - containerPort: 8000
+            - name: http-app
+              containerPort: 8000
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-          # Migrations and seeding run before the port opens, so give startup a
-          # long budget (up to 5 min) and keep liveness off until it succeeds.
+          # Migrations and seeding run before the port opens. Allow 5 minutes.
           startupProbe:
             httpGet:
               path: /openapi.json
@@ -61,22 +133,65 @@ spec:
               path: /openapi.json
               port: 8000
             periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /openapi.json
-              port: 8000
-            periodSeconds: 30
-            failureThreshold: 3
           resources:
             requests:
               cpu: 250m
               memory: 512Mi
             limits:
               memory: 2Gi
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
       volumes:
+        - name: ow-api
+          configMap:
+            name: ow-api
         - name: tmp
           emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ow-api
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-api
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/name: ow-api
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: ow-api
+  namespace: PLACEHOLDER_NAMESPACE
+spec:
+  hosts:
+    - 'PLACEHOLDER_API_DNS'
+  gateways:
+    # istio-system/istio-internal-gateway restricts this to OSU address space.
+    # See the access-model note at the top of this file before switching.
+    - istio-system/istio-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            port:
+              number: 8080
+            host: ow-api.PLACEHOLDER_NAMESPACE.svc.cluster.local
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: ow-api
+  namespace: PLACEHOLDER_NAMESPACE
+spec:
+  host: ow-api.PLACEHOLDER_NAMESPACE.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: X-Forwarded-For

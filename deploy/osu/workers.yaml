@@ -1,0 +1,118 @@
+# Celery worker and beat. Neither takes inbound traffic, so no Apache sidecar,
+# no Service, no VirtualService.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ow-worker
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-worker
+    middleware.ocio.osu.edu/billing: PLACEHOLDER_NAMESPACE
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ow-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ow-worker
+    spec:
+      restartPolicy: Always
+      imagePullSecrets:
+        - name: PLACEHOLDER_NAMESPACE-registry-pull
+      containers:
+        - name: app
+          image: PLACEHOLDER_REGISTRY/open-wearables-backend:0.7.0
+          imagePullPolicy: Always
+          command: ["scripts/start/worker.sh"]
+          securityContext:
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+          envFrom:
+            - configMapRef:
+                name: ow-config
+            - secretRef:
+                name: ow-secrets
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          # worker.sh runs an I/O worker and a CPU worker in one container.
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "celery -A app.main:celery_app inspect ping -d io@$HOSTNAME"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 15
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              # Apple Health XML imports are the memory-hungry path (xml_sync
+              # queue). Raise this if you see OOMKills.
+              memory: 3Gi
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ow-beat
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-beat
+    middleware.ocio.osu.edu/billing: PLACEHOLDER_NAMESPACE
+spec:
+  # Exactly one, always. Two schedulers means every sync fires twice.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ow-beat
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ow-beat
+    spec:
+      restartPolicy: Always
+      imagePullSecrets:
+        - name: PLACEHOLDER_NAMESPACE-registry-pull
+      containers:
+        - name: app
+          image: PLACEHOLDER_REGISTRY/open-wearables-backend:0.7.0
+          imagePullPolicy: Always
+          # scripts/start/beat.sh writes celerybeat.pid and the schedule file
+          # into the image working directory, which a non-root uid cannot write
+          # to. Run celery directly with both paths under /tmp instead.
+          command:
+            - celery
+            - -A
+            - app.main:celery_app
+            - beat
+            - -l
+            - info
+            - --pidfile=/tmp/celerybeat.pid
+            - --schedule=/tmp/celerybeat-schedule
+          securityContext:
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+          envFrom:
+            - configMapRef:
+                name: ow-config
+            - secretRef:
+                name: ow-secrets
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}

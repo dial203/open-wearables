@@ -1,40 +1,45 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: ow-redis
-spec:
-  clusterIP: None
-  selector:
-    app: ow-redis
-  ports:
-    - port: 6379
-      targetPort: 6379
----
+# Celery broker.
+#
+# Storage is deliberately ephemeral (emptyDir). The only persistent storage on
+# this platform is NFS-backed, and Redis append-only persistence on NFS is a
+# known source of corruption and fsync stalls. The tradeoff: a pod restart
+# drops queued tasks. For Open Wearables that means a missed sync cycle, which
+# the next celery-beat tick re-queues - acceptable for scheduled syncs, less so
+# if you depend on inbound provider webhooks during the restart window.
+#
+# If you need a durable broker, ask Container Services whether block-backed
+# storage is available before switching to a PVC.
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: ow-redis
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-redis
+    middleware.ocio.osu.edu/billing: PLACEHOLDER_NAMESPACE
 spec:
-  serviceName: ow-redis
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      app: ow-redis
+      app.kubernetes.io/name: ow-redis
   template:
     metadata:
       labels:
-        app: ow-redis
+        app.kubernetes.io/name: ow-redis
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 999
-        fsGroup: 999
+      restartPolicy: Always
       containers:
         - name: redis
           image: redis:8
-          args: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+          args: ["redis-server", "--save", "", "--appendonly", "no"]
+          securityContext:
+            runAsUser: 999
+            allowPrivilegeEscalation: false
           ports:
-            - containerPort: 6379
+            - name: redis
+              containerPort: 6379
           volumeMounts:
             - name: data
               mountPath: /data
@@ -49,15 +54,22 @@ spec:
               memory: 128Mi
             limits:
               memory: 512Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 5Gi
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ow-redis
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-redis
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+  selector:
+    app.kubernetes.io/name: ow-redis

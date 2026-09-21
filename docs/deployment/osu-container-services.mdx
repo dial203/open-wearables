@@ -85,56 +85,94 @@ Start this in parallel with Step 3 — it is usually the long pole.
    [requisition instructions](https://it.osu.edu/otdi-container-services/create-workday-requisition-container-services)
    spell out the form: **Request Non-Catalog Items → Service**, supplier
    *OTDI – Office of Technology and Digital Innovation*, spend category
-   *IT Computer Services - Internet* (SC10518), base price **$20 per Resource
-   Unit per month**, with a memo noting the price varies with usage. The
-   Internal Memo field needs a plain-English business purpose written for an
-   auditor.
+   *IT Computer Services - Internet* (SC10518), base price **$20 per unit per
+   month**, with a memo noting the price varies with usage. The Internal Memo
+   field needs a plain-English business purpose written for an auditor.
+
+   One unit is the **highest** of 1 GB RAM, 3 vCPU, or 10 GB persistent
+   storage, billed pay-as-you-go; managed database storage counts. The
+   manifests in `deploy/osu/` request about 2.3 GB RAM and 0.95 vCPU, so RAM
+   sets the count — roughly 3 units plus database storage. Consulting time is
+   billed separately at $20 per unit per 15 minutes, banked rather than
+   use-it-or-lose-it.
 3. Submit the request. Ask specifically for:
    - Development and production namespaces
-   - A managed PostgreSQL instance (Open Wearables needs PostgreSQL, not MySQL)
-   - Two DNS names with certificates — one for the portal, one for the API
-   - Confirmation of the container registry to push to, or that pulling the
-     published Docker Hub images is permitted
-   - The namespace's PodSecurity policy and allowed uid range
-   - **What a Resource Unit covers**, so you can size the requisition. This is
-     not documented publicly. The manifests in `deploy/osu/` request roughly
-     0.8 CPU and 1.9 GiB of memory across all pods, with limits totalling about
-     7 GiB, plus a 5 GiB Redis volume and the managed database
-4. Ask whether Shibboleth can front the portal. Open Wearables has its own
-   authentication; putting Shibboleth in front of the portal hostname is the
-   cleanest way to satisfy an S4 MFA requirement without changing the app.
+   - A **managed PostgreSQL** instance (managed Postgres and MariaDB are
+     included in the service; Open Wearables needs Postgres)
+   - Two DNS names — one for the portal, one for the API. `webtest.osu.edu`
+     and `containers.it.osu.edu` are commonly used and managed by the
+     Container Services team
+   - Whether metering is on resource requests or actual usage, so you can size
+     the requisition
+   - How to handle secrets (see Step 5)
 
-## Step 4: Deploy
+## Step 4: Understand the deployment model before writing YAML
 
-Manifests are in [`deploy/osu/`](https://github.com/the-momentum/open-wearables/tree/main/deploy/osu):
-API, Celery worker, Celery beat, frontend, an in-cluster Redis, and an Ingress,
-tied together with Kustomize. They assume managed PostgreSQL rather than a
-database pod.
+Container Services is **GitOps via Flux**. You do not `kubectl apply`. Your
+namespace comes with a GitLab repository at
+`https://repo.service.osu.edu/ContainerService/customer_flux/flux_<namespace>_cs`,
+reachable only from OSU IP space. You commit manifests into `production/`, add
+each filename to `production/kustomization.yaml`, and the cluster reconciles.
 
-```bash
-# 1. Fill in the REPLACE- values in kustomization.yaml, configmap.yaml, ingress.yaml
-# 2. Create the secret from an uncommitted env file
-kubectl create secret generic ow-secrets --from-env-file=secrets.env
+Three platform conventions shape the manifests:
 
-# 3. Apply
-kubectl apply -k deploy/osu
-kubectl rollout status deploy/ow-api
-```
+- **Istio, not Ingress.** Routing is a `VirtualService` + `DestinationRule`
+  bound to `istio-system/istio-gateway` (public) or
+  `istio-system/istio-internal-gateway` (OSU address space only).
+- **Apache reverse-proxy sidecar.** Every web-facing pod runs
+  `registry.containers.it.osu.edu/ocio/docker-apacheshib-revproxy` on `:8080`
+  in front of the application container on `localhost`. It is also where
+  Shibboleth SSO is configured, if you use it.
+- **No root containers.** Both Open Wearables images ship without a `USER`, so
+  each app container needs an explicit `runAsUser`.
 
-See [`deploy/osu/README.md`](https://github.com/the-momentum/open-wearables/blob/main/deploy/osu/README.md)
-for the secret list and the constraints that matter — the API and beat
-deployments each stay at one replica, and both images run as root by default so
-the manifests force a non-root uid.
+Monitoring (pod logs, exec, restart) is at <https://containers.it.osu.edu/>;
+team access and usage at <https://containerbilling.org.ohio-state.edu/>.
+Neither can deploy — Git is the only path in.
 
-## Step 5: Register OAuth redirect URIs
+Ready-made manifests following all of this are in
+[`deploy/osu/`](https://github.com/the-momentum/open-wearables/tree/main/deploy/osu):
+API, portal, Celery worker, Celery beat, and a Redis broker, with every
+platform-specific value marked `PLACEHOLDER_`. Mirror the published images into
+the OSU registry rather than pulling from Docker Hub.
+
+## Step 5: Settle two things the platform does not solve for you
+
+**Secrets.** GitOps means a Kubernetes `Secret` committed to the Flux repo is
+base64 in Git history — encoding, not encryption, readable by anyone with repo
+access, permanently. For an S4 deployment holding provider OAuth client
+secrets and database credentials, ask Container Services whether they support
+Sealed Secrets, SOPS, External Secrets Operator, or an out-of-band Secret
+created directly in the namespace, before committing anything real.
+
+**Authentication.** The API hostname serves browser and SDK calls, provider
+OAuth callbacks (`/api/v1/oauth/*`), and inbound provider webhooks
+(`/api/v1/*/webhooks`). None of those can sit behind Shibboleth: an XHR
+redirected to the identity provider fails, and provider webhook calls carry no
+OSU identity. So the API host is either public — protected only by Open
+Wearables' own bearer tokens — or restricted to the internal gateway, in which
+case participants can enroll and sync only from campus or VPN.
+
+<Warning>
+  Open Wearables has no MFA of its own, and the Apache Shibboleth sidecar
+  cannot protect the API host. If your S4 control set requires MFA, that gap is
+  an architecture question for `securemyresearch@osu.edu`, not something the
+  platform closes for you.
+</Warning>
+
+Shibboleth on the portal host has its own catch: `accept-invite` and
+`widget.connect` are participant-facing routes, so SSO there locks out anyone
+without an OSU ID. It fits a study staffed and enrolled entirely within Ohio
+State, and not much else.
+
+## Step 6: Register OAuth redirect URIs
 
 Provider OAuth applications point at `API_BASE_URL`, so they can only be
 registered once the API hostname is live. Each provider's developer console
 needs the redirect URI for your deployment — see the
-[provider integration guides](/providers/supported). Several providers also
-require the callback host to be reachable from the public internet for webhook
-delivery; confirm that your ingress is not restricted to the campus network if
-you rely on webhooks rather than polling.
+[provider integration guides](/providers/supported). If you put the API on the
+internal gateway, provider webhook delivery will not reach it; fall back to
+scheduled polling via `SYNC_INTERVAL_SECONDS`.
 
 ## Related
 

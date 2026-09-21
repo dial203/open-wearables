@@ -1,46 +1,114 @@
+# Open Wearables portal: Apache reverse proxy (:8080) in front of the Nitro
+# server (:3000).
+#
+# SHIBBOLETH - why it is off by default.
+# The portal is not staff-only. frontend/src/routes/accept-invite.tsx and
+# widget.connect.tsx are the participant-facing enrollment and provider-connect
+# flows. Putting Shibboleth in front of this host locks out every participant
+# without an OSU ID, which for a community or tactical cohort is most of them.
+#
+# If your cohort is entirely OSU-affiliated and you want SSO + MFA here, see
+# "Enabling Shibboleth" in README.md. Note that it protects the UI only - the
+# data is served by the API host, which cannot be Shibboleth-protected at all.
 apiVersion: v1
-kind: Service
+kind: ConfigMap
 metadata:
   name: ow-frontend
-spec:
-  selector:
-    app: ow-frontend
-  ports:
-    - name: http
-      port: 3000
-      targetPort: 3000
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-frontend
+data:
+  local.conf: |
+    ServerName https://PLACEHOLDER_PORTAL_DNS:443
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Ssl on
+  error.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+      <head><meta charset="utf-8"><title>Error</title></head>
+      <body><h1>An error occurred.</h1></body>
+    </html>
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ow-frontend
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-frontend
+    middleware.ocio.osu.edu/billing: PLACEHOLDER_NAMESPACE
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: ow-frontend
+      app.kubernetes.io/name: ow-frontend
   template:
     metadata:
       labels:
-        app: ow-frontend
+        app.kubernetes.io/name: ow-frontend
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1001
-        fsGroup: 1001
+      restartPolicy: Always
+      imagePullSecrets:
+        - name: PLACEHOLDER_NAMESPACE-registry-pull
       containers:
-        - name: frontend
-          image: themomentum/open-wearables-frontend:0.7.0
+        - name: apacheshib
+          image: registry.containers.it.osu.edu/ocio/docker-apacheshib-revproxy
+          imagePullPolicy: Always
+          securityContext:
+            runAsUser: 48
+          ports:
+            - name: http-alt
+              containerPort: 8080
           env:
-            # Read at request time by the Nitro server and injected into the
-            # HTML, so this is the URL the browser uses - not an in-cluster one.
+            - name: APACHESHIB_HOST
+              value: 'PLACEHOLDER_PORTAL_DNS'
+            - name: APACHESHIB_EMAIL
+              value: PLACEHOLDER_EMAIL
+            - name: APACHESHIB_PROXY_FLAGS
+              value: 'ping=3 keepalive=On disablereuse=On'
+            - name: APACHESHIB_TARGET
+              value: "http://localhost:3000"
+          livenessProbe:
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+            httpGet:
+              scheme: HTTP
+              port: 8080
+              path: /kube-service-check
+              httpHeaders:
+                - name: Host
+                  value: localhost
+          volumeMounts:
+            - name: ow-frontend
+              mountPath: /var/www/html/error.html
+              subPath: error.html
+              readOnly: true
+            - name: ow-frontend
+              mountPath: /etc/httpd/conf/local.conf
+              subPath: local.conf
+              readOnly: true
+
+        - name: app
+          image: PLACEHOLDER_REGISTRY/open-wearables-frontend:0.7.0
+          imagePullPolicy: Always
+          # uid 1000 is the `node` user in the node:22-alpine base image.
+          securityContext:
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+          env:
+            # Read by the Nitro server at request time and injected into the
+            # HTML, so this is the URL the browser uses - not a cluster-internal
+            # address.
             - name: VITE_API_URL
               valueFrom:
                 configMapKeyRef:
                   name: ow-config
                   key: VITE_API_URL
           ports:
-            - containerPort: 3000
+            - name: http-app
+              containerPort: 3000
           readinessProbe:
             httpGet:
               path: /
@@ -53,7 +121,55 @@ spec:
               memory: 256Mi
             limits:
               memory: 512Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+      volumes:
+        - name: ow-frontend
+          configMap:
+            name: ow-frontend
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ow-frontend
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-frontend
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/name: ow-frontend
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: ow-frontend
+  namespace: PLACEHOLDER_NAMESPACE
+spec:
+  hosts:
+    - 'PLACEHOLDER_PORTAL_DNS'
+  gateways:
+    - istio-system/istio-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            port:
+              number: 8080
+            host: ow-frontend.PLACEHOLDER_NAMESPACE.svc.cluster.local
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: ow-frontend
+  namespace: PLACEHOLDER_NAMESPACE
+spec:
+  host: ow-frontend.PLACEHOLDER_NAMESPACE.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: X-Forwarded-For

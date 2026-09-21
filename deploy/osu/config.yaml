@@ -1,0 +1,42 @@
+# Shared non-secret configuration for every Open Wearables pod.
+# Secrets live in secrets.example.yaml -> ow-secrets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ow-config
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app.kubernetes.io/name: ow-config
+data:
+  ENVIRONMENT: "production"
+
+  # Managed PostgreSQL provisioned by Container Services. Ask them for the
+  # in-cluster hostname; do not run a Postgres container.
+  DB_HOST: "PLACEHOLDER_DB_HOST"
+  DB_PORT: "5432"
+  DB_NAME: "open_wearables"
+  DB_USER: "open_wearables"
+
+  REDIS_HOST: "ow-redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_SSL: "false"
+
+  # Both hostnames are provisioned by Container Services. PLACEHOLDER_API_DNS
+  # must be reachable by provider APIs if you rely on webhooks.
+  FRONTEND_URL: "https://PLACEHOLDER_PORTAL_DNS"
+  API_BASE_URL: "https://PLACEHOLDER_API_DNS"
+  VITE_API_URL: "https://PLACEHOLDER_API_DNS"
+  CORS_ORIGINS: '["https://PLACEHOLDER_PORTAL_DNS"]'
+
+  ADMIN_EMAIL: "PLACEHOLDER_EMAIL"
+
+  # Svix is not deployed here, so outgoing webhooks stay off. Enabling them
+  # needs a second managed database named `svix` plus a svix-server Deployment.
+  OUTGOING_WEBHOOKS_ENABLED: "false"
+
+  # The backend image entrypoints call `uv run`, which wants a writable HOME and
+  # cache. The cluster forbids root, and the image has no home directory for a
+  # non-root uid, so both point at the /tmp emptyDir mounted in each pod.
+  HOME: "/tmp"
+  UV_CACHE_DIR: "/tmp/uv-cache"
