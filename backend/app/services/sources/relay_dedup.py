@@ -24,10 +24,12 @@ would hurt:
 2. **Suppression is bounded by what the direct route actually delivered.** Not by
    "a Garmin connection exists" - by the span in which direct Garmin samples of the
    *same series type* are really there, computed per request from the rows
-   themselves. Outside that span the relay is the only evidence and stays visible,
-   so connecting Garmin today does not blank out the Apple-relayed Garmin history
-   from before it was connected, and a direct feed that stops delivering hands
-   visibility back to the relay without anyone touching a setting.
+   themselves, plus a few minutes' tolerance at each edge for the re-timestamping an
+   aggregator does (SAMPLE_EDGE_TOLERANCE / EVENT_EDGE_TOLERANCE below). Outside that
+   span the relay is the only evidence and stays visible, so connecting Garmin today
+   does not blank out the Apple-relayed Garmin history from before it was connected,
+   and a direct feed that stops delivering hands visibility back to the relay without
+   anyone touching a setting.
 
 3. **It never hides a second unit.** Two Garmins where only one is connected
    directly is the case that makes a naive brand-level rule lose data. A relayed
@@ -44,10 +46,14 @@ Known limits, stated because they decide whether an analysis can trust this:
   directly, a relayed Garmin stream that names no device is hidden across the span
   even if it came from the one that syncs less. `relay_visibility='always'` on that
   source is the escape hatch.
+- The edge tolerance cuts both ways: relayed rows within a few minutes of the direct
+  route's first or last row are treated as covered, so genuinely new relayed data in
+  that window is hidden until the direct route has been quiet for longer than the
+  tolerance.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, and_, func, or_, select
@@ -233,6 +239,22 @@ def _candidates(db_session: DbSession, user_id: UUID) -> _Candidates:
     return _Candidates(relays=relays, directs=directs, manual=manual)
 
 
+# How far past the first and last direct row a relayed copy still counts as covered.
+#
+# An aggregator re-timestamps what it relays: the same heartbeat arrives half a minute
+# later, the same night's sleep starts four minutes off. Measured strictly, the copy of
+# the *newest* direct row therefore always falls outside the covered span - and the
+# newest row is exactly the one a person is looking at. A small tolerance at each edge
+# is what makes the rule work on live data instead of only on history.
+#
+# It is bounded on purpose. When a direct feed stops, the relay becomes visible again
+# this much later rather than immediately, which is a few minutes of duplicate rather
+# than a silent gap. Sessions get the wider value because whole-night boundaries move
+# further between routes; it is the same tolerance device detection uses to decide two
+# sessions are one event seen twice (app/services/devices/detection.py).
+SAMPLE_EDGE_TOLERANCE = timedelta(minutes=5)
+EVENT_EDGE_TOLERANCE = timedelta(minutes=20)
+
 # Beyond this many (brand, key, direct source) combinations a read stops measuring
 # coverage per key and measures one span per brand instead. A read asking for every
 # series type at once with several accounts connected would otherwise build a very
@@ -276,11 +298,13 @@ def _measure_coverage(
     probes: list[tuple[tuple[str, int | str | None], UUID, list[ColumnElement[bool]]]],
     start: datetime | None,
     end: datetime | None,
+    tolerance: timedelta,
 ) -> dict[tuple[str, int | str | None], tuple[datetime, datetime]]:
     """First and last timestamp the direct sources hold, per (brand, key), in one query.
 
     Every probe rides in a single SELECT so a read costs one round trip however many
-    brands, types and accounts are involved.
+    brands, types and accounts are involved. Each span is then widened by ``tolerance``
+    at both ends, for the re-timestamping an aggregator does on its way through.
     """
     if not probes:
         return {}
@@ -299,7 +323,7 @@ def _measure_coverage(
             continue
         known = covered.get(key)
         covered[key] = (min(low, known[0]), max(high, known[1])) if known else (low, high)
-    return covered
+    return {key: (low - tolerance, high + tolerance) for key, (low, high) in covered.items()}
 
 
 def _manual_spans(manual: list[DataSource]) -> tuple[list[_Span], list[HiddenRelay]]:
@@ -440,6 +464,7 @@ def build_series_plan(
         probes,
         start,
         end,
+        SAMPLE_EDGE_TOLERANCE,
     )
     return _plan(candidates, covered)
 
@@ -480,6 +505,7 @@ def build_event_plan(
         probes,
         start,
         end,
+        EVENT_EDGE_TOLERANCE,
     )
     return _plan(candidates, covered)
 

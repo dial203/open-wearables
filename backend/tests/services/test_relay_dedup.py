@@ -21,7 +21,12 @@ from app.schemas.model_crud.activities import EventRecordQueryParams, TimeSeries
 from app.schemas.responses.activity import TimeSeriesSample
 from app.schemas.utils import PaginatedResponse
 from app.services.event_record_service import event_record_service
-from app.services.sources.relay_dedup import build_event_plan, build_series_plan, classify_sources
+from app.services.sources.relay_dedup import (
+    SAMPLE_EDGE_TOLERANCE,
+    build_event_plan,
+    build_series_plan,
+    classify_sources,
+)
 from app.services.timeseries_service import timeseries_service
 from tests.factories import (
     DataPointSeriesFactory,
@@ -184,6 +189,30 @@ class TestWhatItMustNotHide:
             by_source.setdefault(sample.source.data_source_id, []).append(sample.timestamp)
         assert len(by_source[relayed.id]) == 1
         assert by_source[relayed.id][0] == NOW
+
+    def test_a_sample_past_the_edge_tolerance_stays_visible(self, db: Session) -> None:
+        """The tolerance absorbs re-timestamping, not a genuinely later reading."""
+        user = UserFactory()
+        direct, relayed = _direct_oura(user), _relayed_oura(user)
+        _heart_rate(direct, NOW)
+        _heart_rate(relayed, NOW + SAMPLE_EDGE_TOLERANCE + timedelta(minutes=1), 68)
+        db.commit()
+
+        page = _read(db, user, NOW - timedelta(hours=1), NOW + timedelta(hours=2))
+
+        assert relayed.id in {sample.source.data_source_id for sample in page.data}
+
+    def test_a_sample_inside_the_edge_tolerance_is_hidden(self, db: Session) -> None:
+        """An aggregator re-timestamps: the copy of the newest direct row lands just after it."""
+        user = UserFactory()
+        direct, relayed = _direct_oura(user), _relayed_oura(user)
+        _heart_rate(direct, NOW)
+        _heart_rate(relayed, NOW + timedelta(seconds=45), 69)
+        db.commit()
+
+        page = _read(db, user, NOW - timedelta(hours=1), NOW + timedelta(hours=2))
+
+        assert {sample.source.data_source_id for sample in page.data} == {direct.id}
 
     def test_a_series_type_the_direct_route_never_delivers_stays_visible(self, db: Session) -> None:
         """Coverage is measured per series type, not per brand."""

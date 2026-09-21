@@ -168,6 +168,11 @@ endpoint and aggregate them yourself, or raise it as a follow-up.
 
 ## Limits worth knowing
 
+- **The covered span has a few minutes' tolerance at each edge** (5 minutes for
+  samples, 20 for sessions). An aggregator re-timestamps what it relays, so
+  without it the copy of the *newest* direct row — the one you are looking at —
+  always escapes the rule. The cost is symmetric: when a direct feed stops, the
+  relay becomes visible again that much later rather than immediately.
 - **Coverage is a span, not a calendar.** Within the requested window the rule
   uses the first and last direct sample per brand and series type. A gap
   *inside* that span — the direct API missing a Tuesday it should have had —

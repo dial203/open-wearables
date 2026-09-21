@@ -81,6 +81,7 @@ class TestTheOverride:
     def test_an_unknown_setting_is_rejected(
         self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
     ) -> None:
+        """400, not 422: this API reports every validation failure as a bad request."""
         source = DataSourceFactory(user=user, provider="apple", source="com.apple.health.ABC")
         db.commit()
 
@@ -90,7 +91,7 @@ class TestTheOverride:
             headers=api_key_header,
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 400
 
     def test_another_users_source_is_not_found(
         self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
