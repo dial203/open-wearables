@@ -60,7 +60,7 @@ from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.database import DbSession
-from app.models import DataPointSeries, DataSource, EventRecord
+from app.models import DataPointSeries, DataPointSeriesArchive, DataSource, EventRecord, HealthScore
 from app.schemas.enums import IngestionRoute, ProviderName, RelayVisibility
 from app.schemas.utils.metadata import HiddenRelayInfo, RelayDedupMetadata
 from app.utils.device_registry import (
@@ -131,7 +131,7 @@ class RelayDedupPlan:
 
     def conditions(
         self,
-        data_source_id_column: InstrumentedAttribute[UUID],
+        data_source_id_column: "InstrumentedAttribute[UUID] | InstrumentedAttribute[UUID | None]",
         *,
         key_column: InstrumentedAttribute | None = None,
         timestamp_column: InstrumentedAttribute[datetime] | None = None,
@@ -141,6 +141,11 @@ class RelayDedupPlan:
         One negated OR rather than a NOT IN per span: a row is kept unless it matches
         a span whole - source *and* key *and* timestamp - so a relay is filtered only
         where the direct route really covers it.
+
+        A row whose data source is NULL is kept explicitly. ``NULL IN (...)`` is NULL,
+        and ``NOT NULL`` is NULL, which SQL drops from a WHERE - so without the guard
+        this would silently delete every health score written before scores carried a
+        data source, which is the opposite of what the rule is for.
         """
         matches: list[ColumnElement[bool]] = []
         for span in self.spans:
@@ -153,7 +158,9 @@ class RelayDedupPlan:
                 if span.end is not None:
                     parts.append(timestamp_column <= span.end)
             matches.append(and_(*parts))
-        return [~or_(*matches)] if matches else []
+        if not matches:
+            return []
+        return [or_(data_source_id_column.is_(None), ~or_(*matches))]
 
 
 def _provider_slug(provider: object) -> str:
@@ -254,6 +261,10 @@ def _candidates(db_session: DbSession, user_id: UUID) -> _Candidates:
 # sessions are one event seen twice (app/services/devices/detection.py).
 SAMPLE_EDGE_TOLERANCE = timedelta(minutes=5)
 EVENT_EDGE_TOLERANCE = timedelta(minutes=20)
+# An archived row is a whole day stamped at its start, and a daily score is one value
+# for a calendar day however the provider timed it, so both cover a day at a time.
+ARCHIVE_EDGE_TOLERANCE = timedelta(days=1)
+SCORE_EDGE_TOLERANCE = timedelta(days=1)
 
 # Beyond this many (brand, key, direct source) combinations a read stops measuring
 # coverage per key and measures one span per brand instead. A read asking for every
@@ -265,7 +276,7 @@ _MAX_COVERAGE_PROBES = 48
 
 def _span_of(
     timestamp_column: InstrumentedAttribute[datetime],
-    data_source_id_column: InstrumentedAttribute[UUID],
+    data_source_id_column: "InstrumentedAttribute[UUID] | InstrumentedAttribute[UUID | None]",
     source_id: UUID,
     extra_filters: list[ColumnElement[bool]],
     start: datetime | None,
@@ -294,7 +305,7 @@ def _span_of(
 def _measure_coverage(
     db_session: DbSession,
     timestamp_column: InstrumentedAttribute[datetime],
-    data_source_id_column: InstrumentedAttribute[UUID],
+    data_source_id_column: "InstrumentedAttribute[UUID] | InstrumentedAttribute[UUID | None]",
     probes: list[tuple[tuple[str, int | str | None], UUID, list[ColumnElement[bool]]]],
     start: datetime | None,
     end: datetime | None,
@@ -428,6 +439,7 @@ def build_series_plan(
     type_ids: list[int],
     start: datetime | None = None,
     end: datetime | None = None,
+    include_archive: bool = False,
 ) -> RelayDedupPlan:
     """What a sample read should leave out, resolved per series type.
 
@@ -435,6 +447,12 @@ def build_series_plan(
     the same set of metrics, and a brand-wide rule would hide a stream the direct route
     never delivers. A type the direct sources hold nothing of in this window produces no
     span, so the relay keeps it.
+
+    ``include_archive`` also measures coverage over the archived daily rows, and belongs
+    to callers that read the archive as well - the activity summaries. A raw sample read
+    must leave it off: archiving removes the direct rows from the live table, so counting
+    archived coverage there would hide the relay over days whose direct data the read can
+    no longer return, turning a duplicate into a hole.
     """
     candidates = _candidates(db_session, user_id)
     if not candidates.relays and not candidates.manual:
@@ -447,15 +465,18 @@ def build_series_plan(
     per_type = bool(type_ids) and len(type_ids) * _direct_source_count(candidates) <= _MAX_COVERAGE_PROBES
 
     probes: list[tuple[tuple[str, int | str | None], UUID, list[ColumnElement[bool]]]] = []
+    archive_probes: list[tuple[tuple[str, int | str | None], UUID, list[ColumnElement[bool]]]] = []
     for brand in candidates.relays:
         for direct in candidates.directs.get(brand, []):
             if per_type:
-                probes.extend(
-                    ((brand, type_id), direct.id, [DataPointSeries.series_type_definition_id == type_id])
-                    for type_id in type_ids
-                )
+                for type_id in type_ids:
+                    probes.append(((brand, type_id), direct.id, [DataPointSeries.series_type_definition_id == type_id]))
+                    archive_probes.append(
+                        ((brand, type_id), direct.id, [DataPointSeriesArchive.series_type_definition_id == type_id])
+                    )
             else:
                 probes.append(((brand, None), direct.id, []))
+                archive_probes.append(((brand, None), direct.id, []))
 
     covered = _measure_coverage(
         db_session,
@@ -466,7 +487,34 @@ def build_series_plan(
         end,
         SAMPLE_EDGE_TOLERANCE,
     )
+    if include_archive:
+        covered = _widest(
+            covered,
+            _measure_coverage(
+                db_session,
+                DataPointSeriesArchive.bucket_start_at,
+                DataPointSeriesArchive.data_source_id,
+                archive_probes,
+                start,
+                end,
+                # A day in the archive is one bucket stamped at its start, so the last
+                # archived day covers the whole day, not just its first instant.
+                ARCHIVE_EDGE_TOLERANCE,
+            ),
+        )
     return _plan(candidates, covered)
+
+
+def _widest(
+    left: dict[tuple[str, int | str | None], tuple[datetime, datetime]],
+    right: dict[tuple[str, int | str | None], tuple[datetime, datetime]],
+) -> dict[tuple[str, int | str | None], tuple[datetime, datetime]]:
+    """One span per key, spanning both measurements."""
+    merged = dict(left)
+    for key, (low, high) in right.items():
+        known = merged.get(key)
+        merged[key] = (min(low, known[0]), max(high, known[1])) if known else (low, high)
+    return merged
 
 
 def _direct_source_count(candidates: "_Candidates") -> int:
@@ -506,6 +554,42 @@ def build_event_plan(
         start,
         end,
         EVENT_EDGE_TOLERANCE,
+    )
+    return _plan(candidates, covered)
+
+
+def build_score_plan(
+    db_session: DbSession,
+    user_id: UUID,
+    categories: list[str],
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> RelayDedupPlan:
+    """What a score read (recovery, sleep score) should leave out, per score category.
+
+    A score is one value for a day, and the two routes rarely stamp it at the same
+    instant - a relayed recovery score can land hours from the direct one. The span
+    therefore carries a day's tolerance rather than minutes: the unit being deduplicated
+    is the day, not the timestamp.
+    """
+    candidates = _candidates(db_session, user_id)
+    if not candidates.relays and not candidates.manual:
+        return RelayDedupPlan()
+
+    probes: list[tuple[tuple[str, int | str | None], UUID, list[ColumnElement[bool]]]] = [
+        ((brand, category), direct.id, [HealthScore.category == category])
+        for brand in candidates.relays
+        for direct in candidates.directs.get(brand, [])
+        for category in categories
+    ]
+    covered = _measure_coverage(
+        db_session,
+        HealthScore.recorded_at,
+        HealthScore.data_source_id,
+        probes,
+        start,
+        end,
+        SCORE_EDGE_TOLERANCE,
     )
     return _plan(candidates, covered)
 

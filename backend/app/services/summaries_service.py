@@ -6,6 +6,7 @@ from decimal import Decimal
 from logging import Logger, getLogger
 from uuid import UUID
 
+from app.config import settings
 from app.database import DbSession
 from app.models import DataPointSeries, EventRecord, HealthScore, ProviderPriority, User
 from app.repositories import EventRecordRepository, ProviderPriorityRepository
@@ -23,6 +24,7 @@ from app.repositories.health_score_repository import HealthScoreRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.enums import (
     DeviceType,
+    HealthScoreCategory,
     ProviderName,
     SeriesType,
     get_series_type_id,
@@ -49,6 +51,13 @@ from app.schemas.utils import (
     TimeseriesMetadata,
 )
 from app.schemas.utils.metadata import device_metadata_fields
+from app.services.sources.relay_dedup import (
+    RelayDedupPlan,
+    build_event_plan,
+    build_score_plan,
+    build_series_plan,
+    relay_dedup_metadata,
+)
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import (
     decode_activity_cursor,
@@ -121,6 +130,20 @@ DEFAULT_AVERAGE_PERIOD_DAYS = 7
 DEFAULT_LATEST_WINDOW_HOURS = 4
 
 
+# The series types a daily activity summary is built from. Named once so the aggregate
+# query, the archive query and the coverage the relay rule measures all mean the same
+# set - a type measured but not covered would be deduplicated on someone else's evidence.
+ACTIVITY_SERIES: list[SeriesType] = [
+    SeriesType.steps,
+    SeriesType.active_energy,
+    SeriesType.basal_energy,
+    SeriesType.heart_rate,
+    SeriesType.distance_walking_running,
+    SeriesType.flights_climbed,
+    SeriesType.active_time,
+]
+
+
 class SummariesService:
     """Service for aggregating daily health summaries."""
 
@@ -148,6 +171,43 @@ class SummariesService:
             "recorded_at",
         }
     )
+
+    @staticmethod
+    def _relay_plan(
+        db_session: DbSession,
+        user_id: UUID,
+        include_redundant_relays: bool,
+        *,
+        series: list[SeriesType] | None = None,
+        categories: list[str] | None = None,
+        score_categories: list[str] | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        include_archive: bool = False,
+    ) -> RelayDedupPlan | None:
+        """The redundant relays a summary must not count, or None when the rule is off.
+
+        A summary reads one kind of row, so each caller asks for the one plan it needs:
+        series types for activity, event categories for sleep, score categories for
+        recovery. The spans are measured exactly as they are for the underlying
+        listings, so a summary and the rows behind it never disagree about what counts.
+        """
+        if not settings.relay_dedup_enabled or include_redundant_relays:
+            return None
+        if series is not None:
+            plan = build_series_plan(
+                db_session,
+                user_id,
+                [get_series_type_id(t) for t in series],
+                start,
+                end,
+                include_archive=include_archive,
+            )
+        elif categories is not None:
+            plan = build_event_plan(db_session, user_id, categories, start, end)
+        else:
+            plan = build_score_plan(db_session, user_id, score_categories or [], start, end)
+        return plan if plan.applied else None
 
     @classmethod
     def _populated_metric_count(cls, entry: dict) -> int:
@@ -298,6 +358,7 @@ class SummariesService:
         start_date: datetime,
         end_date: datetime,
         live_results: list,  # noqa: ANN401  — accepts ActivityAggregateResult | dict
+        relay_plan: RelayDedupPlan | None = None,
     ) -> list:
         """Merge archived daily aggregates into live results.
 
@@ -310,21 +371,10 @@ class SummariesService:
         except Exception:
             return live_results
 
-        series_type_ids = [
-            get_series_type_id(t)
-            for t in [
-                SeriesType.steps,
-                SeriesType.active_energy,
-                SeriesType.basal_energy,
-                SeriesType.heart_rate,
-                SeriesType.distance_walking_running,
-                SeriesType.flights_climbed,
-                SeriesType.active_time,
-            ]
-        ]
+        series_type_ids = [get_series_type_id(t) for t in ACTIVITY_SERIES]
 
         archive_results = self.archive_repo.get_daily_activity_aggregates_from_archive(
-            db_session, user_id, start_date, end_date, series_type_ids
+            db_session, user_id, start_date, end_date, series_type_ids, relay_plan
         )
 
         if not archive_results:
@@ -356,12 +406,18 @@ class SummariesService:
         cursor: str | None,
         limit: int,
         filter_by_priority: bool = True,
+        include_redundant_relays: bool = False,
     ) -> PaginatedResponse[SleepSummary]:
         """Get daily sleep summaries aggregated by date, provider, and device."""
         self.logger.debug(f"Fetching sleep summaries for user {user_id} from {start_date} to {end_date}")
 
         # Get aggregated data from repository (now returns list of dicts)
-        results = self.event_record_repo.get_sleep_summaries(db_session, user_id, start_date, end_date, cursor, limit)
+        relay_plan = self._relay_plan(
+            db_session, user_id, include_redundant_relays, categories=["sleep"], start=start_date, end=end_date
+        )
+        results = self.event_record_repo.get_sleep_summaries(
+            db_session, user_id, start_date, end_date, cursor, limit, relay_plan
+        )
 
         # Collapse to the highest-priority source per date, unless the caller
         # wants every source (filter_by_priority=false) — downstream apps that do
@@ -485,6 +541,7 @@ class SummariesService:
                 sample_count=len(data),
                 start_time=start_date,
                 end_time=end_date,
+                relay_dedup=relay_dedup_metadata(relay_plan),
             ),
         )
 
@@ -498,14 +555,23 @@ class SummariesService:
         cursor: str | None,
         limit: int,
         filter_by_priority: bool = True,
+        include_redundant_relays: bool = False,
     ) -> PaginatedResponse[RecoverySummary]:
         """Get daily recovery summaries from HealthScore(RECOVERY) records.
 
         Metrics come from the components JSONB stored alongside the recovery score:
         resting_heart_rate, hrv_rmssd_milli, spo2_percentage.
         """
+        relay_plan = self._relay_plan(
+            db_session,
+            user_id,
+            include_redundant_relays,
+            score_categories=[HealthScoreCategory.RECOVERY.value],
+            start=start_date,
+            end=end_date,
+        )
         results = self.health_score_repo.get_recovery_summaries(
-            db_session, user_id, start_date, end_date, cursor, limit
+            db_session, user_id, start_date, end_date, cursor, limit, relay_plan
         )
 
         if filter_by_priority:
@@ -561,6 +627,7 @@ class SummariesService:
                 sample_count=len(data),
                 start_time=start_date,
                 end_time=end_date,
+                relay_dedup=relay_dedup_metadata(relay_plan),
             ),
         )
 
@@ -575,6 +642,7 @@ class SummariesService:
         limit: int,
         sort_order: str = "asc",
         filter_by_priority: bool = True,
+        include_redundant_relays: bool = False,
     ) -> PaginatedResponse[ActivitySummary]:
         """Get daily activity summaries aggregated by date, provider, and device.
 
@@ -591,11 +659,27 @@ class SummariesService:
         """
         self.logger.debug(f"Fetching activity summaries for user {user_id} from {start_date} to {end_date}")
 
+        # What the redundant-relay rule leaves out of every part of this summary. Built
+        # once: the aggregate, the archive, the active minutes and the intensity minutes
+        # all have to drop the same rows, or a day's steps and its active minutes would
+        # come from different sets of sources.
+        relay_plan = self._relay_plan(
+            db_session,
+            user_id,
+            include_redundant_relays,
+            series=ACTIVITY_SERIES,
+            start=start_date,
+            end=end_date,
+            include_archive=True,
+        )
+
         # Get aggregated data from time-series repository (live data)
-        results = self.data_point_repo.get_daily_activity_aggregates(db_session, user_id, start_date, end_date)
+        results = self.data_point_repo.get_daily_activity_aggregates(
+            db_session, user_id, start_date, end_date, relay_plan
+        )
 
         # Merge archived data when archival is enabled
-        results = self._merge_archive_activity(db_session, user_id, start_date, end_date, results)
+        results = self._merge_archive_activity(db_session, user_id, start_date, end_date, results, relay_plan)
 
         # Collapse to the highest-priority source per date unless the caller wants
         # every source (filter_by_priority=false).
@@ -604,7 +688,13 @@ class SummariesService:
 
         # Get workout aggregates (elevation, distance, energy from workouts)
         workout_aggregates = self.event_record_repo.get_daily_workout_aggregates(
-            db_session, user_id, start_date, end_date
+            db_session,
+            user_id,
+            start_date,
+            end_date,
+            self._relay_plan(
+                db_session, user_id, include_redundant_relays, categories=["workout"], start=start_date, end=end_date
+            ),
         )
 
         # Build lookup dict for workout data by (date, provider, device)
@@ -615,7 +705,12 @@ class SummariesService:
 
         # Get active/sedentary minutes from step data
         activity_minutes = self.data_point_repo.get_daily_active_minutes(
-            db_session, user_id, start_date, end_date, active_threshold=ACTIVE_STEPS_THRESHOLD
+            db_session,
+            user_id,
+            start_date,
+            end_date,
+            active_threshold=ACTIVE_STEPS_THRESHOLD,
+            relay_plan=relay_plan,
         )
 
         # Build lookup for activity minutes
@@ -637,6 +732,7 @@ class SummariesService:
             light_max=hr_zones["light_max"],
             moderate_max=hr_zones["moderate_max"],
             vigorous_max=hr_zones["vigorous_max"],
+            relay_plan=relay_plan,
         )
 
         # Build lookup for intensity minutes
@@ -811,6 +907,7 @@ class SummariesService:
                 sample_count=len(data),
                 start_time=start_date,
                 end_time=end_date,
+                relay_dedup=relay_dedup_metadata(relay_plan),
             ),
         )
 

@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from sqlalchemy import and_, asc, desc, tuple_
@@ -10,6 +10,10 @@ from app.models import DataSource, HealthScore
 from app.repositories.repositories import CrudRepository
 from app.schemas.enums import HealthScoreCategory
 from app.schemas.model_crud.activities import HealthScoreCreate, HealthScoreQueryParams, HealthScoreUpdate
+
+if TYPE_CHECKING:
+    # Annotation only: the rule lives in the service layer and hands the plan down.
+    from app.services.sources.relay_dedup import RelayDedupPlan
 from app.utils.pagination import decode_cursor
 
 
@@ -123,6 +127,7 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
         end_date: datetime,
         cursor: str | None,
         limit: int,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> list[dict[str, Any]]:
         """Get recovery health scores for a date range with cursor-based pagination.
 
@@ -141,6 +146,18 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
                 HealthScore.category == HealthScoreCategory.RECOVERY,
                 HealthScore.recorded_at >= start_date,
                 HealthScore.recorded_at < end_date,
+                # A score the aggregator relayed for a day the maker's own API already
+                # scored is the same day twice. Scores with no data_source (older rows)
+                # carry a NULL id, which no span matches, so they come through untouched.
+                *(
+                    relay_plan.conditions(
+                        HealthScore.data_source_id,
+                        key_column=HealthScore.category,
+                        timestamp_column=HealthScore.recorded_at,
+                    )
+                    if relay_plan is not None
+                    else []
+                ),
             )
         )
 

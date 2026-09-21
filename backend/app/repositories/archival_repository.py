@@ -3,6 +3,7 @@
 import time
 import uuid
 from datetime import date, datetime, timezone
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, Date, Subquery, case, cast, func, text
@@ -23,6 +24,10 @@ from app.schemas.enums import (
     get_series_type_from_id,
     get_series_type_id,
 )
+
+if TYPE_CHECKING:
+    # Annotation only: the rule lives in the service layer and hands the plan down.
+    from app.services.sources.relay_dedup import RelayDedupPlan
 
 # ---------------------------------------------------------------------------
 # Archival Settings repository
@@ -431,6 +436,7 @@ class DataPointSeriesArchiveRepository:
         start_date: datetime,
         end_date: datetime,
         series_type_ids: list[int],
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> list[dict]:
         """Query the archive table for daily activity aggregates.
 
@@ -522,6 +528,18 @@ class DataPointSeriesArchiveRepository:
                 DataPointSeriesArchive.bucket_start_at >= start_ts,
                 DataPointSeriesArchive.bucket_start_at < end_ts,
                 DataPointSeriesArchive.series_type_definition_id.in_(series_type_ids),
+                # The archived half of the same rule the live aggregate applies: an
+                # aggregator's copy of a brand read directly must not be summed twice
+                # just because the direct rows have since been rolled up.
+                *(
+                    relay_plan.conditions(
+                        DataPointSeriesArchive.data_source_id,
+                        key_column=DataPointSeriesArchive.series_type_definition_id,
+                        timestamp_column=DataPointSeriesArchive.bucket_start_at,
+                    )
+                    if relay_plan is not None
+                    else []
+                ),
             )
             .group_by(
                 cast(DataPointSeriesArchive.bucket_start_at, Date),

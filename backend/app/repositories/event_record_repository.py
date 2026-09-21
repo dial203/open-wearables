@@ -5,6 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import UUID as SQL_UUID
 from sqlalchemy import (
+    ColumnElement,
     Date,
     Integer,
     Interval,
@@ -46,6 +47,21 @@ if TYPE_CHECKING:
 
 # Identity tuple: (user_id, device_model, source)
 DataSourceIdentity = tuple[UUID, str | None, str | None]
+
+
+def _relay_conditions(relay_plan: "RelayDedupPlan | None") -> list[ColumnElement[bool]]:
+    """Records a daily aggregate must not count, or nothing when the rule is off.
+
+    Keyed by category and bounded by the span the direct route covers, exactly as the
+    record listings apply it, so a summary and the sessions behind it agree.
+    """
+    if relay_plan is None:
+        return []
+    return relay_plan.conditions(
+        EventRecord.data_source_id,
+        key_column=EventRecord.category,
+        timestamp_column=EventRecord.start_datetime,
+    )
 
 
 class EventRecordRepository(
@@ -639,6 +655,7 @@ class EventRecordRepository(
         end_date: datetime,
         cursor: str | None,
         limit: int,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> list[dict]:
         """Get daily sleep summaries aggregated by date, source, and device_model.
 
@@ -732,6 +749,9 @@ class EventRecordRepository(
             .filter(
                 DataSource.user_id == user_id,
                 EventRecord.category == "sleep",
+                # An aggregator's copy of a night the maker's own API already reported
+                # must not be aggregated as a second night for the same date.
+                *_relay_conditions(relay_plan),
                 EventRecord.end_datetime >= start_date - timedelta(days=1),
                 local_sleep_date >= cast(start_date, Date),
                 local_sleep_date < cast(end_date, Date),
@@ -1006,6 +1026,7 @@ class EventRecordRepository(
         user_id: UUID,
         start_date: datetime,
         end_date: datetime,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> list[dict]:
         """Get daily workout aggregates including elevation, distance, and energy.
 
@@ -1038,6 +1059,7 @@ class EventRecordRepository(
             .filter(
                 DataSource.user_id == user_id,
                 self.model.category == "workout",
+                *_relay_conditions(relay_plan),
                 self.model.end_datetime >= start_date - timedelta(days=1),
                 local_workout_date >= cast(start_date, Date),
                 local_workout_date < cast(end_date, Date),
