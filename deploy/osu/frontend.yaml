@@ -38,7 +38,10 @@ metadata:
     app.kubernetes.io/name: ow-frontend
     middleware.ocio.osu.edu/billing: PLACEHOLDER_NAMESPACE
 spec:
-  replicas: 2
+  # One replica. A second costs a full billing unit's worth of RAM to buy
+  # zero-downtime redeploys on a research instance; the rolling update gap is
+  # a few seconds. Raise it if the portal becomes participant-critical.
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: ow-frontend
@@ -80,6 +83,12 @@ spec:
               httpHeaders:
                 - name: Host
                   value: localhost
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
           volumeMounts:
             - name: ow-frontend
               mountPath: /var/www/html/error.html

@@ -93,6 +93,12 @@ spec:
               httpHeaders:
                 - name: Host
                   value: localhost
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
           volumeMounts:
             - name: ow-api
               mountPath: /var/www/html/error.html

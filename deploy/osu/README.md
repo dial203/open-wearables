@@ -158,12 +158,30 @@ migrations and seed scripts before the API listens, which is why `ow-api` has a
 ## Billing
 
 $20 per unit per month. One unit is the **highest** of 1 GB RAM, 3 vCPU, or
-10 GB persistent storage. As configured here the pods request roughly 2.3 GB
-RAM and 0.95 vCPU, so RAM sets the unit count — call it 3 units, plus whatever
-the managed database's storage adds. Confirm with Container Services whether
-metering is on requests or actual usage before sizing the requisition.
+10 GB persistent storage — you are billed on the binding dimension, not the
+sum, so the others have free headroom until they overtake it.
 
-Team access and usage: <https://containerbilling.org.ohio-state.edu/>
+As configured here the pods request **1.69 GB RAM and 0.75 vCPU**. RAM binds,
+so that is 2 units — roughly **$40/month** — and database storage costs nothing
+extra until it passes about **17 GB**, at which point storage binds instead and
+every further 10 GB adds a unit.
+
+Cost levers, roughly in order of size:
+
+| Lever | Effect |
+|-------|--------|
+| A separate dev namespace | Doubles compute. Run prod only, or confirm whether an idle namespace still bills |
+| `DEFAULT_DATA_GRANULARITY` | `raw` (the default) is what validation work needs, and is the main driver of table growth |
+| `INGEST_WORKOUT_SAMPLES`, `STORE_FIT_FILES`, `RAW_PAYLOAD_STORAGE` | All off by default. Each one materially increases storage — leave them off unless you need them |
+| Data lifecycle / archival settings | Retention policy is the lasting fix once tables grow; see the developer portal settings |
+| `ow-frontend` replicas | Each replica is 320 Mi of the RAM total |
+| Consulting time | $20 per 15 minutes, banked — about $80/hour. Arrive at meetings with specific questions |
+
+Confirm with Container Services whether metering is on resource requests or
+actual usage. If it is actual usage, the idle footprint is lower than the
+requests above and a dev namespace that sits stopped may cost little.
+
+Team access and usage: Team access and usage: <https://containerbilling.org.ohio-state.edu/>
 
 ## Known constraints
 

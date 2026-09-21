@@ -90,11 +90,10 @@ Start this in parallel with Step 3 — it is usually the long pole.
    field needs a plain-English business purpose written for an auditor.
 
    One unit is the **highest** of 1 GB RAM, 3 vCPU, or 10 GB persistent
-   storage, billed pay-as-you-go; managed database storage counts. The
-   manifests in `deploy/osu/` request about 2.3 GB RAM and 0.95 vCPU, so RAM
-   sets the count — roughly 3 units plus database storage. Consulting time is
-   billed separately at $20 per unit per 15 minutes, banked rather than
-   use-it-or-lose-it.
+   storage — the binding dimension, not the sum. The manifests in `deploy/osu/`
+   request 1.69 GB RAM and 0.75 vCPU, so RAM binds: 2 units, about $40/month,
+   with database storage free until it passes ~17 GB. Consulting time is billed
+   separately at $20 per 15 minutes, banked rather than use-it-or-lose-it.
 3. Submit the request. Ask specifically for:
    - Development and production namespaces
    - A **managed PostgreSQL** instance (managed Postgres and MariaDB are
