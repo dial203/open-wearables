@@ -18,6 +18,14 @@ from .exercise_import import (
 )
 from .nightly_recharge import NightlyRechargeJSON, NightlyRechargeResponseJSON
 from .sleep import SleepJSON, SleepResponseJSON
+from .v4 import (
+    DailyPpiSamplesJSON,
+    ListPpiSamplesResponseJSON,
+    ListTrainingSessionsResponseJSON,
+    PpiSampleJSON,
+    RRSampleJSON,
+    TrainingSessionJSON,
+)
 from .webhook import PolarWebhookEvent, PolarWebhookEventType
 
 __all__ = [
@@ -47,6 +55,13 @@ __all__ = [
     # Sleep
     "SleepJSON",
     "SleepResponseJSON",
+    # AccessLink v4
+    "RRSampleJSON",
+    "TrainingSessionJSON",
+    "ListTrainingSessionsResponseJSON",
+    "PpiSampleJSON",
+    "DailyPpiSamplesJSON",
+    "ListPpiSamplesResponseJSON",
     # Webhook
     "PolarWebhookEvent",
     "PolarWebhookEventType",

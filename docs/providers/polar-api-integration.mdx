@@ -36,6 +36,7 @@ Polar provides access to exercise, daily activity, sleep, and heart rate data fr
 | SpO2 | Yes (requires Polar Elixir device) |
 | Wrist ECG | Yes (requires Polar Elixir device) |
 | RR intervals (beat-to-beat) | Yes (requires an H6/H7/H9/H10 chest strap; exercise sessions only) |
+| Pulse-to-pulse intervals (PPI) | Yes (requires the AccessLink v4 connection below) |
 
 ### Data delivery
 
@@ -71,6 +72,71 @@ Two consequences worth knowing before you plan a recording:
 
 For a recording already sitting in Polar Flow, the per-exercise RR CSV export can be
 imported directly instead: `POST /api/v1/users/{user_id}/import/polar/rr`.
+
+### AccessLink v4 (optional, recommended for HRV work)
+
+Polar's v4 API is a second, separately authorised surface on the same AccessLink client.
+Open Wearables does not migrate to it — v3 keeps the webhook push that v4 has no
+equivalent for — but it reads two things from v4 when a v4 token is present, and silently
+skips them when it isn't.
+
+**Exact RR.** v4 returns training-session RR as one object per beat,
+`{durationMillis, offline}`, so every beat carries its own duration including the ones
+recorded while the strap lost contact. Nothing has to be estimated across a dropout, which
+is the difference that matters when the series is the ECG criterion in a validation study.
+When v4 has RR for a session, it is used and the v3 reconstruction is skipped for that
+session — never both, because two reconstructions of the same beats land on near-identical
+timestamps and leave a doubled series.
+
+**Pulse-to-pulse intervals.** v4's `/ppi-samples` gives 24/7 optical beat intervals with
+per-beat `skinContact`, `movement`, `offline` and `errorEstimateMillis` flags. These are
+stored as `pulse_to_pulse_interval`, deliberately **not** as `rr_interval`: PPI is
+PPG-derived and carries pulse transit time variability, so it is the device under test in
+a validation design, never the ECG criterion. Beats recorded off the wrist or during an
+offline period are dropped; `movement` beats are kept, since motion artefact is part of
+what an optical sensor does.
+
+<Warning>
+**Connect v4 before backfilling.** The two reconstructions place beats on different
+timestamps — v4 exactly, v3 by estimating across dropouts — and the time series upserts on
+`(source, series type, timestamp)`, so sessions already ingested through v3 will not be
+overwritten when v4 later returns the same beats. Clear `rr_interval` for the affected
+window and re-run the backfill if you connect v4 after the fact.
+</Warning>
+
+<Warning>
+A full day of PPI is tens of thousands of rows per user. It is the heaviest thing the
+Polar sync writes — size your backfill windows accordingly.
+</Warning>
+
+To enable it:
+
+1. Add the v4 callback to your existing AccessLink client's redirect URLs:
+   `{API_BASE_URL}/api/v1/oauth/polar_v4/callback` (local dev:
+   `http://localhost:8000/api/v1/oauth/polar_v4/callback`).
+2. Optionally narrow the requested scopes in your `.env` — the default asks only for what
+   is read:
+
+```bash
+POLAR_V4_DEFAULT_SCOPE=training_sessions:read ppi_data:read
+```
+
+3. Send the user through `/api/v1/oauth/polar_v4/authorize?user_id=...` in addition to the
+   normal Polar connection. No extra client id or secret is needed; v4 reuses
+   `POLAR_CLIENT_ID` / `POLAR_CLIENT_SECRET`.
+
+The `polar_v4` connection is a token holder only. It declares no coverage and a scheduled
+sync over it does nothing — all v4-derived data is filed under the user's ordinary Polar
+data source.
+
+| | v3 | v4 |
+|---|---|---|
+| Auth server | `flow.polar.com` | `auth.polar.com` |
+| Scopes | `accesslink.read_all` | granular, per data type |
+| User registration | required | none |
+| Push (webhooks) | yes | **no** |
+| Rate limit | 500 + 20×users / 15 min | 3000 / 15 min, 100k / 24 h |
+| Range with samples | 30-day exercise window | one day per request |
 
 ## What you need by the end
 

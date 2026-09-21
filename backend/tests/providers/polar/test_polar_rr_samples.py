@@ -5,6 +5,7 @@ recorded with a chest strap (H6/H7/H9/H10). The API carries no per-beat clock, s
 tests pin down how the timeline is reconstructed and how missing beats are handled.
 """
 
+from collections.abc import Iterator
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -19,6 +20,13 @@ from app.schemas.enums import SeriesType
 from app.schemas.providers.polar import ExerciseJSON as PolarExerciseJSON
 from app.services.providers.polar.oauth import PolarOAuth
 from app.services.providers.polar.workouts import PolarWorkouts
+
+
+@pytest.fixture(autouse=True)
+def _no_v4() -> Iterator[MagicMock]:
+    """These cover the v3 reconstruction, which only runs when v4 has nothing to offer."""
+    with patch("app.services.providers.polar.workouts.polar_v4_data.rr_rows_for_session", return_value=None) as stub:
+        yield stub
 
 
 @pytest.fixture
@@ -65,15 +73,15 @@ class TestBuildRrSamples:
     def test_returns_nothing_without_an_rr_sample_array(self, workouts: PolarWorkouts) -> None:
         exercise = _exercise([{"recording-rate": 5, "sample-type": "0", "data": "100,102,97"}])
 
-        assert workouts._rr_samples_for(exercise, uuid4()) == []
+        assert workouts._rr_samples_for(MagicMock(), exercise, uuid4()) == []
 
     def test_returns_nothing_when_samples_are_absent(self, workouts: PolarWorkouts) -> None:
-        assert workouts._rr_samples_for(_exercise(None), uuid4()) == []
+        assert workouts._rr_samples_for(MagicMock(), _exercise(None), uuid4()) == []
 
     def test_each_beat_is_timestamped_at_the_r_wave_closing_its_interval(self, workouts: PolarWorkouts) -> None:
         exercise = _exercise([{"recording-rate": 0, "sample-type": "11", "data": "1000,900,1100"}])
 
-        samples = workouts._rr_samples_for(exercise, uuid4())
+        samples = workouts._rr_samples_for(MagicMock(), exercise, uuid4())
 
         assert [int(s.value) for s in samples] == [1000, 900, 1100]
         assert [s.recorded_at for s in samples] == [
@@ -91,7 +99,7 @@ class TestBuildRrSamples:
             duration="PT5S",
         )
 
-        samples = workouts._rr_samples_for(exercise, uuid4())
+        samples = workouts._rr_samples_for(MagicMock(), exercise, uuid4())
 
         # Only real beats are stored, but the clock still reaches the end of the session.
         assert [int(s.value) for s in samples] == [1000, 1000, 1000]
@@ -104,7 +112,7 @@ class TestBuildRrSamples:
             duration="PT1S",
         )
 
-        samples = workouts._rr_samples_for(exercise, uuid4())
+        samples = workouts._rr_samples_for(MagicMock(), exercise, uuid4())
 
         assert [s.recorded_at for s in samples] == [
             datetime(2024, 1, 15, 22, 0, 1),
@@ -122,7 +130,7 @@ class TestBuildRrSamples:
             samples=[{"recording-rate": 0, "sample-type": "11", "data": "1000"}],
         )
 
-        samples = workouts._rr_samples_for(exercise, uuid4())
+        samples = workouts._rr_samples_for(MagicMock(), exercise, uuid4())
 
         assert samples[0].recorded_at == datetime(2024, 1, 16, 0, 0, 1)
         assert samples[0].zone_offset == "+02:00"

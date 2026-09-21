@@ -175,6 +175,9 @@ class Settings(BaseSettings):
     polar_client_secret: SecretStr | None = None
     polar_redirect_uri: str | None = None  # Deprecated: use API_BASE_URL
     polar_default_scope: str = "accesslink.read_all"
+    # v4 reuses the same AccessLink client credentials but issues scoped tokens from
+    # auth.polar.com. Only the scopes we actually read are requested.
+    polar_v4_default_scope: str = "training_sessions:read ppi_data:read"
 
     # WHOOP OAUTH SETTINGS
     whoop_client_id: str | None = None

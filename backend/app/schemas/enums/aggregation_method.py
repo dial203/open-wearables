@@ -28,6 +28,7 @@ AGGREGATION_METHOD_BY_TYPE: dict[SeriesType, AggregationMethod] = {
     SeriesType.walking_heart_rate_average: AggregationMethod.AVG,
     SeriesType.heart_rate_variability_rmssd: AggregationMethod.AVG,
     SeriesType.rr_interval: AggregationMethod.AVG,
+    SeriesType.pulse_to_pulse_interval: AggregationMethod.AVG,
     # ── Blood & Respiratory ──
     SeriesType.oxygen_saturation: AggregationMethod.AVG,
     SeriesType.blood_glucose: AggregationMethod.AVG,

@@ -55,6 +55,7 @@ from app.services.event_record_service import event_record_service
 from app.services.health_score_service import health_score_service
 from app.services.providers.api_client import make_authenticated_request
 from app.services.providers.polar.coverage import ACTIVITY_SERIES
+from app.services.providers.polar.v4_data import polar_v4_data
 from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.raw_payload_storage import store_raw_payload
@@ -1013,6 +1014,11 @@ class Polar247Data(Base247DataTemplate):
             "wrist_ecg": lambda: self._save_timeseries(
                 db, self.normalize_wrist_ecg(self.get_wrist_ecg_data(db, user_id, start_time, end_time), user_id)
             ),
+            # AccessLink v4, and a no-op for users who have not authorised it. A full day of
+            # optical beats is tens of thousands of rows, so this is the heaviest task here
+            # by a wide margin; it is stored as pulse_to_pulse_interval rather than
+            # rr_interval so it can never be mistaken for the ECG criterion.
+            "ppi": lambda: polar_v4_data.load_ppi_samples(db, user_id, start_time, end_time),
         }
 
         results: dict[str, int] = {}
