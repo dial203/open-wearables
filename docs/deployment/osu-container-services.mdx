@@ -35,7 +35,10 @@ tokens for each participant's wearable account. If those records are
 identifiable and collected under a research protocol, they are Research Health
 Information, which Ohio State classifies as **S4 (Restricted)** — the
 university's highest tier, requiring MFA, encryption, unique accounts,
-minimum-necessary access, and access auditing.
+minimum-necessary access, and access auditing. The platform is used for S4
+workloads — OTDI's own requisition instructions use an S4-compliant database
+server as the worked example — but that is about the platform, not about your
+application on it (see Step 2).
 
 Run the [Institutional Data Policy
 calculator](https://it.osu.edu/data/institutional-data-policy) against your
@@ -78,8 +81,14 @@ Start this in parallel with Step 3 — it is usually the long pole.
 
 1. Confirm classification and approach with your college IT / security
    coordinator and `securemyresearch@osu.edu`.
-2. Open the [OTDI Container Services](https://it.osu.edu/otdi-container-services)
-   service catalog entry for pricing, and get budget approval in Workday.
+2. Get budget approval in Workday. The
+   [requisition instructions](https://it.osu.edu/otdi-container-services/create-workday-requisition-container-services)
+   spell out the form: **Request Non-Catalog Items → Service**, supplier
+   *OTDI – Office of Technology and Digital Innovation*, spend category
+   *IT Computer Services - Internet* (SC10518), base price **$20 per Resource
+   Unit per month**, with a memo noting the price varies with usage. The
+   Internal Memo field needs a plain-English business purpose written for an
+   auditor.
 3. Submit the request. Ask specifically for:
    - Development and production namespaces
    - A managed PostgreSQL instance (Open Wearables needs PostgreSQL, not MySQL)
@@ -87,6 +96,10 @@ Start this in parallel with Step 3 — it is usually the long pole.
    - Confirmation of the container registry to push to, or that pulling the
      published Docker Hub images is permitted
    - The namespace's PodSecurity policy and allowed uid range
+   - **What a Resource Unit covers**, so you can size the requisition. This is
+     not documented publicly. The manifests in `deploy/osu/` request roughly
+     0.8 CPU and 1.9 GiB of memory across all pods, with limits totalling about
+     7 GiB, plus a 5 GiB Redis volume and the managed database
 4. Ask whether Shibboleth can front the portal. Open Wearables has its own
    authentication; putting Shibboleth in front of the portal hostname is the
    cleanest way to satisfy an S4 MFA requirement without changing the app.
