@@ -8,6 +8,7 @@ from uuid import UUID
 
 from sqlalchemy import event as sa_event
 
+from app.config import settings
 from app.database import DbSession
 from app.models import DataPointSeries, DataSource
 from app.repositories import DataPointSeriesRepository
@@ -243,10 +244,13 @@ class TimeSeriesService(
     ) -> RelayDedupPlan | None:
         """The redundant relays to leave out of this read, or None when the rule is off.
 
-        Skipped when the caller named a single data source: asking for one source by id is
-        asking for that source, and answering with nothing because a direct route covers
-        the same span would be obtuse.
+        Off entirely when RELAY_DEDUP_ENABLED is false, which is the instance-wide switch
+        back to the old behaviour. Skipped per read when the caller named a single data
+        source: asking for one source by id is asking for that source, and answering with
+        nothing because a direct route covers the same span would be obtuse.
         """
+        if not settings.relay_dedup_enabled:
+            return None
         if params.include_redundant_relays or params.data_source_id is not None:
             return None
         plan = build_series_plan(

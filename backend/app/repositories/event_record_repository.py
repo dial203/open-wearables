@@ -406,6 +406,7 @@ class EventRecordRepository(
         query_params: EventRecordQueryParams,
         provider_order: dict,
         device_type_order: dict,
+        relay_plan: "RelayDedupPlan | None" = None,
     ) -> Query:
         """Subquery of sleep record ids belonging to the top-priority source per night.
 
@@ -437,6 +438,19 @@ class EventRecordRepository(
             DataSource.user_id == UUID(user_id),
             EventRecord.category == "sleep",
         ]
+        if relay_plan is not None:
+            # Rank on the rows the caller will actually receive. Without this a redundant
+            # relay can win a night on rows that the same plan then filters out, and the
+            # night comes back empty even though the direct source recorded it. Applied as
+            # row conditions rather than by dropping the source, so on a night the direct
+            # route does not cover, the relay is still ranked and still wins.
+            filters.extend(
+                relay_plan.conditions(
+                    EventRecord.data_source_id,
+                    key_column=EventRecord.category,
+                    timestamp_column=EventRecord.start_datetime,
+                )
+            )
         if query_params.start_datetime:
             filters.append(EventRecord.start_datetime >= query_params.start_datetime)
         if query_params.end_datetime:

@@ -61,6 +61,7 @@ import {
   useSetRelayVisibility,
   useUserDataSources,
 } from '@/hooks/api/use-priorities';
+import { useConfig } from '@/hooks/api/use-config';
 import type { DataSource } from '@/lib/api/services/priority.service';
 
 const DEVICE_TYPES = [
@@ -286,6 +287,9 @@ function UnattributedSources({
   onLink: (source: DataSource) => void;
 }) {
   const setRelayVisibility = useSetRelayVisibility();
+  const config = useConfig();
+  // Older backends do not send the flag, and the rule is on by default there too.
+  const dedupEnabled = config.data?.relay_dedup_enabled !== false;
 
   if (sources.length === 0) return null;
 
@@ -321,14 +325,16 @@ function UnattributedSources({
                 detached
               </Badge>
             )}
-            {source.redundant_relay && source.relay_visibility === 'auto' && (
-              <Badge
-                variant="outline"
-                title={`This brand also arrives directly from ${source.direct_provider ?? 'its maker'}. Reads leave this copy out for the span the direct connection covers; nothing is deleted.`}
-              >
-                duplicate of {source.direct_provider ?? 'direct'}
-              </Badge>
-            )}
+            {dedupEnabled &&
+              source.redundant_relay &&
+              source.relay_visibility === 'auto' && (
+                <Badge
+                  variant="outline"
+                  title={`This brand also arrives directly from ${source.direct_provider ?? 'its maker'}. Reads leave this copy out for the span the direct connection covers; nothing is deleted.`}
+                >
+                  duplicate of {source.direct_provider ?? 'direct'}
+                </Badge>
+              )}
             {source.relay_visibility !== 'auto' && (
               <Badge
                 variant="outline"

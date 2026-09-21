@@ -3,6 +3,28 @@ title: "Aggregator duplicates"
 description: "How Open Wearables leaves out an aggregator's copy of a maker that is also connected directly, what it never hides, and how to override it per source."
 ---
 
+## In one paragraph
+
+If the same brand reaches Open Wearables twice — once from the maker's API, once
+relayed by Apple Health or another aggregator — reads show it once. The relayed
+copy is left out only for the span the direct connection actually covers, and
+only for the data types it actually delivers. Nothing is deleted, every read can
+ask for the hidden copies back, and one environment variable turns the whole
+thing off.
+
+<CardGroup cols={3}>
+  <Card title="Turn it off everywhere" icon="power-off">
+    `RELAY_DEDUP_ENABLED=false` in the backend environment, then restart.
+  </Card>
+  <Card title="Turn it off for one read" icon="magnifying-glass">
+    Add `include_redundant_relays=true` to the request.
+  </Card>
+  <Card title="Turn it off for one source" icon="toggle-on">
+    `relay_visibility: "always"` on that data source, or **Keep it** on the
+    user's Devices tab.
+  </Card>
+</CardGroup>
+
 ## Why this exists
 
 Anyone running several brands ends up with both kinds of connection at once:
@@ -47,6 +69,20 @@ is far worse than showing it twice. It never hides:
 A brand with no direct integration at all — Zepp, Eight Sleep, a third-party
 HealthKit writer — is never affected, and neither is an aggregator's own data
 (an Apple Watch inside Apple Health is first-party, not a relay).
+
+## The instance-wide switch
+
+```bash
+# backend/config/.env
+RELAY_DEDUP_ENABLED=true   # default: hide the redundant copy
+RELAY_DEDUP_ENABLED=false  # every source in every read, as before the rule existed
+```
+
+It is one flag covering the whole rule — time series, events, the per-source
+overrides, all of it. Because nothing is ever deleted, flipping it is reversible
+at any time: no migration, no re-sync, no data repair. The current setting is
+reported by `GET /api/v1/config` as `relay_dedup_enabled`, and shown in the admin
+panel under **Settings → Priorities**.
 
 ## Nothing is deleted
 
@@ -115,6 +151,21 @@ it depends on what the direct route has actually delivered — and that changes
 when a token expires, a backfill lands, or an account is revoked. A stored flag
 would go on asserting an answer that had stopped being true.
 
+## What the rule does not touch
+
+Only the endpoints that return individual samples and records apply it: the
+time series endpoint and the event endpoints (workouts, sleep, menstrual
+cycles). These still count both copies, exactly as before:
+
+- `/summaries/*` — daily aggregates are computed in SQL over all rows.
+- Health scores, which are derived from the records as stored.
+- Dashboard counts and any per-provider statistics.
+
+That is a deliberate boundary rather than an oversight: an aggregate rewritten
+mid-series would change historical numbers that may already be in an analysis.
+If you need deduplicated daily aggregates, pull the samples with the time series
+endpoint and aggregate them yourself, or raise it as a follow-up.
+
 ## Limits worth knowing
 
 - **Coverage is a span, not a calendar.** Within the requested window the rule
@@ -126,6 +177,11 @@ would go on asserting an answer that had stopped being true.
   directly, a relayed Garmin stream that names no device is hidden across the
   span even if it came from the unit that syncs less often. Set
   `relay_visibility: "always"` on that source if it matters.
+- **Under `filter_by_priority=true` a redundant relay is not a candidate.** That
+  mode returns one source per series type; letting a relay win a type whose rows
+  the rule then removes would return an empty series. Sleep is the exception —
+  its ranking is per night and applies the rule row by row, so a night only the
+  relay recorded still comes from the relay.
 - **A read naming no series type gets one coarser span per brand**, since
   measuring coverage for every type would cost a query per type. Every
   timeseries read in practice names its types.
@@ -135,6 +191,7 @@ would go on asserting an answer that had stopped being true.
 | Concern | File |
 | --- | --- |
 | The rule | `backend/app/services/sources/relay_dedup.py` |
+| The instance-wide switch | `relay_dedup_enabled` in `backend/app/config.py` |
 | Brand ↔ direct provider, aggregator list | `backend/app/utils/device_registry.py` |
 | Per-source override | `data_source.relay_visibility`, `backend/app/schemas/enums/relay_visibility.py` |
 | Read paths | `backend/app/services/timeseries_service.py`, `backend/app/services/event_record_service.py` |

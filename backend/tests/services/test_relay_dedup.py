@@ -10,8 +10,10 @@ anything a person has said to keep.
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import pytest
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models import DataPointSeries, DataSource, User
 from app.repositories.device_repository import DeviceRepository
 from app.schemas.enums import Resolution, SeriesType, get_series_type_id
@@ -70,6 +72,14 @@ def _params(start: datetime, end: datetime, **kwargs) -> TimeSeriesQueryParams:
 
 def _read(db: Session, user: User, start: datetime, end: datetime, **kwargs) -> PaginatedResponse[TimeSeriesSample]:
     return timeseries_service.get_timeseries(db, user.id, [SeriesType.heart_rate], _params(start, end, **kwargs))
+
+
+def _event_params(start: datetime | None = None, end: datetime | None = None) -> EventRecordQueryParams:
+    return EventRecordQueryParams(
+        start_datetime=start or NOW - timedelta(days=1),
+        end_datetime=end or NOW + timedelta(days=1),
+        limit=50,
+    )
 
 
 class TestTheRelayedCopyIsLeftOut:
@@ -262,6 +272,97 @@ class TestWhatItMustNotHide:
         assert {sample.source.data_source_id for sample in page.data} == {relayed.id}
 
 
+class TestTheGlobalSwitch:
+    """RELAY_DEDUP_ENABLED=false must put the old behaviour back, everywhere, at once."""
+
+    def test_nothing_is_hidden_when_the_rule_is_switched_off(
+        self, db: Session, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "relay_dedup_enabled", False)
+        user = UserFactory()
+        direct, relayed = _direct_oura(user), _relayed_oura(user)
+        _heart_rate(direct, NOW)
+        _heart_rate(relayed, NOW)
+        db.commit()
+
+        page = _read(db, user, NOW - timedelta(hours=1), NOW + timedelta(hours=1))
+
+        assert {sample.source.data_source_id for sample in page.data} == {direct.id, relayed.id}
+        assert page.metadata.relay_dedup is None
+
+    def test_a_hand_hidden_source_comes_back_too(self, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The switch is the whole rule, overrides included - one thing to reason about."""
+        monkeypatch.setattr(settings, "relay_dedup_enabled", False)
+        user = UserFactory()
+        relayed = _relayed_oura(user, relay_visibility="never")
+        _heart_rate(relayed, NOW)
+        db.commit()
+
+        page = _read(db, user, NOW - timedelta(hours=1), NOW + timedelta(hours=1))
+
+        assert {sample.source.data_source_id for sample in page.data} == {relayed.id}
+
+    def test_events_follow_the_same_switch(self, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "relay_dedup_enabled", False)
+        user = UserFactory()
+        direct, relayed = _direct_oura(user), _relayed_oura(user)
+        EventRecordFactory(data_source=direct, category="workout", start_datetime=NOW)
+        EventRecordFactory(data_source=relayed, category="workout", start_datetime=NOW + timedelta(minutes=3))
+        db.commit()
+
+        page = event_record_service.get_workouts(db, user.id, _event_params())
+
+        assert {workout.source.data_source_id for workout in page.data} == {direct.id, relayed.id}
+
+
+class TestSleepUnderPriorityFiltering:
+    """Ranking and reading have to agree, or a night ranked to a hidden relay reads empty."""
+
+    def test_a_night_both_routes_recorded_comes_back_from_the_direct_source(self, db: Session) -> None:
+        user = UserFactory()
+        direct, relayed = _direct_oura(user), _relayed_oura(user)
+        EventRecordFactory(
+            data_source=direct, category="sleep", type="asleep", start_datetime=NOW, duration_seconds=25200
+        )
+        EventRecordFactory(
+            data_source=relayed,
+            category="sleep",
+            type="asleep",
+            start_datetime=NOW + timedelta(minutes=4),
+            duration_seconds=25200,
+        )
+        db.commit()
+
+        page = event_record_service.get_sleep_sessions(db, user.id, _event_params(), filter_by_priority=True)
+
+        assert [session.source.data_source_id for session in page.data] == [direct.id]
+
+    def test_a_night_only_the_relay_recorded_is_not_lost(self, db: Session) -> None:
+        """Outside the direct route's span the relay still ranks, and still wins."""
+        user = UserFactory()
+        direct, relayed = _direct_oura(user), _relayed_oura(user)
+        EventRecordFactory(
+            data_source=direct,
+            category="sleep",
+            type="asleep",
+            start_datetime=NOW - timedelta(days=10),
+            duration_seconds=25200,
+        )
+        EventRecordFactory(
+            data_source=relayed, category="sleep", type="asleep", start_datetime=NOW, duration_seconds=25200
+        )
+        db.commit()
+
+        page = event_record_service.get_sleep_sessions(
+            db,
+            user.id,
+            _event_params(start=NOW - timedelta(days=30), end=NOW + timedelta(days=1)),
+            filter_by_priority=True,
+        )
+
+        assert relayed.id in {session.source.data_source_id for session in page.data}
+
+
 class TestTheManualOverride:
     def test_always_keeps_a_relayed_source_in_every_read(self, db: Session) -> None:
         user = UserFactory()
@@ -315,13 +416,7 @@ class TestEventReads:
         )
         db.commit()
 
-        page = event_record_service.get_workouts(
-            db,
-            user.id,
-            EventRecordQueryParams(
-                start_datetime=NOW - timedelta(days=1), end_datetime=NOW + timedelta(days=1), limit=50
-            ),
-        )
+        page = event_record_service.get_workouts(db, user.id, _event_params())
 
         assert [workout.source.data_source_id for workout in page.data] == [direct.id]
         assert page.metadata.relay_dedup is not None

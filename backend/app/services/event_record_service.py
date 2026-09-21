@@ -8,6 +8,7 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Query
 
 import app.services.raw_payload_storage as raw_payload_storage
+from app.config import settings
 from app.database import DbSession
 from app.models import (
     DataPointSeries,
@@ -715,9 +716,11 @@ class EventRecordService(
     ) -> RelayDedupPlan | None:
         """The redundant relays to leave out of this read, or None when the rule is off.
 
-        Skipped when the caller named a single data source: asking for one source by id is
-        asking for that source.
+        Off entirely when RELAY_DEDUP_ENABLED is false. Skipped per read when the caller
+        named a single data source: asking for one source by id is asking for that source.
         """
+        if not settings.relay_dedup_enabled:
+            return None
         if query_params.include_redundant_relays or query_params.data_source_id is not None:
             return None
         categories = [query_params.category] if query_params.category else []
@@ -737,10 +740,16 @@ class EventRecordService(
         query_params: EventRecordQueryParams,
         user_id: str,
         restrict_to_record_ids: Query | None = None,
+        relay_plan: RelayDedupPlan | None = None,
+        resolve_plan: bool = True,
     ) -> tuple[list[tuple[EventRecord, DataSource]], int, RelayDedupPlan | None]:
         self.logger.debug(f"Fetching event records with filters: {query_params.model_dump()}")
 
-        relay_plan = self._relay_plan(db_session, query_params, user_id)
+        # Callers that rank records before reading them (sleep, under filter_by_priority)
+        # resolve the plan first and pass resolve_plan=False, so the ranking and the read
+        # use one plan and it is not computed twice.
+        if resolve_plan:
+            relay_plan = self._relay_plan(db_session, query_params, user_id)
         records, total_count = self.crud.get_records_with_filters(
             db_session,
             query_params,
@@ -931,16 +940,22 @@ class EventRecordService(
 
         # inline query that restricts records to ones
         # with highest priority
+        relay_plan = self._relay_plan(db_session, params, str(user_id))
         restrict_to_record_ids: Query | None = None
         if filter_by_priority:
             provider_order = self.priority_service.priority_repo.get_priority_order(db_session)
             device_type_order = self.priority_service.device_type_priority_repo.get_priority_order(db_session)
             restrict_to_record_ids = self.crud.winning_sleep_record_ids(
-                db_session, str(user_id), params, provider_order, device_type_order
+                db_session, str(user_id), params, provider_order, device_type_order, relay_plan
             )
 
         records, total_count, relay_plan = self._get_records_with_filters(
-            db_session, params, str(user_id), restrict_to_record_ids=restrict_to_record_ids
+            db_session,
+            params,
+            str(user_id),
+            restrict_to_record_ids=restrict_to_record_ids,
+            relay_plan=relay_plan,
+            resolve_plan=False,
         )
         # Ensure total_count is always an int (not None)
         total_count = total_count if total_count is not None else 0

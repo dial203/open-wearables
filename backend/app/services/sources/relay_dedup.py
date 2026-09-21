@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, func, or_
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.database import DbSession
@@ -233,39 +233,73 @@ def _candidates(db_session: DbSession, user_id: UUID) -> _Candidates:
     return _Candidates(relays=relays, directs=directs, manual=manual)
 
 
-def _covered_span(
-    db_session: DbSession,
+# Beyond this many (brand, key, direct source) combinations a read stops measuring
+# coverage per key and measures one span per brand instead. A read asking for every
+# series type at once with several accounts connected would otherwise build a very
+# wide statement; the coarser span is still correct, just less exact about a metric
+# only the relay carries. In practice a read names one to three types.
+_MAX_COVERAGE_PROBES = 48
+
+
+def _span_of(
     timestamp_column: InstrumentedAttribute[datetime],
     data_source_id_column: InstrumentedAttribute[UUID],
-    source_ids: list[UUID],
+    source_id: UUID,
     extra_filters: list[ColumnElement[bool]],
     start: datetime | None,
     end: datetime | None,
-) -> tuple[datetime | None, datetime | None]:
-    """First and last timestamp the direct sources actually hold in this window.
+) -> tuple[ColumnElement[datetime], ColumnElement[datetime]]:
+    """Scalar min/max of one source's timestamps, as subqueries to embed in one SELECT.
 
-    One query per source rather than a ``GROUP BY`` over all of them: with the source
-    id and the series type pinned to single values, min/max are index endpoint lookups,
-    while the grouped form has to scan every matching row. A participant has a handful
-    of direct sources per brand, so the query count stays small and each one is cheap.
+    One source and one key per subquery rather than a ``GROUP BY`` over several: with
+    the leading index columns pinned to single values Postgres answers min/max from the
+    index endpoints, while the grouped form has to read every matching row.
     """
-    lows: list[datetime] = []
-    highs: list[datetime] = []
-    for source_id in source_ids:
-        query = db_session.query(func.min(timestamp_column), func.max(timestamp_column)).filter(
-            data_source_id_column == source_id,
-            *extra_filters,
-        )
-        if start is not None:
-            query = query.filter(timestamp_column >= start)
-        if end is not None:
-            query = query.filter(timestamp_column < end)
-        low, high = query.one()
-        if low is not None:
-            lows.append(low)
-        if high is not None:
-            highs.append(high)
-    return (min(lows) if lows else None, max(highs) if highs else None)
+    conditions = [data_source_id_column == source_id, *extra_filters]
+    if start is not None:
+        conditions.append(timestamp_column >= start)
+    if end is not None:
+        conditions.append(timestamp_column < end)
+    # correlate(None) so these stay self-contained: they are embedded in a SELECT with no
+    # FROM of its own today, and an auto-correlation would silently change what they mean
+    # if a caller ever embedded them somewhere that has one.
+    return (
+        select(func.min(timestamp_column)).where(*conditions).correlate(None).scalar_subquery(),
+        select(func.max(timestamp_column)).where(*conditions).correlate(None).scalar_subquery(),
+    )
+
+
+def _measure_coverage(
+    db_session: DbSession,
+    timestamp_column: InstrumentedAttribute[datetime],
+    data_source_id_column: InstrumentedAttribute[UUID],
+    probes: list[tuple[tuple[str, int | str | None], UUID, list[ColumnElement[bool]]]],
+    start: datetime | None,
+    end: datetime | None,
+) -> dict[tuple[str, int | str | None], tuple[datetime, datetime]]:
+    """First and last timestamp the direct sources hold, per (brand, key), in one query.
+
+    Every probe rides in a single SELECT so a read costs one round trip however many
+    brands, types and accounts are involved.
+    """
+    if not probes:
+        return {}
+
+    columns: list[ColumnElement[datetime]] = []
+    for _key, source_id, extra_filters in probes:
+        low, high = _span_of(timestamp_column, data_source_id_column, source_id, extra_filters, start, end)
+        columns.extend((low, high))
+
+    row = db_session.execute(select(*columns)).one()
+
+    covered: dict[tuple[str, int | str | None], tuple[datetime, datetime]] = {}
+    for index, (key, _source_id, _filters) in enumerate(probes):
+        low, high = row[index * 2], row[index * 2 + 1]
+        if low is None or high is None:
+            continue
+        known = covered.get(key)
+        covered[key] = (min(low, known[0]), max(high, known[1])) if known else (low, high)
+    return covered
 
 
 def _manual_spans(manual: list[DataSource]) -> tuple[list[_Span], list[HiddenRelay]]:
@@ -293,26 +327,34 @@ def _plan(
 ) -> RelayDedupPlan:
     """Assemble spans and their explanations from the coverage already measured."""
     spans, hidden = _manual_spans(candidates.manual)
-    reported: set[UUID] = set()
+    # Reported per relay, not per span: a read covering several series types produces a
+    # span each, and quoting only the first type's window would understate what was left
+    # out. The widest window across this relay's spans is what a reader needs.
+    windows: dict[UUID, tuple[datetime, datetime]] = {}
 
     for (brand, key), (start, end) in covered.items():
         relays = candidates.relays.get(brand, [])
         if not relays:
             continue
         spans.append(_Span(source_ids=tuple(r.id for r in relays), key=key, start=start, end=end))
+        for relay in relays:
+            known = windows.get(relay.id)
+            windows[relay.id] = (min(start, known[0]), max(end, known[1])) if known else (start, end)
+
+    for brand, relays in candidates.relays.items():
         direct_provider = direct_provider_for_brand(brand)
         for relay in relays:
-            if relay.id in reported:
+            window = windows.get(relay.id)
+            if window is None:
                 continue
-            reported.add(relay.id)
             hidden.append(
                 HiddenRelay(
                     data_source_id=relay.id,
                     provider=_provider_slug(relay.provider),
                     brand=relay.original_source_name or brand,
                     direct_provider=direct_provider.value if direct_provider else None,
-                    covered_from=start,
-                    covered_until=end,
+                    covered_from=window[0],
+                    covered_until=window[1],
                     reason=REASON_COVERED,
                 )
             )
@@ -374,42 +416,37 @@ def build_series_plan(
     if not candidates.relays and not candidates.manual:
         return RelayDedupPlan()
 
-    covered: dict[tuple[str, int | str | None], tuple[datetime, datetime]] = {}
-    for brand in candidates.relays:
-        direct_ids = [d.id for d in candidates.directs.get(brand, [])]
-        if not direct_ids:
-            continue
-        if not type_ids:
-            # A read that names no type asks for everything, and measuring coverage for
-            # every series type would cost a query per type per source. One span across
-            # all of them is coarser - a type only the relay carries is hidden inside it -
-            # so callers that care name their types, which every timeseries read does.
-            low, high = _covered_span(
-                db_session,
-                DataPointSeries.recorded_at,
-                DataPointSeries.data_source_id,
-                direct_ids,
-                [],
-                start,
-                end,
-            )
-            if low is not None and high is not None:
-                covered[(brand, None)] = (low, high)
-            continue
-        for type_id in type_ids:
-            low, high = _covered_span(
-                db_session,
-                DataPointSeries.recorded_at,
-                DataPointSeries.data_source_id,
-                direct_ids,
-                [DataPointSeries.series_type_definition_id == type_id],
-                start,
-                end,
-            )
-            if low is not None and high is not None:
-                covered[(brand, type_id)] = (low, high)
+    # A read that names no type asks for everything, and so does one naming more types
+    # than _MAX_COVERAGE_PROBES allows. Both fall back to one span per brand: coarser,
+    # since a type only the relay carries is then hidden inside it, but still bounded by
+    # what the direct route delivered. Every timeseries read in practice names its types.
+    per_type = bool(type_ids) and len(type_ids) * _direct_source_count(candidates) <= _MAX_COVERAGE_PROBES
 
+    probes: list[tuple[tuple[str, int | str | None], UUID, list[ColumnElement[bool]]]] = []
+    for brand in candidates.relays:
+        for direct in candidates.directs.get(brand, []):
+            if per_type:
+                probes.extend(
+                    ((brand, type_id), direct.id, [DataPointSeries.series_type_definition_id == type_id])
+                    for type_id in type_ids
+                )
+            else:
+                probes.append(((brand, None), direct.id, []))
+
+    covered = _measure_coverage(
+        db_session,
+        DataPointSeries.recorded_at,
+        DataPointSeries.data_source_id,
+        probes,
+        start,
+        end,
+    )
     return _plan(candidates, covered)
+
+
+def _direct_source_count(candidates: "_Candidates") -> int:
+    """Direct sources behind the brands that actually have a relay to weigh up."""
+    return sum(len(candidates.directs.get(brand, [])) for brand in candidates.relays)
 
 
 def build_event_plan(
@@ -430,24 +467,20 @@ def build_event_plan(
     if not candidates.relays and not candidates.manual:
         return RelayDedupPlan()
 
-    covered: dict[tuple[str, int | str | None], tuple[datetime, datetime]] = {}
-    for brand in candidates.relays:
-        direct_ids = [d.id for d in candidates.directs.get(brand, [])]
-        if not direct_ids:
-            continue
-        for category in categories:
-            low, high = _covered_span(
-                db_session,
-                EventRecord.start_datetime,
-                EventRecord.data_source_id,
-                direct_ids,
-                [EventRecord.category == category],
-                start,
-                end,
-            )
-            if low is not None and high is not None:
-                covered[(brand, category)] = (low, high)
-
+    probes: list[tuple[tuple[str, int | str | None], UUID, list[ColumnElement[bool]]]] = [
+        ((brand, category), direct.id, [EventRecord.category == category])
+        for brand in candidates.relays
+        for direct in candidates.directs.get(brand, [])
+        for category in categories
+    ]
+    covered = _measure_coverage(
+        db_session,
+        EventRecord.start_datetime,
+        EventRecord.data_source_id,
+        probes,
+        start,
+        end,
+    )
     return _plan(candidates, covered)
 
 

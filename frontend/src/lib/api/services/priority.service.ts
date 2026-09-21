@@ -47,7 +47,11 @@ export interface DataSource {
    * leaves it unattributed rather than re-attaching it on the next sync.
    */
   attribution_locked_at: string | null;
-  is_enabled: boolean;
+  /**
+   * Not sent by the API today - no endpoint enables or disables a source. Kept as an
+   * optional field so the existing call below still type-checks; read it as unknown.
+   */
+  is_enabled?: boolean;
   /** `direct` straight from the maker's API, `aggregator` relayed by a platform. */
   ingestion_route: IngestionRoute;
   /**

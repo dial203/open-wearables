@@ -12,6 +12,7 @@ import type {
   DeviceTypePriority,
 } from '@/lib/api/services/priority.service';
 import { deviceTypeInfo } from '@/components/common/device-type';
+import { useConfig } from '@/hooks/api/use-config';
 
 // Provider display info
 const PROVIDER_INFO: Record<string, { name: string; color: string }> = {
@@ -22,6 +23,60 @@ const PROVIDER_INFO: Record<string, { name: string; color: string }> = {
   whoop: { name: 'WHOOP', color: 'bg-teal-500' },
   oura: { name: 'Oura', color: 'bg-purple-500' },
 };
+
+/**
+ * What the duplicate rule does, in one card, wherever someone is already thinking
+ * about overlapping sources. It is instance-wide and set in the backend
+ * environment, so this states the current setting rather than offering a switch
+ * the page cannot honour.
+ */
+function DuplicateRelayNotice() {
+  const config = useConfig();
+  // Older backends do not send the flag; the rule is on by default there too.
+  const enabled = config.data?.relay_dedup_enabled !== false;
+
+  return (
+    <div className="rounded-2xl border border-border/60 bg-card/40 px-6 py-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-medium text-foreground">
+          Duplicates from aggregators
+        </h3>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs ${
+            enabled
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+              : 'bg-muted text-muted-foreground'
+          }`}
+        >
+          {enabled ? 'Hiding duplicates' : 'Showing everything'}
+        </span>
+      </div>
+      <p className="text-xs text-muted-foreground mt-2 max-w-3xl">
+        {enabled ? (
+          <>
+            When a brand is connected both directly and through an aggregator —
+            Oura read from Oura and again as &ldquo;Oura&rdquo; inside Apple
+            Health — reads leave out the aggregator&apos;s copy for the span the
+            direct connection actually covers. Nothing is deleted: history from
+            before the direct connection, days after it stopped delivering, and
+            anything only the aggregator carries all stay visible. Add{' '}
+            <code className="text-[11px]">include_redundant_relays=true</code>{' '}
+            to any read to see every copy, or keep one source with{' '}
+            <em>Keep it</em> on the user&apos;s Devices tab.
+          </>
+        ) : (
+          <>
+            Every source is returned, including an aggregator&apos;s copy of a
+            brand you also read directly, so a device connected both ways
+            appears twice. Set{' '}
+            <code className="text-[11px]">RELAY_DEDUP_ENABLED=true</code> in the
+            backend environment to hide the duplicates.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
 
 interface ProviderItemProps {
   provider: ProviderPriority;
@@ -310,6 +365,8 @@ export function PrioritiesTab() {
           </Button>
         )}
       </div>
+
+      <DuplicateRelayNotice />
 
       <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-xl overflow-hidden">
         <div className="px-6 py-4 border-b border-border/60">

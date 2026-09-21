@@ -25,6 +25,7 @@ async def get_timeseries(
     end_time: str,
     types: list[str],
     resolution: str = "raw",
+    include_redundant_relays: bool = False,
 ) -> dict:
     """
     Get granular time-series samples for a user within a time range.
@@ -53,6 +54,13 @@ async def get_timeseries(
                     resolutions downsample server-side. Prefer "1min" or
                     coarser for multi-day windows to keep response size
                     bounded.
+        include_redundant_relays: When a brand is connected both directly and
+                    through an aggregator (Apple Health, Google Health, Health
+                    Connect), the aggregator's copy is left out by default for
+                    the span the direct connection covers, so one device is not
+                    counted twice. Set True to get every copy back - for
+                    checking the direct connection's completeness, or comparing
+                    the two routes.
 
     Returns:
         A dictionary containing:
@@ -129,6 +137,7 @@ async def get_timeseries(
                 types=types,
                 resolution=resolution,
                 cursor=cursor,
+                include_redundant_relays=include_redundant_relays,
             )
             for sample in response.get("data", []):
                 source = sample.get("source", {})
