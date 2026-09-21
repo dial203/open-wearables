@@ -1,20 +1,25 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
+from statistics import median
 from typing import Any, Iterable
 from uuid import UUID, uuid4
 
 import isodate
 
+from app.constants.series_types.polar import RR_INTERVAL_SAMPLE_TYPE
 from app.constants.workout_types.polar import get_unified_workout_type
 from app.database import DbSession
+from app.schemas.enums import ProviderName, SeriesType
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
     EventRecordMetrics,
+    TimeSeriesSampleCreate,
 )
 from app.schemas.providers.polar import ExerciseJSON as PolarExerciseJSON
 from app.services.event_record_service import event_record_service
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
+from app.services.timeseries_service import timeseries_service
 from app.utils.dates import offset_to_iso
 
 
@@ -32,8 +37,13 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         return self._make_api_request(db, user_id, "/v3/exercises")
 
     def get_workouts_from_api(self, db: DbSession, user_id: UUID, **kwargs: Any) -> Any:
-        """Get exercises from Polar API with options."""
-        samples = kwargs.get("samples", False)
+        """Get exercises from Polar API with options.
+
+        ``samples`` defaults to True so the sync path receives the per-exercise sample
+        arrays, which is where AccessLink carries beat-to-beat RR intervals (sample type
+        11, recorded only with an H6/H7/H9/H10 chest strap).
+        """
+        samples = kwargs.get("samples", True)
         zones = kwargs.get("zones", False)
         route = kwargs.get("route", False)
 
@@ -140,6 +150,121 @@ class PolarWorkouts(BaseWorkoutsTemplate):
 
         return record, detail
 
+    # -------------------------------------------------------------------------
+    # RR intervals — AccessLink exercise sample type 11
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_rr_sample_data(data: str) -> list[int | None]:
+        """Split an RR sample payload into per-beat intervals in ms.
+
+        AccessLink ships samples as one comma-separated string. RR is the only sample
+        type that may carry NULL entries (missing beats) — they arrive as an empty field
+        or the literal ``null`` and are kept as ``None`` so the beat count stays honest.
+        Non-positive or unparseable values are treated as missing too.
+        """
+        values: list[int | None] = []
+        for raw_value in data.split(","):
+            token = raw_value.strip()
+            if not token or token.lower() == "null":
+                values.append(None)
+                continue
+            try:
+                interval = int(float(token))
+            except ValueError:
+                values.append(None)
+                continue
+            values.append(interval if interval > 0 else None)
+        return values
+
+    def _build_rr_samples(
+        self,
+        raw_workout: PolarExerciseJSON,
+        user_id: UUID,
+        start_date: datetime,
+        zone_offset: str | None,
+        duration_seconds: int,
+    ) -> list[TimeSeriesSampleCreate]:
+        """Reconstruct per-beat RR samples for one exercise, if it carries any.
+
+        The API gives no per-beat clock, so each beat is timestamped at the R-wave that
+        *closes* its interval: start time plus the cumulative sum of the intervals before
+        it. Missing (NULL) beats have no duration of their own, so the clock would drift
+        early across a dropout. Instead the unaccounted time — the exercise duration minus
+        the sum of the valid intervals — is spread evenly over the missing beats, which
+        keeps the series anchored at both ends of the session; where the deficit is
+        non-positive (e.g. a paused session) the median valid interval is used instead.
+        Only real beats are stored; the estimate is a clock, never a value.
+        """
+        sample = next(
+            (s for s in (raw_workout.samples or []) if s.sample_type == RR_INTERVAL_SAMPLE_TYPE),
+            None,
+        )
+        if sample is None or not sample.data:
+            return []
+
+        values = self._parse_rr_sample_data(sample.data)
+        valid = [v for v in values if v is not None]
+        if not valid:
+            return []
+
+        missing = len(values) - len(valid)
+        gap_ms = 0.0
+        if missing:
+            deficit = duration_seconds * 1000 - sum(valid)
+            gap_ms = deficit / missing if deficit > 0 else float(median(valid))
+            self.logger.info(
+                "Polar exercise %s: %d of %d RR beats missing; gap estimated at %.1f ms",
+                raw_workout.id,
+                missing,
+                len(values),
+                gap_ms,
+            )
+
+        samples: list[TimeSeriesSampleCreate] = []
+        elapsed_ms = 0.0
+        for interval_ms in values:
+            elapsed_ms += interval_ms if interval_ms is not None else gap_ms
+            if interval_ms is None:
+                continue
+            samples.append(
+                TimeSeriesSampleCreate(
+                    id=uuid4(),
+                    user_id=user_id,
+                    provider=ProviderName.POLAR,
+                    source=ProviderName.POLAR,
+                    device_model=raw_workout.device,
+                    external_id=raw_workout.id,
+                    recorded_at=start_date + timedelta(milliseconds=elapsed_ms),
+                    zone_offset=zone_offset,
+                    value=interval_ms,
+                    series_type=SeriesType.rr_interval,
+                )
+            )
+        return samples
+
+    def _rr_samples_for(self, raw_workout: PolarExerciseJSON, user_id: UUID) -> list[TimeSeriesSampleCreate]:
+        """RR samples for an exercise, re-deriving the same clock the record was built on."""
+        start_date, end_date = self._extract_dates_with_offset(
+            raw_workout.start_time,
+            raw_workout.start_time_utc_offset,
+            raw_workout.duration,
+        )
+        return self._build_rr_samples(
+            raw_workout,
+            user_id,
+            start_date,
+            offset_to_iso(raw_workout.start_time_utc_offset * 60),
+            int((end_date - start_date).total_seconds()),
+        )
+
+    def _save_rr_samples(self, db: DbSession, samples: list[TimeSeriesSampleCreate]) -> int:
+        """Persist reconstructed RR beats. Re-syncs upsert on (source, type, recorded_at)."""
+        if not samples:
+            return 0
+        counts = timeseries_service.bulk_create_samples(db, samples)
+        return int(counts)
+
     def _build_bundles(
         self,
         raw: list[PolarExerciseJSON],
@@ -160,24 +285,33 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         workouts = [PolarExerciseJSON(**w) for w in workouts_data]
 
         count = 0
-        for record, detail in self._build_bundles(workouts, user_id):
+        for raw_workout, (record, detail) in zip(workouts, self._build_bundles(workouts, user_id), strict=True):
             created_record = event_record_service.create(db, record)
             detail_for_record = detail.model_copy(update={"record_id": created_record.id})
             event_record_service.create_detail(db, detail_for_record)
+            # Flushed per exercise: a night on a chest strap is ~30k beats, so holding
+            # every session's beats until the end of a backfill is a lot of memory.
+            self._save_rr_samples(db, self._rr_samples_for(raw_workout, user_id))
             count += 1
 
         return count
 
     def fetch_and_save_exercise(self, db: DbSession, user_id: UUID, path: str) -> int:
-        """Fetch a single exercise by URL path and save it. Used by webhook handler."""
-        raw = self._make_api_request(db, user_id, path)
+        """Fetch a single exercise by URL path and save it. Used by webhook handler.
+
+        Asks for samples so a chest-strap session's RR intervals land with the workout
+        instead of waiting for the next pull.
+        """
+        raw = self._make_api_request(db, user_id, path, params={"samples": "true"})
         if not raw:
             return 0
+        exercise = PolarExerciseJSON(**raw)
         count = 0
-        for record, detail in self._build_bundles([PolarExerciseJSON(**raw)], user_id):
+        for record, detail in self._build_bundles([exercise], user_id):
             created = event_record_service.create(db, record)
             event_record_service.create_detail(db, detail.model_copy(update={"record_id": created.id}))
             count += 1
+        self._save_rr_samples(db, self._rr_samples_for(exercise, user_id))
         return count
 
     def get_exercise_detail(
