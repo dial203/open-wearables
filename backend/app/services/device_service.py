@@ -14,7 +14,7 @@ from logging import Logger
 from uuid import UUID
 
 from app.database import DbSession
-from app.models import DataSource, Device
+from app.models import DataSource, Device, UserConnection
 from app.repositories.device_repository import DeviceRepository
 from app.schemas.enums import LabelSource
 from app.schemas.model_crud.devices import (
@@ -29,6 +29,7 @@ from app.schemas.model_crud.devices import (
     LinkProposalListResponse,
     LinkProposalResponse,
 )
+from app.schemas.model_crud.user_management import account_display_label
 from app.services.devices.detection import DeviceDetectionService
 from app.utils.exceptions import ResourceNotFoundError, handle_exceptions
 
@@ -44,7 +45,8 @@ class DeviceService:
     @handle_exceptions
     def list_devices(self, db: DbSession, user_id: UUID, include_retired: bool = True) -> DeviceListResponse:
         devices = self.repo.list_for_user(db, user_id, include_retired=include_retired)
-        items = [self._to_response(db, device) for device in devices]
+        accounts = self._accounts_for_user(db, user_id)
+        items = [self._to_response(db, device, accounts) for device in devices]
         return DeviceListResponse(items=items, total=len(items))
 
     @handle_exceptions
@@ -271,7 +273,25 @@ class DeviceService:
             raise ResourceNotFoundError("device", device_id)
         return device
 
-    def _to_response(self, db: DbSession, device: Device) -> DeviceResponse:
+    @staticmethod
+    def _accounts_for_user(db: DbSession, user_id: UUID) -> dict[UUID, UserConnection]:
+        """This user's provider accounts, keyed by id.
+
+        One query rather than a lazy load per data source: a device listing walks
+        every source of every device, and a participant in a multi-device study
+        has several sources per account.
+        """
+        rows = db.query(UserConnection).filter(UserConnection.user_id == user_id).all()
+        return {connection.id: connection for connection in rows}
+
+    def _to_response(
+        self,
+        db: DbSession,
+        device: Device,
+        accounts: dict[UUID, UserConnection] | None = None,
+    ) -> DeviceResponse:
+        if accounts is None:
+            accounts = self._accounts_for_user(db, device.user_id)
         return DeviceResponse(
             id=device.id,
             user_id=device.user_id,
@@ -295,14 +315,32 @@ class DeviceService:
             updated_at=device.updated_at,
             identities=[DeviceIdentityResponse.model_validate(i) for i in self.repo.claims_for_device(db, device.id)],
             data_sources=[
-                DeviceDataSourceResponse(
-                    id=ds.id,
-                    provider=getattr(ds.provider, "value", ds.provider),
-                    source=ds.source,
-                    device_model=ds.device_model,
-                    device_type=ds.device_type,
-                    original_source_name=ds.original_source_name,
-                )
+                self._data_source_response(ds, accounts.get(ds.user_connection_id))
                 for ds in self.repo.data_sources_for_device(db, device.id)
             ],
+        )
+
+    @staticmethod
+    def _data_source_response(ds: DataSource, connection: UserConnection | None) -> DeviceDataSourceResponse:
+        return DeviceDataSourceResponse(
+            id=ds.id,
+            provider=getattr(ds.provider, "value", ds.provider),
+            source=ds.source,
+            device_model=ds.device_model,
+            device_type=ds.device_type,
+            original_source_name=ds.original_source_name,
+            user_connection_id=ds.user_connection_id,
+            account_label=(
+                None
+                if connection is None
+                else account_display_label(
+                    connection.account_label,
+                    connection.provider_username,
+                    connection.account_email,
+                    connection.provider,
+                    connection.id,
+                )
+            ),
+            account_email=None if connection is None else connection.account_email,
+            account_type=None if connection is None else connection.account_type,
         )
