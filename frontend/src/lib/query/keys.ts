@@ -149,6 +149,8 @@ export const queryKeys = {
       [...queryKeys.devices.all, 'history', userId, deviceId ?? 'all'] as const,
     proposals: (userId: string) =>
       [...queryKeys.devices.all, 'proposals', userId] as const,
+    sourceActivity: (userId: string, days: number) =>
+      [...queryKeys.devices.all, 'source-activity', userId, days] as const,
   },
 
   archival: {

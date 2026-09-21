@@ -1,3 +1,8 @@
+from .activity import (
+    ActivityBucket,
+    SourceActivityListResponse,
+    SourceActivityResponse,
+)
 from .device import (
     DeviceCreate,
     DeviceDataSourceResponse,
@@ -17,6 +22,7 @@ from .device import (
 )
 
 __all__ = [
+    "ActivityBucket",
     "DeviceCreate",
     "DeviceDataSourceResponse",
     "DeviceHistoryListResponse",
@@ -32,4 +38,6 @@ __all__ = [
     "LinkProposalDecision",
     "LinkProposalListResponse",
     "LinkProposalResponse",
+    "SourceActivityListResponse",
+    "SourceActivityResponse",
 ]

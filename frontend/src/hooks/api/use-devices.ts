@@ -24,6 +24,21 @@ export function useDevices(userId: string, includeRetired = true) {
   });
 }
 
+/**
+ * What each of the user's data sources reported recently.
+ *
+ * Its own query rather than part of the device listing: these are grouped aggregates
+ * over the largest tables in the schema, and a device page should render its names and
+ * structure without waiting on them.
+ */
+export function useSourceActivity(userId: string, days = 30) {
+  return useQuery({
+    queryKey: queryKeys.devices.sourceActivity(userId, days),
+    queryFn: () => deviceService.sourceActivity(userId, days),
+    enabled: !!userId,
+  });
+}
+
 export function useDeviceHistory(
   userId: string,
   deviceId?: string,

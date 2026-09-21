@@ -52,11 +52,14 @@ import {
   useRefreshProposals,
   useDecideProposal,
   useDeviceHistory,
+  useSourceActivity,
 } from '@/hooks/api/use-devices';
 import type {
   Device,
   DeviceDataSource,
+  SourceActivity,
 } from '@/lib/api/services/device.service';
+import { SourceActivityPanel } from '@/components/user/source-activity';
 import {
   useSetRelayVisibility,
   useUserDataSources,
@@ -120,6 +123,17 @@ export function DevicesSection({ userId }: { userId: string }) {
   // stretch of data belongs to.
   const { data: connections } = useUserConnections(userId);
   const accounts = useMemo(() => buildAccountMap(connections), [connections]);
+  // What each source has actually reported. Its own request rather than part of the
+  // device listing: these are grouped aggregates over the largest tables in the
+  // schema, and the page should render its names and structure without waiting.
+  const { data: activityData } = useSourceActivity(userId);
+  const activity = useMemo(() => {
+    const map = new Map<string, SourceActivity>();
+    for (const item of activityData?.items ?? [])
+      map.set(item.data_source_id, item);
+    return map;
+  }, [activityData]);
+  const windowDays = activityData?.window_days ?? 30;
 
   const [createOpen, setCreateOpen] = useState(false);
   const [linking, setLinking] = useState<DataSource | null>(null);
@@ -227,6 +241,8 @@ export function DevicesSection({ userId }: { userId: string }) {
               userId={userId}
               device={device}
               accounts={accounts}
+              activity={activity}
+              windowDays={windowDays}
               onEdit={() => setEditing(device)}
               onSplit={() => setSplitting(device)}
               onMerge={() => setMerging(device)}
@@ -240,6 +256,8 @@ export function DevicesSection({ userId }: { userId: string }) {
         userId={userId}
         sources={unattributed}
         accounts={accounts}
+        activity={activity}
+        windowDays={windowDays}
         onLink={(source) => setLinking(source)}
       />
 
@@ -309,11 +327,15 @@ function UnattributedSources({
   userId,
   sources,
   accounts,
+  activity,
+  windowDays,
   onLink,
 }: {
   userId: string;
   sources: DataSource[];
   accounts: Map<string, AccountDescriptor>;
+  activity: Map<string, SourceActivity>;
+  windowDays: number;
   onLink: (source: DataSource) => void;
 }) {
   const setRelayVisibility = useSetRelayVisibility();
@@ -410,6 +432,14 @@ function UnattributedSources({
               <Link2 className="h-3 w-3" />
               Link
             </button>
+            {/* The whole point of this panel: what the source reported is the only
+                evidence of what the hardware is, and this is where someone decides. */}
+            <div className="w-full pl-5">
+              <SourceActivityPanel
+                activity={activity.get(source.id)}
+                windowDays={windowDays}
+              />
+            </div>
           </li>
         ))}
       </ul>
@@ -417,7 +447,16 @@ function UnattributedSources({
   );
 }
 
-/** Attribute one data source to an existing device. */
+/**
+ * Attribute one data source to a device - an existing one, or one created here.
+ *
+ * Creating it here rather than sending someone to "Add device" first is the point: the
+ * source you are looking at is the evidence for what the device is, and the case where
+ * no device exists yet is the common one, not the exception. A ring arriving only as
+ * `com.gdjztech.ringconn` has nothing to link to until someone makes it.
+ */
+const NEW_DEVICE = '__new__';
+
 function LinkDataSourceDialog({
   userId,
   source,
@@ -430,14 +469,78 @@ function LinkDataSourceDialog({
   onClose: () => void;
 }) {
   const link = useLinkDataSource(userId);
+  const create = useCreateDevice(userId);
   const [deviceId, setDeviceId] = useState('');
   const [reason, setReason] = useState('');
+  const [draft, setDraft] = useState({
+    device_type: 'unknown',
+    label: '',
+    brand: '',
+    model_raw: '',
+    wear_location: '',
+  });
+
+  const creating = deviceId === NEW_DEVICE;
+
+  // Seeded from what the provider actually said, never from a guess: the canonical
+  // brand it resolved and the model string it sent. Both stay editable, and an empty
+  // seed is left empty rather than filled with the bundle id, which names an app.
+  const startNewDevice = () => {
+    setDeviceId(NEW_DEVICE);
+    setDraft({
+      device_type: source?.device_type ?? 'unknown',
+      label: '',
+      brand: source?.original_source_name ?? '',
+      model_raw: source?.device_model ?? '',
+      wear_location: '',
+    });
+  };
 
   const close = () => {
     setDeviceId('');
     setReason('');
+    setDraft({
+      device_type: 'unknown',
+      label: '',
+      brand: '',
+      model_raw: '',
+      wear_location: '',
+    });
     onClose();
   };
+
+  const submit = async () => {
+    if (!source) return;
+    const why = reason || null;
+    if (!creating) {
+      if (!deviceId) return;
+      link.mutate(
+        { deviceId, dataSourceId: source.id, reason: why },
+        { onSuccess: close }
+      );
+      return;
+    }
+    // Create then link. Sequential because the device id does not exist until the
+    // first call returns; if the link fails the device is still there to link by hand,
+    // which is recoverable, where inventing an id would not be.
+    const device = await create.mutateAsync({
+      device_type: draft.device_type,
+      label: draft.label.trim() || null,
+      brand: draft.brand.trim() || null,
+      model_raw: draft.model_raw.trim() || null,
+      wear_location: draft.wear_location.trim() || null,
+      reason: why,
+    });
+    await link.mutateAsync({
+      deviceId: device.id,
+      dataSourceId: source.id,
+      reason: why,
+    });
+    close();
+  };
+
+  const pending = link.isPending || create.isPending;
+  const canSubmit = creating ? draft.device_type !== '' : !!deviceId;
 
   return (
     <Dialog open={!!source} onOpenChange={(open) => !open && close()}>
@@ -461,10 +564,15 @@ function LinkDataSourceDialog({
             <select
               id="link-device"
               value={deviceId}
-              onChange={(e) => setDeviceId(e.target.value)}
+              onChange={(e) =>
+                e.target.value === NEW_DEVICE
+                  ? startNewDevice()
+                  : setDeviceId(e.target.value)
+              }
               className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
             >
               <option value="">Select a device…</option>
+              <option value={NEW_DEVICE}>+ Create a new device…</option>
               {devices.map((d) => (
                 <option key={d.id} value={d.id}>
                   {deviceName(d)} ({d.data_sources.length} source
@@ -473,6 +581,70 @@ function LinkDataSourceDialog({
               ))}
             </select>
           </div>
+
+          {creating && (
+            <div className="space-y-3 rounded-md border border-border/60 bg-muted/20 p-3">
+              <p className="text-xs text-muted-foreground">
+                Seeded from what the provider reported. Everything here is
+                editable, and a name you set is kept — detection never
+                overwrites one.
+              </p>
+              <div>
+                <Label htmlFor="link-new-type">Type</Label>
+                <DeviceTypeSelect
+                  value={draft.device_type}
+                  onChange={(v) => setDraft({ ...draft, device_type: v })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="link-new-label">Name</Label>
+                <Input
+                  id="link-new-label"
+                  value={draft.label}
+                  onChange={(e) =>
+                    setDraft({ ...draft, label: e.target.value })
+                  }
+                  placeholder="Sub 04 ring"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="link-new-brand">Brand</Label>
+                  <Input
+                    id="link-new-brand"
+                    value={draft.brand}
+                    onChange={(e) =>
+                      setDraft({ ...draft, brand: e.target.value })
+                    }
+                    placeholder="RingConn"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="link-new-model">Model</Label>
+                  <Input
+                    id="link-new-model"
+                    value={draft.model_raw}
+                    onChange={(e) =>
+                      setDraft({ ...draft, model_raw: e.target.value })
+                    }
+                    placeholder="Gen 2"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="link-new-wear">Wear location</Label>
+                <Input
+                  id="link-new-wear"
+                  value={draft.wear_location}
+                  onChange={(e) =>
+                    setDraft({ ...draft, wear_location: e.target.value })
+                  }
+                  placeholder="left index finger"
+                />
+              </div>
+            </div>
+          )}
+
           <div>
             <Label htmlFor="link-reason">Reason (recorded in history)</Label>
             <Input
@@ -487,18 +659,11 @@ function LinkDataSourceDialog({
           <Button variant="outline" onClick={close}>
             Cancel
           </Button>
-          <Button
-            disabled={link.isPending || !deviceId || !source}
-            onClick={() => {
-              if (!source || !deviceId) return;
-              link.mutate(
-                { deviceId, dataSourceId: source.id, reason: reason || null },
-                { onSuccess: close }
-              );
-            }}
-          >
-            {link.isPending ? (
+          <Button disabled={pending || !canSubmit || !source} onClick={submit}>
+            {pending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
+            ) : creating ? (
+              'Create & link'
             ) : (
               'Link'
             )}
@@ -513,6 +678,8 @@ function DeviceCard({
   userId,
   device,
   accounts,
+  activity,
+  windowDays,
   onEdit,
   onSplit,
   onMerge,
@@ -521,6 +688,8 @@ function DeviceCard({
   userId: string;
   device: Device;
   accounts: Map<string, AccountDescriptor>;
+  activity: Map<string, SourceActivity>;
+  windowDays: number;
   onEdit: () => void;
   onSplit: () => void;
   onMerge: () => void;
@@ -529,6 +698,7 @@ function DeviceCard({
   const retire = useRetireDevice(userId);
   const unlink = useUnlinkDataSource(userId);
   const [showClaims, setShowClaims] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
 
   const strongClaims = device.identities.filter(
     (i) => i.confidence === 'strong'
@@ -648,11 +818,32 @@ function DeviceCard({
                       <Link2Off className="h-3 w-3" />
                       Unlink
                     </button>
+                    {showActivity && (
+                      <div className="w-full pl-5 pt-0.5 pb-1">
+                        <SourceActivityPanel
+                          activity={activity.get(ds.id)}
+                          windowDays={windowDays}
+                        />
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
           </div>
+
+          {device.data_sources.length > 0 && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setShowActivity((v) => !v)}
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                {showActivity ? 'Hide' : 'Show'} what it reported (last{' '}
+                {windowDays} days)
+              </button>
+            </div>
+          )}
 
           {device.identities.length > 0 && (
             <div className="mt-3">

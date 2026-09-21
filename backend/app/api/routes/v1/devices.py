@@ -27,11 +27,19 @@ from app.schemas.model_crud.devices import (
     LinkProposalListResponse,
     LinkProposalResponse,
 )
+from app.schemas.model_crud.devices.activity import (
+    DEFAULT_WINDOW_DAYS,
+    MAX_WINDOW_DAYS,
+    MIN_WINDOW_DAYS,
+    SourceActivityListResponse,
+)
 from app.services import DeveloperDep
 from app.services.device_service import DeviceService
+from app.services.source_activity_service import SourceActivityService
 
 router = APIRouter()
 device_service = DeviceService(log=getLogger(__name__))
+source_activity_service = SourceActivityService(log=getLogger(__name__))
 
 
 def _actor(developer: Developer) -> str:
@@ -66,6 +74,39 @@ def create_device(
     overwrite it.
     """
     return device_service.create_device(db, user_id, payload, actor=_actor(developer))
+
+
+@router.get(
+    # Ahead of /devices/{device_id}: a literal segment declared after a path parameter
+    # is never reached, because the parameter matches it first.
+    "/users/{user_id}/devices/source-activity",
+    summary="What each of a user's data sources reported recently",
+)
+def source_activity(
+    db: DbSession,
+    _developer: DeveloperDep,
+    user_id: Annotated[UUID, Path(description="User ID")],
+    days: Annotated[
+        int,
+        Query(
+            ge=MIN_WINDOW_DAYS,
+            le=MAX_WINDOW_DAYS,
+            description="How far back to count. Clamped; the counts are aggregates over the largest tables.",
+        ),
+    ] = DEFAULT_WINDOW_DAYS,
+) -> SourceActivityListResponse:
+    """Evidence for deciding what an unidentified device is, and whose account it is on.
+
+    A source named "Bluetooth Device" or a bare bundle id identifies nothing. What it
+    reported does: nights of sleep and a morning readiness score describe a ring or a
+    band, a run of cycling workouts describes a head unit, and a source that has gone
+    quiet describes a device that came off.
+
+    The account travels with each row - label, classification and login e-mail -
+    because for a participant wearing two of one brand that is the other half of the
+    same question.
+    """
+    return source_activity_service.get_user_source_activity(db, user_id, days=days)
 
 
 @router.get("/users/{user_id}/devices/{device_id}", summary="Get one device")
