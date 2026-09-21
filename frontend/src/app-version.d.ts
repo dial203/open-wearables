@@ -15,3 +15,6 @@ declare const __FORK_COMMIT__: string;
 
 /** ISO-8601 commit time of that commit, or '' when it could not be resolved. */
 declare const __FORK_UPDATED_AT__: string;
+
+/** ISO-8601 time this bundle was built, which is not when its code was written. */
+declare const __BUILT_AT__: string;

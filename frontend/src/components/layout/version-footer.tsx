@@ -48,6 +48,7 @@ export function VersionFooter() {
         `  last upstream commit merged in: ${formatBuildTimestamp(__UPSTREAM_UPDATED_AT__)}`,
         `Fork: v${__FORK_VERSION__} (${__FORK_COMMIT__})`,
         `  last updated: ${formatBuildTimestamp(__FORK_UPDATED_AT__)}`,
+        `Built: ${formatBuildTimestamp(__BUILT_AT__)}`,
       ].join('\n')}
     >
       <Row

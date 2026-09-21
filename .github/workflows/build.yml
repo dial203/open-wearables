@@ -39,6 +39,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The frontend footer shows which build is running. The build context is
+      # ./frontend with no .git, so git metadata has to come in as build args or
+      # the image falls back to the committed (and quickly stale) stamp file.
+      # Only the fork's own commit is derived here; the fork version and the
+      # upstream sync point come from frontend/fork-version.json, which changes
+      # only when someone bumps the version or merges upstream.
+      - name: Derive fork version metadata
+        id: fork
+        run: |
+          commit="$(git rev-parse --short HEAD)"
+          updated_at="$(git log -1 --format=%cI HEAD)"
+          # Echoed so a footer showing an unexpected date can be checked against
+          # what this build actually passed in, without a rebuild.
+          echo "fork commit=$commit updated_at=$updated_at"
+          {
+            echo "commit=$commit"
+            echo "updated_at=$updated_at"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Derive image tags & labels
         id: meta
         uses: docker/metadata-action@v5
@@ -65,5 +84,7 @@ jobs:
           # See frontend/src/lib/api/runtime-config.ts.
           build-args: |
             GIT_SHA=${{ github.sha }}
+            FORK_COMMIT=${{ steps.fork.outputs.commit }}
+            FORK_UPDATED_AT=${{ steps.fork.outputs.updated_at }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
