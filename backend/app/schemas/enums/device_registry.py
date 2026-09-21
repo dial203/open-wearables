@@ -22,6 +22,11 @@ class DeviceIdentityKind(StrEnum):
     # share these, so they are never sufficient on their own.
     HEALTHKIT_BUNDLE = "healthkit_bundle"  # HKSource.bundleIdentifier
     HEALTH_CONNECT_PACKAGE = "health_connect_package"  # DataOrigin.packageName
+    # What pushed an activity into Strava, derived from external_id / device_name:
+    # "garmin_connect", "zwift", "file_upload". It names the sync channel, and one
+    # athlete's Edge and Forerunner both arrive through the same one, so it is
+    # corroboration for a device the model string already found - never a grouping key.
+    STRAVA_UPLOAD_SOURCE = "strava_upload_source"
 
     # Hardware descriptors: narrow the field, never identify a unit.
     APPLE_PRODUCT_TYPE = "apple_product_type"  # "Watch7,5"
@@ -80,6 +85,7 @@ WRITER_IDENTITY_KINDS: frozenset[DeviceIdentityKind] = frozenset(
     {
         DeviceIdentityKind.HEALTHKIT_BUNDLE,
         DeviceIdentityKind.HEALTH_CONNECT_PACKAGE,
+        DeviceIdentityKind.STRAVA_UPLOAD_SOURCE,
     }
 )
 

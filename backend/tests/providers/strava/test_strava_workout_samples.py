@@ -71,7 +71,9 @@ class TestBuildWorkoutSamples:
         """Happy path: streams with time+heartrate+velocity_smooth → correct samples."""
         user_id = uuid4()
         with patch.object(strava_workouts, "_make_api_request", return_value=_STRAVA_STREAMS_3S):
-            samples = strava_workouts._build_workout_samples(db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL)
+            samples = strava_workouts._build_workout_samples(
+                db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL, "strava"
+            )
 
         assert len(samples) == 6
 
@@ -88,7 +90,9 @@ class TestBuildWorkoutSamples:
         """recorded_at = start_dt + time[i] seconds for each sample."""
         user_id = uuid4()
         with patch.object(strava_workouts, "_make_api_request", return_value=_STRAVA_STREAMS_3S):
-            samples = strava_workouts._build_workout_samples(db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL)
+            samples = strava_workouts._build_workout_samples(
+                db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL, "strava"
+            )
 
         hr_samples = sorted(
             [s for s in samples if s.series_type == SeriesType.heart_rate],
@@ -105,7 +109,9 @@ class TestBuildWorkoutSamples:
         """Correct series_type, value, source, zone_offset on each sample."""
         user_id = uuid4()
         with patch.object(strava_workouts, "_make_api_request", return_value=_STRAVA_STREAMS_3S):
-            samples = strava_workouts._build_workout_samples(db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL)
+            samples = strava_workouts._build_workout_samples(
+                db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL, "strava"
+            )
 
         hr_samples = sorted(
             [s for s in samples if s.series_type == SeriesType.heart_rate],
@@ -137,7 +143,9 @@ class TestBuildWorkoutSamples:
         user_id = uuid4()
         streams_no_time = {"heartrate": {"data": [120, 130]}}
         with patch.object(strava_workouts, "_make_api_request", return_value=streams_no_time):
-            samples = strava_workouts._build_workout_samples(db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL)
+            samples = strava_workouts._build_workout_samples(
+                db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL, "strava"
+            )
 
         assert samples == []
 
@@ -150,7 +158,9 @@ class TestBuildWorkoutSamples:
         user_id = uuid4()
         streams_empty_time: dict[str, Any] = {"time": {"data": []}, "heartrate": {"data": []}}
         with patch.object(strava_workouts, "_make_api_request", return_value=streams_empty_time):
-            samples = strava_workouts._build_workout_samples(db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL)
+            samples = strava_workouts._build_workout_samples(
+                db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL, "strava"
+            )
 
         assert samples == []
 
@@ -162,7 +172,9 @@ class TestBuildWorkoutSamples:
         """Non-dict API response (e.g. list, None) → empty list, no crash."""
         user_id = uuid4()
         with patch.object(strava_workouts, "_make_api_request", return_value=[]):
-            samples = strava_workouts._build_workout_samples(db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL)
+            samples = strava_workouts._build_workout_samples(
+                db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL, "strava"
+            )
         assert samples == []
 
     def test_metric_stream_shorter_than_time_guarded(
@@ -177,7 +189,9 @@ class TestBuildWorkoutSamples:
             "heartrate": {"data": [120]},
         }
         with patch.object(strava_workouts, "_make_api_request", return_value=streams):
-            samples = strava_workouts._build_workout_samples(db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL)
+            samples = strava_workouts._build_workout_samples(
+                db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL, "strava"
+            )
 
         assert len(samples) == 1
         assert samples[0].value == Decimal("120")
@@ -195,7 +209,9 @@ class TestBuildWorkoutSamples:
             "heartrate": {"data": [120, 130]},
         }
         with patch.object(strava_workouts, "_make_api_request", return_value=streams):
-            samples = strava_workouts._build_workout_samples(db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL)
+            samples = strava_workouts._build_workout_samples(
+                db, user_id, 98765, _START_DT, _ZONE_OFFSET, _DEVICE_MODEL, "strava"
+            )
 
         assert all(s.series_type != SeriesType.distance for s in samples if hasattr(SeriesType, "distance"))
         assert all(s.series_type == SeriesType.heart_rate for s in samples)
@@ -256,6 +272,10 @@ class TestIngestionWiring:
         record_mock = MagicMock()
         record_mock.start_datetime = _START_DT
         record_mock.zone_offset = _ZONE_OFFSET
+        # Samples are keyed to the same data source as the workout, so they take the
+        # record's own model/source rather than re-deriving them from the activity.
+        record_mock.device_model = _DEVICE_MODEL
+        record_mock.source = "strava"
 
         with (
             patch(
@@ -284,6 +304,10 @@ class TestIngestionWiring:
         record_mock = MagicMock()
         record_mock.start_datetime = _START_DT
         record_mock.zone_offset = _ZONE_OFFSET
+        # Samples are keyed to the same data source as the workout, so they take the
+        # record's own model/source rather than re-deriving them from the activity.
+        record_mock.device_model = _DEVICE_MODEL
+        record_mock.source = "strava"
 
         with (
             patch(
@@ -308,6 +332,10 @@ class TestIngestionWiring:
         record_mock = MagicMock()
         record_mock.start_datetime = _START_DT
         record_mock.zone_offset = _ZONE_OFFSET
+        # Samples are keyed to the same data source as the workout, so they take the
+        # record's own model/source rather than re-deriving them from the activity.
+        record_mock.device_model = _DEVICE_MODEL
+        record_mock.source = "strava"
 
         with (
             patch(
@@ -336,6 +364,10 @@ class TestIngestionWiring:
         record_mock = MagicMock()
         record_mock.start_datetime = _START_DT
         record_mock.zone_offset = _ZONE_OFFSET
+        # Samples are keyed to the same data source as the workout, so they take the
+        # record's own model/source rather than re-deriving them from the activity.
+        record_mock.device_model = _DEVICE_MODEL
+        record_mock.source = "strava"
 
         streams_no_time: dict[str, Any] = {"heartrate": {"data": [120]}}
         with (

@@ -226,6 +226,19 @@ class Settings(BaseSettings):
     strava_webhook_signature_tolerance_seconds: int = Field(300, ge=0)
     # Strava API max is 200 activities per page
     strava_events_per_page: int = 200
+    # Re-fetch each backfilled activity from GET /activities/{id}.
+    #
+    # The list endpoint used for backfill returns SummaryActivity, which carries no
+    # device_name, no external_id, no gear and no calories - so a historical import
+    # cannot be attributed to a device at all, and every activity is filed under the
+    # bare provider. Webhook arrivals already use the detail endpoint and are
+    # unaffected either way.
+    #
+    # Costs one extra request per backfilled activity against the per-application
+    # rate limit (200/15 min, 2000/day on Standard Tier), shared across every athlete
+    # connected to the app. Turn it off for a large backfill across many athletes;
+    # device derivation then applies to webhook arrivals only.
+    strava_enrich_activity_detail: bool = True
 
     # ULTRAHUMAN OAUTH SETTINGS
     ultrahuman_client_id: str | None = None

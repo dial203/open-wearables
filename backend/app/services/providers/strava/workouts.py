@@ -20,8 +20,10 @@ from app.schemas.providers.strava import (
 from app.schemas.providers.strava import (
     StravaStreamSet,
 )
+from app.services.devices.identity import claims_from_strava_activity
 from app.services.event_record_service import event_record_service
 from app.services.providers.strava.coverage import STREAM_KEY_SERIES_TYPE, STREAM_KEYS_PARAM
+from app.services.providers.strava.device_provenance import StravaProvenance, derive_provenance
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.timeseries_service import timeseries_service
 from app.utils.conversion import kilojoules_to_kcal
@@ -159,6 +161,11 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         if raw_workout.distance is not None:
             metrics["distance"] = Decimal(raw_workout.distance)
 
+        # Cadence (rpm / spm). Its presence also says a cadence sensor was paired,
+        # which device_provenance reads as a capability signal.
+        if raw_workout.average_cadence is not None:
+            metrics["average_cadence"] = Decimal(str(raw_workout.average_cadence))
+
         # Speed (m/s)
         if raw_workout.average_speed is not None:
             metrics["average_speed"] = Decimal(raw_workout.average_speed)
@@ -222,8 +229,14 @@ class StravaWorkouts(BaseWorkoutsTemplate):
 
         metrics = self._build_metrics(raw_workout)
 
-        source_name = raw_workout.device_name or "Strava"
-        device_model = raw_workout.device_name or ""
+        provenance = derive_provenance(raw_workout)
+
+        # None, not "": an empty string is a device_model as far as
+        # ensure_data_source is concerned, so it suppresses the fallback to the
+        # connection's device_label - the one mechanism that can name the hardware
+        # behind a Strava account whose uploads carry no device at all.
+        device_model = provenance.device_model
+        source_name = device_model or provenance.upload_source_label or "Strava"
 
         record = EventRecordCreate(
             category="workout",
@@ -236,7 +249,18 @@ class StravaWorkouts(BaseWorkoutsTemplate):
             zone_offset=zone_offset,
             id=workout_id,
             external_id=str(raw_workout.id),
-            source="strava",
+            # What wrote the data, which on an aggregator route is what `source`
+            # means everywhere else in this codebase. "strava" when nothing named an
+            # uploader, so rows ingested before this keep their key.
+            source=provenance.data_source_label,
+            # Explicit, because `source` is no longer the provider literal and
+            # ProviderName.from_source_string would read "Garmin Connect" as Garmin.
+            provider="strava",
+            identity_claims=claims_from_strava_activity(
+                raw_workout.device_name,
+                provenance.upload_source,
+                self._athlete_id(raw_workout),
+            ),
             user_id=user_id,
         )
 
@@ -245,7 +269,58 @@ class StravaWorkouts(BaseWorkoutsTemplate):
             **metrics,
         )
 
+        self._log_provenance(raw_workout, user_id, provenance)
+
         return record, detail
+
+    @staticmethod
+    def _athlete_id(raw_workout: StravaActivityJSON) -> str | None:
+        """The Strava athlete this activity belongs to, for scoping upload-source claims.
+
+        A study running one Strava account per wearable is exactly the case where two
+        of a user's connections both upload through Garmin Connect. Unscoped, their
+        upload-source claims collide on one device row; scoped by athlete they read as
+        two, which someone can merge.
+        """
+        athlete = raw_workout.athlete or {}
+        athlete_id = athlete.get("id") if isinstance(athlete, dict) else None
+        return str(athlete_id) if athlete_id is not None else None
+
+    def _log_provenance(
+        self,
+        raw_workout: StravaActivityJSON,
+        user_id: UUID,
+        provenance: StravaProvenance,
+    ) -> None:
+        """Report an upload this deployment receives but the pattern table cannot name.
+
+        Only that case is logged. What the derivation *did* conclude is already
+        durable - it is on the data source, the identity claims and the device
+        registry - whereas an upload name that matched nothing leaves no trace
+        anywhere, and Strava documents none of these formats. Without a line here the
+        table could only ever be extended by guessing.
+
+        Not logged per activity in the matched case on purpose: log_structured writes
+        straight to stdout regardless of level, and a backfill normalizes thousands.
+
+        Grep for ``strava_upload_source_unmapped`` and read ``unmapped_prefix``; see
+        ``device_provenance._PROVISIONAL_UPLOAD_RULES`` for where a rule goes.
+        """
+        unmapped = provenance.evidence.get("upload_source_prefix_unmapped")
+        if not unmapped:
+            return
+        log_structured(
+            self.logger,
+            "info",
+            "Strava upload source not recognised; activity left without a derived brand",
+            provider="strava",
+            action="strava_upload_source_unmapped",
+            activity_id=raw_workout.id,
+            user_id=str(user_id),
+            unmapped_prefix=unmapped,
+            device_model=provenance.device_model,
+            recording=provenance.recording.value,
+        )
 
     def _build_workout_samples(
         self,
@@ -255,8 +330,15 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         start_dt: datetime,
         zone_offset: str | None,
         device_model: str | None,
+        source: str,
     ) -> list[TimeSeriesSampleCreate]:
-        """Fetch full-fidelity Strava streams and normalize to TimeSeriesSampleCreate rows."""
+        """Fetch full-fidelity Strava streams and normalize to TimeSeriesSampleCreate rows.
+
+        ``device_model`` and ``source`` must be the same pair the workout record used:
+        a data source is keyed by (user, connection, model, source), so a stream that
+        disagrees with its own workout lands in a second data source and the samples
+        detach from the session they belong to.
+        """
         raw = self._make_api_request(
             db,
             user_id,
@@ -298,7 +380,11 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                     TimeSeriesSampleCreate(
                         id=uuid4(),
                         user_id=user_id,
-                        source="strava",
+                        source=source,
+                        # Explicit for the same reason the workout record sets it:
+                        # `source` may now be an uploader name, which
+                        # ProviderName.from_source_string would misread.
+                        provider="strava",
                         device_model=device_model,
                         recorded_at=recorded_at,
                         zone_offset=zone_offset,
@@ -325,7 +411,8 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                 activity.id,
                 record.start_datetime,
                 record.zone_offset,
-                activity.device_name or "",
+                record.device_model,
+                record.source or "strava",
             )
         except Exception as exc:
             log_and_capture_error(
@@ -409,6 +496,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
 
         count = 0
         for activity in parsed_activities:
+            activity = self._enrich_with_detail(db, user_id, activity)
             record, detail = self._normalize_workout(activity, user_id)
             created_record = event_record_service.create(db, record)
             detail_for_record = detail.model_copy(update={"record_id": created_record.id})
@@ -417,6 +505,59 @@ class StravaWorkouts(BaseWorkoutsTemplate):
             self._ingest_workout_streams(db, activity, user_id, record)
 
         return count
+
+    def _enrich_with_detail(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        activity: StravaActivityJSON,
+    ) -> StravaActivityJSON:
+        """Re-fetch a backfilled activity from the detail endpoint, or return it unchanged.
+
+        ``GET /athlete/activities`` returns SummaryActivity, which omits every field
+        that says what recorded the activity - ``device_name``, ``external_id``,
+        ``gear`` - along with ``calories``. Webhook arrivals already go through
+        ``GET /activities/{id}`` and carry all of it; backfilled ones do not, so
+        without this a historical import can never be attributed to a device, and the
+        derivation this module exists for silently returns nothing.
+
+        Costs one extra request per activity against Strava's per-application limit
+        (200/15 min, 2000/day on Standard Tier), which is why it is a setting. A
+        failure is not fatal: the summary activity is used as-is, so an exhausted
+        rate limit costs device attribution for that activity rather than the import.
+        """
+        if not settings.strava_enrich_activity_detail:
+            return activity
+        try:
+            detail = self.get_workout_detail_from_api(db, user_id, str(activity.id))
+        except Exception as exc:
+            log_structured(
+                self.logger,
+                "warning",
+                "Could not fetch Strava activity detail; falling back to summary",
+                provider="strava",
+                action="strava_detail_fetch_failed",
+                activity_id=activity.id,
+                user_id=str(user_id),
+                error=str(exc),
+            )
+            return activity
+        if not isinstance(detail, dict):
+            return activity
+        try:
+            return StravaActivityJSON(**detail)
+        except Exception as exc:
+            log_structured(
+                self.logger,
+                "warning",
+                "Could not parse Strava activity detail; falling back to summary",
+                provider="strava",
+                action="strava_detail_parse_failed",
+                activity_id=activity.id,
+                user_id=str(user_id),
+                error=str(exc),
+            )
+            return activity
 
     def process_push_activity(
         self,

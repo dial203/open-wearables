@@ -249,6 +249,47 @@ def claims_from_garmin_summary(summary_id: str | None) -> list[IdentityClaim]:
     return [claim] if claim else []
 
 
+def claims_from_strava_activity(
+    device_name: str | None,
+    upload_source: str | None,
+    athlete_id: str | None = None,
+) -> list[IdentityClaim]:
+    """Claims from one Strava activity's provenance metadata.
+
+    Strava carries other makers' data and keeps two traces of whose: ``device_name``,
+    which names the recorder when the uploading vendor supplied it, and
+    ``external_id``, from which
+    ``app/services/providers/strava/device_provenance.py`` derives the upload source.
+
+    ``device_name`` is already claimed as a MODEL_STRING by ``claims_from_data_source``
+    off ``data_source.device_model``, so it is not repeated here. What this adds is the
+    upload source, and it is deliberately WEAK and deliberately not a grouping kind.
+    "garmin_connect" is a sync channel: an athlete's Edge and Forerunner both arrive
+    through it, and grouping on it would pool two units into one with no symptom -
+    the merge ``detection.py`` exists to prevent.
+
+    The claim value is scoped by athlete where we know it, because a study running
+    several Strava accounts is precisely the case where one user holds two connections
+    that both upload via Garmin Connect. Unscoped, those two accounts' claims collide
+    on a single device. Scoped, they read as two, which someone can merge - the
+    recoverable direction.
+    """
+    if not upload_source:
+        return []
+    value = f"{upload_source}{WRITER_MODEL_SEPARATOR}{athlete_id}" if athlete_id else upload_source
+    claim = _claim(
+        ProviderName.STRAVA,
+        DeviceIdentityKind.STRAVA_UPLOAD_SOURCE,
+        value,
+        IdentityConfidence.WEAK,
+    )
+    # device_name is echoed only when it would otherwise be lost: a source whose
+    # device_model came from the connection's label still benefits from recording what
+    # Strava itself reported, and the kind makes clear it describes a model, not a unit.
+    model_claim = _claim(ProviderName.STRAVA, DeviceIdentityKind.MODEL_STRING, device_name, IdentityConfidence.WEAK)
+    return [c for c in (claim, model_claim) if c is not None]
+
+
 # Values that appear in `source` but name the integration rather than a writing app.
 # Google stamps every row with one constant (GOOGLE_HEALTH_API_SOURCE) regardless of
 # which app wrote it, so on that route the column carries no device information at all

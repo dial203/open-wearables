@@ -133,6 +133,12 @@ def infer_device_type_from_model(device_model: str | None) -> DeviceType:
     if any(x in model_lower for x in ["vantage", "grit x", "pacer", "ignite", "unite"]):
         return DeviceType.WATCH
 
+    # COROS patterns. Named because Strava reports these verbatim ("COROS PACE 3")
+    # and without them a COROS watch falls through to OTHER, which ranks it below
+    # every device whose modality is known when data priority resolves a conflict.
+    if any(x in model_lower for x in ["coros", "apex", "vertix", "pace 3", "pace pro"]):
+        return DeviceType.WATCH
+
     # Suunto patterns
     if any(x in model_lower for x in ["suunto", "vertical", "race", "peak"]):
         return DeviceType.WATCH
