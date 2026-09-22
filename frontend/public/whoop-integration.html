@@ -164,46 +164,61 @@
 
       <h2>1. Connecting a WHOOP account</h2>
       <figure>
-        <img src="whoop-screenshots/01-connect.png" alt="Provider connection screen with WHOOP listed as an available integration" />
+        <img src="whoop-screenshots/01-connect.png" alt="Provider connection screen listing WHOOP among the supported wearable platforms" />
         <figcaption>
           <h3>Provider connection screen</h3>
           <p class="cap">
-            The member chooses WHOOP from the list of supported providers. Selecting
-            it starts the OAuth 2.0 authorization code flow against
-            <code>api.prod.whoop.com</code>; no credentials are ever entered in this
-            application.
+            The member picks WHOOP from the platforms this deployment supports.
+            Each card shows whether an account is already linked. Selecting WHOOP
+            starts the OAuth 2.0 authorization code flow against
+            <code>api.prod.whoop.com</code>; no WHOOP credentials are ever entered
+            in this application.
           </p>
         </figcaption>
       </figure>
 
       <figure>
-        <img src="whoop-screenshots/02-authorize.png" alt="WHOOP authorization screen listing the requested scopes" />
+        <img src="whoop-screenshots/02-link-account.png" alt="Screen asking which WHOOP account is being linked and what it is used for, before redirecting to WHOOP" />
+        <figcaption>
+          <h3>Which account, and what for</h3>
+          <p class="cap">
+            Before the redirect, the member records which WHOOP account they are
+            about to sign in to and what it is for, so a linked account can always
+            be traced back to the right person and a study account is never
+            confused with an everyday one. Nothing is requested from WHOOP at this
+            point.
+          </p>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <img src="whoop-screenshots/03-authorize.png" alt="WHOOP's authorization screen listing the scopes openwearables is requesting" />
         <figcaption>
           <h3>WHOOP authorization</h3>
           <p class="cap">
-            WHOOP's own consent screen, showing the scopes being requested. The
-            member authorizes on WHOOP's domain and is returned to the registered
-            redirect URI, where the authorization code is exchanged for tokens
-            server-side.
+            WHOOP's own consent screen, itemising the scopes requested: cycles,
+            sleep, recovery, workout and body measurements. The member grants or
+            denies on WHOOP's domain and is returned to the registered redirect
+            URI, where the authorization code is exchanged for tokens server-side.
           </p>
         </figcaption>
       </figure>
 
       <figure>
-        <img src="whoop-screenshots/03-connection-status.png" alt="Connection management screen showing an active WHOOP connection with a disconnect control" />
+        <img src="whoop-screenshots/04-connected.png" alt="Confirmation screen showing the WHOOP connection active and syncing" />
         <figcaption>
-          <h3>Connection management and revocation</h3>
+          <h3>Connection confirmed</h3>
           <p class="cap">
-            Once connected, the member sees the connection status, when it last
-            synced, and a disconnect control that revokes the tokens and stops all
-            further data collection.
+            After the callback the member sees the connection is active and
+            syncing. Disconnecting from the connection list revokes the tokens and
+            stops all further data collection.
           </p>
         </figcaption>
       </figure>
 
       <h2>2. What the member sees</h2>
       <figure>
-        <img src="whoop-screenshots/04-compare-sources.webp" alt="Compare sources table showing one night's sleep metrics reported side by side by WHOOP and the member's other wearables" />
+        <img src="whoop-screenshots/05-compare-sources.webp" alt="Compare sources table showing one night's sleep metrics reported side by side by WHOOP and the member's other wearables" />
         <figcaption>
           <h3>One night, every source side by side</h3>
           <p class="cap">
@@ -233,7 +248,7 @@
       </figure>
 
       <figure>
-        <img src="whoop-screenshots/05-device-landscape.png" alt="Scatter plot placing each connected device on an accuracy axis and a trend-fidelity axis" />
+        <img src="whoop-screenshots/07-device-landscape.png" alt="Scatter plot placing each connected device on an accuracy axis and a trend-fidelity axis" />
         <figcaption>
           <h3>Where each connected device sits</h3>
           <p class="cap">
