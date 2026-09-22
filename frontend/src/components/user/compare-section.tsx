@@ -4,7 +4,9 @@ import { ChevronLeft, ChevronRight, Layers } from 'lucide-react';
 import {
   useSleepSummaries,
   useRecoverySummaries,
+  useSleepSessions,
 } from '@/hooks/api/use-health';
+import { Hypnogram, type HypnogramSeries } from './hypnogram';
 import { DataSourceInfo } from '@/components/common/data-source-info';
 import { useUserConnections } from '@/hooks/api/use-health';
 import { buildAccountMap } from '@/lib/utils/account';
@@ -12,6 +14,7 @@ import { SectionHeader } from '@/components/common/section-header';
 import { formatMinutes, parseApiDate } from '@/lib/utils/format';
 import type {
   RecoverySummary,
+  SleepSession,
   SleepSummary,
   SourceMetadata,
 } from '@/lib/api/types';
@@ -199,6 +202,13 @@ export function CompareSection({ userId }: CompareSectionProps) {
   const { data: recoveryData, isLoading: recoveryLoading } =
     useRecoverySummaries(userId, params);
 
+  // The summaries endpoint carries stage *totals* only. The per-night stage
+  // timeline lives on /events/sleep and is opt-in, so it needs its own fetch.
+  const { data: sessionData } = useSleepSessions(userId, {
+    ...params,
+    include: 'stages',
+  });
+
   const isLoading = sleepLoading || recoveryLoading;
 
   // Union of every source that reported sleep or recovery for this day.
@@ -244,6 +254,32 @@ export function CompareSection({ userId }: CompareSectionProps) {
       a.provider.localeCompare(b.provider)
     );
   }, [sleepData, recoveryData, dayKey]);
+
+  // One hypnogram row per source that staged this night. Keyed the same way as
+  // the table columns so a row and a column are the same device.
+  const hypnogramSeries = useMemo<HypnogramSeries[]>(() => {
+    const byKey = new Map<string, SleepSession>();
+    for (const s of sessionData?.data ?? []) {
+      if (!s.sleep_stage_intervals?.length) continue;
+      // Attributed to the morning you woke, matching the table above.
+      if (format(parseApiDate(s.end_time), 'yyyy-MM-dd') !== dayKey) continue;
+      const key = sourceKey(s.source);
+      const existing = byKey.get(key);
+      // Keep the main sleep period when a source also filed naps.
+      if (!existing || s.duration_seconds > existing.duration_seconds) {
+        byKey.set(key, s);
+      }
+    }
+    return [...byKey.values()]
+      .sort((a, b) =>
+        (a.source?.provider ?? '').localeCompare(b.source?.provider ?? '')
+      )
+      .map((s) => ({
+        key: sourceKey(s.source),
+        label: <DataSourceInfo source={s.source} accounts={accountMap} />,
+        stages: s.sleep_stage_intervals ?? [],
+      }));
+  }, [sessionData, dayKey, accountMap]);
 
   // Only show rows at least one source reported, and group them.
   const groups = useMemo(() => {
@@ -325,109 +361,125 @@ export function CompareSection({ userId }: CompareSectionProps) {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="border-b border-border/60">
-                  <th className="text-left font-medium text-xs text-muted-foreground uppercase tracking-wider py-2 pr-4 sticky left-0 bg-card/80 backdrop-blur-sm">
-                    Metric
-                  </th>
-                  {columns.map((col) => (
-                    <th
-                      key={col.key}
-                      className="text-right font-medium py-2 px-3 min-w-[120px]"
-                    >
-                      <div className="flex flex-col items-end gap-1">
-                        <DataSourceInfo
-                          source={col.source}
-                          accounts={accountMap}
-                        />
-                      </div>
+          <>
+            {hypnogramSeries.length > 0 && (
+              <div className="mb-8 pb-6 border-b border-border/40">
+                <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
+                  Sleep stages over the night
+                </h3>
+                <Hypnogram series={hypnogramSeries} />
+              </div>
+            )}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="border-b border-border/60">
+                    <th className="text-left font-medium text-xs text-muted-foreground uppercase tracking-wider py-2 pr-4 sticky left-0 bg-card/80 backdrop-blur-sm">
+                      Metric
                     </th>
-                  ))}
-                  {columns.length > 1 && (
-                    <th className="text-right font-medium text-xs text-muted-foreground uppercase tracking-wider py-2 pl-3 min-w-[90px]">
-                      Spread
-                    </th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {groups.map((group) => (
-                  <Fragment key={group.name}>
-                    <tr>
-                      <td
-                        colSpan={columns.length + (columns.length > 1 ? 2 : 1)}
-                        className="pt-4 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider sticky left-0"
+                    {columns.map((col) => (
+                      <th
+                        key={col.key}
+                        className="text-right font-medium py-2 px-3 min-w-[120px]"
                       >
-                        {group.name}
-                      </td>
-                    </tr>
-                    {group.rows.map((row) => {
-                      const values = columns.map((c) => row.getValue(c));
-                      const present = values.filter(
-                        (v): v is number => v !== null
-                      );
-                      const min = present.length ? Math.min(...present) : null;
-                      const max = present.length ? Math.max(...present) : null;
-                      const spread =
-                        present.length > 1 && min !== null && max !== null
-                          ? max - min
-                          : null;
-
-                      return (
-                        <tr
-                          key={`${group.name}-${row.label}`}
-                          className="border-b border-border/40 last:border-0 hover:bg-card/40 transition-colors"
+                        <div className="flex flex-col items-end gap-1">
+                          <DataSourceInfo
+                            source={col.source}
+                            accounts={accountMap}
+                          />
+                        </div>
+                      </th>
+                    ))}
+                    {columns.length > 1 && (
+                      <th className="text-right font-medium text-xs text-muted-foreground uppercase tracking-wider py-2 pl-3 min-w-[90px]">
+                        Spread
+                      </th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {groups.map((group) => (
+                    <Fragment key={group.name}>
+                      <tr>
+                        <td
+                          colSpan={
+                            columns.length + (columns.length > 1 ? 2 : 1)
+                          }
+                          className="pt-4 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider sticky left-0"
                         >
-                          <td className="py-2 pr-4 text-muted-foreground sticky left-0 bg-card/80 backdrop-blur-sm">
-                            {row.label}
-                          </td>
-                          {values.map((v, i) => {
-                            // Flag the extremes only when they're actually different.
-                            const isExtreme =
-                              spread !== null && spread > 0 && v !== null;
-                            const isMin = isExtreme && v === min;
-                            const isMax = isExtreme && v === max;
-                            return (
-                              <td
-                                key={columns[i].key}
-                                className={`py-2 px-3 text-right tabular-nums ${
-                                  v === null
-                                    ? 'text-muted-foreground/40'
-                                    : 'text-foreground'
-                                }`}
-                              >
-                                <span
-                                  className={
-                                    isMax
-                                      ? 'text-[hsl(var(--success-muted))]'
-                                      : isMin
-                                        ? 'text-sky-400'
-                                        : ''
-                                  }
-                                >
-                                  {row.format(v)}
-                                </span>
-                              </td>
-                            );
-                          })}
-                          {columns.length > 1 && (
-                            <td className="py-2 pl-3 text-right tabular-nums text-xs text-muted-foreground">
-                              {spread === null || spread === 0
-                                ? '—'
-                                : (row.formatSpread?.(spread) ??
-                                  String(Math.round(spread)))}
+                          {group.name}
+                        </td>
+                      </tr>
+                      {group.rows.map((row) => {
+                        const values = columns.map((c) => row.getValue(c));
+                        const present = values.filter(
+                          (v): v is number => v !== null
+                        );
+                        const min = present.length
+                          ? Math.min(...present)
+                          : null;
+                        const max = present.length
+                          ? Math.max(...present)
+                          : null;
+                        const spread =
+                          present.length > 1 && min !== null && max !== null
+                            ? max - min
+                            : null;
+
+                        return (
+                          <tr
+                            key={`${group.name}-${row.label}`}
+                            className="border-b border-border/40 last:border-0 hover:bg-card/40 transition-colors"
+                          >
+                            <td className="py-2 pr-4 text-muted-foreground sticky left-0 bg-card/80 backdrop-blur-sm">
+                              {row.label}
                             </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                            {values.map((v, i) => {
+                              // Flag the extremes only when they're actually different.
+                              const isExtreme =
+                                spread !== null && spread > 0 && v !== null;
+                              const isMin = isExtreme && v === min;
+                              const isMax = isExtreme && v === max;
+                              return (
+                                <td
+                                  key={columns[i].key}
+                                  className={`py-2 px-3 text-right tabular-nums ${
+                                    v === null
+                                      ? 'text-muted-foreground/40'
+                                      : 'text-foreground'
+                                  }`}
+                                >
+                                  <span
+                                    className={
+                                      isMax
+                                        ? 'text-[hsl(var(--success-muted))]'
+                                        : isMin
+                                          ? 'text-sky-400'
+                                          : ''
+                                    }
+                                  >
+                                    {row.format(v)}
+                                  </span>
+                                </td>
+                              );
+                            })}
+                            {columns.length > 1 && (
+                              <td className="py-2 pl-3 text-right tabular-nums text-xs text-muted-foreground">
+                                {spread === null || spread === 0
+                                  ? '—'
+                                  : (row.formatSpread?.(spread) ??
+                                    String(Math.round(spread)))}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
     </div>
