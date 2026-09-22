@@ -43,6 +43,131 @@ Strava is an activity-focused platform — it does not provide continuous health
 | **Webhooks (push)** | Strava sends real-time notifications for activity create/update/delete events, plus athlete deauthorization events |
 | **Polling (pull)** | Historical activity data can be fetched via the API |
 
+## Which device recorded the activity
+
+Strava is an aggregator: almost nothing on it was recorded by Strava. Open Wearables
+therefore derives the recorder from the activity metadata rather than filing
+everything under the platform. This matters most when one person connects several
+Strava accounts, each paired to a different wearable — the usual shape of a device
+validation study.
+
+### What the derivation reads
+
+| Field | What it gives |
+|-------|---------------|
+| `device_name` | The recorder's own name, e.g. `Garmin Forerunner 965`. The only field that names hardware. **Detail endpoint only.** |
+| `external_id` | The name the upload arrived under: `garmin_push_<id>` for a Garmin auto-sync, a file name for an upload, often absent. Evidence about the upload channel, never an identifier. |
+| `device_watts` | Whether power was measured by a meter or estimated by Strava. Both land in `average_watts`, and nothing downstream can tell them apart once stored. |
+| `trainer`, `sport_type` | Indoor trainer and virtual platform rides. |
+| `has_heartrate`, `average_cadence`, `average_temp`, `start_latlng` | Which sensors the recording actually carried. |
+| `manual` | Typed in by hand; no sensor involved. |
+
+### What it will and will not conclude
+
+- A name Strava reported for the hardware becomes the data source's `device_model`,
+  and the device registry groups on it.
+- An **upload source never becomes a device model**. `garmin_push` names a sync
+  channel, and one athlete's Edge and Forerunner both arrive through it; grouping on
+  it would pool two units into one. It is recorded as a weak identity claim
+  (`strava_upload_source`, scoped per athlete) and as the data source's brand.
+- When nothing names the hardware, `device_model` is left null so it falls back to
+  the connection's `device_label` — see below.
+
+### Naming the device behind an account
+
+Two fields, answering different questions. They are not alternatives, and which one
+you need depends on what Strava reported.
+
+`device_label` — **Strava reported no device.** The label fills in for it, on future
+syncs and on already-ingested device-less rows:
+
+```bash
+PATCH /api/v1/users/{user_id}/connections/accounts/{connection_id}
+{"device_label": "COROS PACE 3", "account_label": "P01 arm B", "account_type": "validation"}
+```
+
+`sensor_label` — **Strava reported the wrong thing.** `device_name` is the device that
+*uploaded*; a chest strap paired to that watch appears in no field Strava exposes
+(`gear` covers bikes and shoes only), and an activity with `has_heartrate` looks
+identical whether a strap or a wrist optical sensor produced it. So for the usual
+validation arrangement — an ECG strap as the reference, recorded through a watch — the
+reference instrument is invisible and its data arrives attributed to the wrist:
+
+```bash
+PATCH /api/v1/users/{user_id}/connections/accounts/{connection_id}
+{"sensor_label": "Polar H10", "account_label": "Gold standard HR", "account_type": "personal"}
+```
+
+With that set, the watch becomes the *recorder*: it moves to `device.host_model_raw`,
+the same place an aggregator's relaying handset goes, and the strap becomes the device
+— correctly typed as `chest_strap`, which is what ranks it above wrist optical sensors
+when priority resolves overlapping data. Nothing is destroyed: `data_source.device_model`
+still holds Strava's report verbatim.
+
+This is a declaration, not a detection. Nothing in the payload can be read to infer it,
+which is why it is a field a person fills.
+
+### One account per device
+
+A device's identity claims are keyed per user, so on most routes two accounts
+reporting the same model resolve to one device row. On Strava they do not: the model
+key is scoped to the connected athlete, because a study running an account per
+wearable with two devices of the same model would otherwise pool two units into one
+row with no visible symptom.
+
+The cost is the recoverable direction — one physical unit paired to two accounts in
+turn reads as two devices, which you merge deliberately via
+`POST /api/v1/users/{user_id}/devices/{id}/merge`.
+
+<Note>
+**Upgrading an existing database.** Strava device claims stored before this change are
+unscoped, so the first sync afterwards creates a duplicate device beside each existing
+one. Run the backfill once to rewrite them in place instead:
+
+```bash
+docker compose exec app uv run python scripts/data_migrations/scope_strava_model_claims_by_account.py
+docker compose exec app uv run python scripts/data_migrations/scope_strava_model_claims_by_account.py --apply
+```
+
+It reports any device whose Strava sources span more than one account and leaves it
+alone — each of those is either one unit shared between two logins or two units
+already pooled, and only you can tell which.
+</Note>
+
+### Historical backfill
+
+`GET /athlete/activities`, used for backfill, returns SummaryActivity — no
+`device_name`, no `external_id`, no `gear`, no `calories`. `STRAVA_ENRICH_ACTIVITY_DETAIL`
+(default `true`) re-fetches each backfilled activity from `GET /activities/{id}` so the
+derivation has something to work with. Webhook arrivals already use the detail
+endpoint and are unaffected.
+
+<Warning>
+Enrichment costs one extra request per backfilled activity against the
+**per-application** rate limit, which is shared across every connected athlete. For a
+large backfill across many athletes, set `STRAVA_ENRICH_ACTIVITY_DETAIL=false`; device
+derivation then applies to webhook arrivals only. A failed fetch (e.g. an exhausted
+rate limit) falls back to the summary activity — it costs attribution for that
+activity, never the import.
+</Warning>
+
+### Extending the upload-source table
+
+Strava does not document `external_id` formats, and its own developer forum notes the
+field "sometimes references a ping record, sometimes a FIT file, and sometimes is
+empty". Only the `garmin_push` / `garmin_ping` form is confirmed; the rest of the
+table in `app/services/providers/strava/device_provenance.py` is provisional.
+
+Unrecognised uploads are logged so a deployment can extend the table from its own
+traffic:
+
+```bash
+docker compose logs app | grep strava_upload_source_unmapped
+```
+
+Each line carries `unmapped_prefix` — the leading token of the `external_id` that
+matched nothing. Add a rule for it to `_PROVISIONAL_UPLOAD_RULES`.
+
 ## Developer tiers
 
 | Tier | Athletes | Rate limits | Subscription required |
@@ -100,6 +225,7 @@ STRAVA_CLIENT_SECRET=your-strava-client-secret
 STRAVA_REDIRECT_URI=http://localhost:8000/api/v1/oauth/strava/callback
 STRAVA_DEFAULT_SCOPE=activity:read_all,profile:read_all
 STRAVA_WEBHOOK_VERIFY_TOKEN=your-secret-verify-token
+STRAVA_ENRICH_ACTIVITY_DETAIL=true
 ```
 
     **Configuration details:**
@@ -111,6 +237,7 @@ STRAVA_WEBHOOK_VERIFY_TOKEN=your-secret-verify-token
     | `STRAVA_REDIRECT_URI` | Must match the callback domain you set in Strava. For local dev: `http://localhost:8000/api/v1/oauth/strava/callback` |
     | `STRAVA_DEFAULT_SCOPE` | OAuth scopes requested during authorization. Default `activity:read_all,profile:read_all` covers all activity data and athlete profile |
     | `STRAVA_WEBHOOK_VERIFY_TOKEN` | A secret string you choose. Strava will send this back during webhook subscription verification to confirm ownership. Pick something unique and hard to guess |
+| `STRAVA_ENRICH_ACTIVITY_DETAIL` | Re-fetch each backfilled activity from the detail endpoint so device metadata is available. Default `true`. Costs one extra request per activity against the per-application rate limit — see [Which device recorded the activity](#which-device-recorded-the-activity) |
 
   </Step>
 

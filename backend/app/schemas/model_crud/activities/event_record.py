@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -84,6 +84,19 @@ class EventRecordCreate(EventRecordBase):
     user_connection_id: UUID | None = None
     data_source_id: UUID | None = None
     software_version: str | None = None
+
+    # ``list[IdentityClaim]``: route-specific device evidence the provider pulled out
+    # of the raw payload, handed to ``DataSourceRepository.ensure_data_source``
+    # alongside the row. Not a column - ``EventRecordRepository._build_creation`` pops
+    # it before constructing the ORM object, the same way it pops provider and
+    # user_connection_id.
+    #
+    # It exists because some routes carry device signals nowhere near the three fields
+    # a data source is keyed by: Strava's upload provenance lives in ``external_id``,
+    # and without a channel like this it is parsed and thrown away. Typed ``Any``
+    # rather than IdentityClaim because that lives under app.services, and importing
+    # it from a schema closes a cycle through app.services.__init__.
+    identity_claims: list[Any] | None = Field(default=None, exclude=True, repr=False)
 
 
 class EventRecordUpdate(EventRecordBase):

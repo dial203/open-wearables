@@ -106,10 +106,25 @@ def garmin_summary_prefix(summary_id: str | None) -> str | None:
     return prefix or None
 
 
+def account_scoped_value(route: ProviderName | str, value: str, account_scope: str | None) -> str:
+    """A claim value narrowed to one account, on the routes that need it.
+
+    Same shape as an AGGREGATOR_WRITER_MODEL value, for the same reason: the bare key
+    is ambiguous, and the thing that disambiguates it is appended rather than replacing
+    it, so the model is still legible in the stored value.
+    """
+    route_value = getattr(route, "value", route)
+    if not account_scope or route_value not in ACCOUNT_SCOPED_MODEL_ROUTES:
+        return value
+    return f"{value}{WRITER_MODEL_SEPARATOR}{account_scope}"
+
+
 def grouping_claim(
     route: ProviderName | str,
     writer_id: str | None,
     model: str | None,
+    account_scope: str | None = None,
+    sensor_declared: bool = False,
 ) -> IdentityClaim | None:
     """The one claim that may group data sources within this route.
 
@@ -129,8 +144,12 @@ def grouping_claim(
     merged with no symptom. The pair over-splits instead: two hosts read as two
     devices, a person sees both and merges them, and nothing was pooled while they
     decided.
+
+    ``account_scope`` narrows the key to one connected account on the routes that need
+    it; see ACCOUNT_SCOPED_MODEL_ROUTES. ``sensor_declared`` says a person has told us
+    the reported model is the recorder rather than the unit - see relaying_host_model.
     """
-    host_model = relaying_host_model(route, model, writer_id)
+    host_model = relaying_host_model(route, model, writer_id, sensor_declared)
     writer = writer_id.strip() if writer_id else None
     cleaned_model = model.strip() if model else None
 
@@ -138,10 +157,20 @@ def grouping_claim(
         return _claim(
             route,
             DeviceIdentityKind.AGGREGATOR_WRITER_MODEL,
-            f"{writer}{WRITER_MODEL_SEPARATOR}{cleaned_model}",
+            account_scoped_value(route, f"{writer}{WRITER_MODEL_SEPARATOR}{cleaned_model}", account_scope),
             IdentityConfidence.WEAK,
         )
-    return _claim(route, DeviceIdentityKind.MODEL_STRING, cleaned_model, IdentityConfidence.WEAK)
+    # A declared sensor with nothing reported alongside it: there is no recorder to
+    # record as the host, so the declared unit is simply the unit.
+    key = writer if (sensor_declared and writer and not cleaned_model) else cleaned_model
+    if key is None:
+        return None
+    return _claim(
+        route,
+        DeviceIdentityKind.MODEL_STRING,
+        account_scoped_value(route, key, account_scope),
+        IdentityConfidence.WEAK,
+    )
 
 
 def claims_from_sdk_source(provider: ProviderName | str, source: Any) -> list[IdentityClaim]:
@@ -249,6 +278,47 @@ def claims_from_garmin_summary(summary_id: str | None) -> list[IdentityClaim]:
     return [claim] if claim else []
 
 
+def claims_from_strava_activity(
+    device_name: str | None,
+    upload_source: str | None,
+    athlete_id: str | None = None,
+) -> list[IdentityClaim]:
+    """Claims from one Strava activity's provenance metadata.
+
+    Strava carries other makers' data and keeps two traces of whose: ``device_name``,
+    which names the recorder when the uploading vendor supplied it, and
+    ``external_id``, from which
+    ``app/services/providers/strava/device_provenance.py`` derives the upload source.
+
+    ``device_name`` is already claimed as a MODEL_STRING by ``claims_from_data_source``
+    off ``data_source.device_model``, so it is not repeated here. What this adds is the
+    upload source, and it is deliberately WEAK and deliberately not a grouping kind.
+    "garmin_connect" is a sync channel: an athlete's Edge and Forerunner both arrive
+    through it, and grouping on it would pool two units into one with no symptom -
+    the merge ``detection.py`` exists to prevent.
+
+    The claim value is scoped by athlete where we know it, because a study running
+    several Strava accounts is precisely the case where one user holds two connections
+    that both upload via Garmin Connect. Unscoped, those two accounts' claims collide
+    on a single device. Scoped, they read as two, which someone can merge - the
+    recoverable direction.
+    """
+    if not upload_source:
+        return []
+    value = f"{upload_source}{WRITER_MODEL_SEPARATOR}{athlete_id}" if athlete_id else upload_source
+    claim = _claim(
+        ProviderName.STRAVA,
+        DeviceIdentityKind.STRAVA_UPLOAD_SOURCE,
+        value,
+        IdentityConfidence.WEAK,
+    )
+    # device_name is echoed only when it would otherwise be lost: a source whose
+    # device_model came from the connection's label still benefits from recording what
+    # Strava itself reported, and the kind makes clear it describes a model, not a unit.
+    model_claim = _claim(ProviderName.STRAVA, DeviceIdentityKind.MODEL_STRING, device_name, IdentityConfidence.WEAK)
+    return [c for c in (claim, model_claim) if c is not None]
+
+
 # Values that appear in `source` but name the integration rather than a writing app.
 # Google stamps every row with one constant (GOOGLE_HEALTH_API_SOURCE) regardless of
 # which app wrote it, so on that route the column carries no device information at all
@@ -287,6 +357,22 @@ WRITER_ID_ROUTES: frozenset[str] = frozenset(
 
 # The Android routes, whose writer id is a package name rather than a bundle id.
 _ANDROID_ROUTES: frozenset[str] = frozenset({ProviderName.HEALTH_CONNECT.value, ProviderName.GOOGLE_HEALTH.value})
+
+# Routes where two of one user's accounts reporting the same model are more likely to
+# be two units than one, so the model string groups only within an account.
+#
+# The within-route rule everywhere else - group on an exact model-string match -
+# "reproduces what a provider already asserts". That assertion holds for one account.
+# It stops holding the moment a user connects several: a validation study running a
+# Strava account per wearable, with two devices of the same model, gets one device row
+# and two units' data pooled into it. Pooling is the failure this package exists to
+# prevent, and unlike a split it leaves no symptom.
+#
+# Scoping over-splits instead - one physical unit shared by two accounts reads as two
+# devices, which a person merges. Deliberately not applied to every route: on a route
+# where a user holds a single account the scope is a constant, so it would only churn
+# existing claim values for no gain.
+ACCOUNT_SCOPED_MODEL_ROUTES: frozenset[str] = frozenset({ProviderName.STRAVA.value})
 
 # Writer ids belonging to the platform itself rather than to a third party. Data a
 # platform's own app writes about the phone it runs on genuinely came from that phone,
@@ -389,6 +475,7 @@ def relaying_host_model(
     provider: ProviderName | str,
     device_model: str | None,
     writer_id: str | None,
+    sensor_declared: bool = False,
 ) -> str | None:
     """The relaying phone's model, when a route's model string names the host not the unit.
 
@@ -408,9 +495,21 @@ def relaying_host_model(
     fires only on a relay route, only for a third-party writer, and only when the model
     names a phone. Firing wrongly costs an extra device that someone merges; not firing
     costs a merge nobody can see, so the doubt resolves toward firing.
+
+    ``sensor_declared`` is the one case that skips every test below, on any route. A
+    watch recording a chest strap is the same shape as a phone relaying a headband -
+    the reported model is the recorder, the real instrument is something else - but no
+    provider exposes it: Strava names the uploading watch and nothing at all about the
+    strap paired to it, and an activity with has_heartrate looks identical either way.
+    Nothing can be inferred, so a person declares it on the connection
+    (``user_connection.sensor_label``), and a declaration is not second-guessed.
     """
     provider_value = getattr(provider, "value", provider)
-    if provider_value not in WRITER_ID_ROUTES or not device_model or not writer_id:
+    if not device_model or not writer_id:
+        return None
+    if sensor_declared:
+        return device_model
+    if provider_value not in WRITER_ID_ROUTES:
         return None
     if not _is_writer_id(provider_value, writer_id):
         return None
@@ -436,12 +535,23 @@ def claims_from_data_source(
     provider: ProviderName | str,
     device_model: str | None,
     source: str | None,
+    account_scope: str | None = None,
+    declared_sensor: str | None = None,
 ) -> list[IdentityClaim]:
     """Baseline claims derivable from what every data source already stores.
 
     This is the floor, not the ceiling: it runs for every ingest path so that a
     device always has at least the model-string claim the backfill seeded, and the
     route-specific extractors above add whatever else that route affords.
+
+    ``account_scope`` identifies the connected account, for routes where one user
+    holds several and a shared model string would pool them; see
+    ACCOUNT_SCOPED_MODEL_ROUTES.
+
+    ``declared_sensor`` is a unit a person has said was worn under whatever the
+    provider named - a chest strap recorded through a watch. It takes the writer's
+    place, because on this row it plays the writer's part exactly: the thing that
+    produced the data, distinct from the hardware the provider reported.
     """
     provider_value = getattr(provider, "value", provider)
 
@@ -451,13 +561,17 @@ def claims_from_data_source(
     # devices on that route the same identity value - noise at best, and a grouping
     # key that means "same provider" if it were ever promoted.
     writer_id = source if source and _is_writer_id(provider_value, source) else None
+    if declared_sensor:
+        writer_id = declared_sensor
 
     # The grouping key. On a relay route the model names the host that ran the writing
     # app, so it is paired with the writer rather than claimed on its own; see
     # grouping_claim, and detection._resolve for what does the grouping.
-    claims: list[IdentityClaim | None] = [grouping_claim(provider, writer_id, device_model)]
+    claims: list[IdentityClaim | None] = [
+        grouping_claim(provider, writer_id, device_model, account_scope, bool(declared_sensor))
+    ]
 
-    if writer_id:
+    if writer_id and not declared_sensor:
         kind = (
             DeviceIdentityKind.HEALTH_CONNECT_PACKAGE
             if provider_value in _ANDROID_ROUTES

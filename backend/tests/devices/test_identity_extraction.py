@@ -226,3 +226,111 @@ class TestRelayingHost:
         assert _by_kind(claims, DeviceIdentityKind.MODEL_STRING) is None
         assert _by_kind(claims, DeviceIdentityKind.APPLE_PRODUCT_TYPE) is None
         assert _by_kind(claims, DeviceIdentityKind.HEALTHKIT_BUNDLE).value == "com.interaxon.muse"
+
+
+class TestAccountScopedModelStrings:
+    """One user, several accounts with one provider: a shared model is not a shared unit.
+
+    The within-route rule elsewhere - group on an exact model-string match -
+    reproduces what a provider asserts, and that assertion holds for one account. It
+    stops holding the moment a validation study runs an account per wearable: two
+    devices of the same model then collapse into one row, with two units' data pooled
+    into it and nothing on screen to say so.
+    """
+
+    def test_two_strava_accounts_do_not_share_a_model_key(self) -> None:
+        first = claims_from_data_source(ProviderName.STRAVA, "Garmin Forerunner 965", "Garmin Connect", "athlete_1")
+        second = claims_from_data_source(ProviderName.STRAVA, "Garmin Forerunner 965", "Garmin Connect", "athlete_2")
+
+        assert (
+            _by_kind(first, DeviceIdentityKind.MODEL_STRING).value
+            != _by_kind(  # type: ignore[union-attr]
+                second, DeviceIdentityKind.MODEL_STRING
+            ).value
+        )  # type: ignore[union-attr]
+
+    def test_one_account_keys_consistently_across_syncs(self) -> None:
+        first = claims_from_data_source(ProviderName.STRAVA, "Garmin Forerunner 965", "Garmin Connect", "athlete_1")
+        again = claims_from_data_source(ProviderName.STRAVA, "Garmin Forerunner 965", "Strava App", "athlete_1")
+
+        assert _by_kind(first, DeviceIdentityKind.MODEL_STRING) == _by_kind(again, DeviceIdentityKind.MODEL_STRING)
+
+    def test_the_model_stays_legible_in_the_key(self) -> None:
+        claim = _by_kind(
+            claims_from_data_source(ProviderName.STRAVA, "COROS PACE 3", "COROS", "athlete_9"),
+            DeviceIdentityKind.MODEL_STRING,
+        )
+
+        assert claim is not None
+        assert claim.value.startswith("COROS PACE 3")
+
+    def test_routes_that_are_not_account_scoped_are_untouched(self) -> None:
+        """Scoping every route would churn stored claim values for no gain."""
+        first = claims_from_data_source(ProviderName.GARMIN, "fenix 8", "garmin", "athlete_1")
+        second = claims_from_data_source(ProviderName.GARMIN, "fenix 8", "garmin", "athlete_2")
+
+        assert _by_kind(first, DeviceIdentityKind.MODEL_STRING) == _by_kind(second, DeviceIdentityKind.MODEL_STRING)
+
+    def test_no_scope_behaves_as_before(self) -> None:
+        claim = _by_kind(
+            claims_from_data_source(ProviderName.STRAVA, "COROS PACE 3", "COROS"),
+            DeviceIdentityKind.MODEL_STRING,
+        )
+
+        assert claim is not None
+        assert claim.value == "COROS PACE 3"
+
+
+class TestDeclaredSensor:
+    """A chest strap recorded through a watch, which no provider reports.
+
+    Strava names the device that uploaded and nothing about the strap paired to it;
+    an activity with heart rate looks identical whichever sensor produced it. So the
+    sensor is declared on the connection, and a declaration is not second-guessed.
+    """
+
+    def test_the_reported_model_becomes_the_recorder(self) -> None:
+        assert (
+            relaying_host_model(ProviderName.STRAVA, "Garmin Forerunner 965", "Polar H10", True)
+            == "Garmin Forerunner 965"
+        )
+
+    def test_without_a_declaration_strava_keeps_its_model(self) -> None:
+        """The relay inference is for phones on aggregator SDK routes, not for this."""
+        assert relaying_host_model(ProviderName.STRAVA, "Garmin Forerunner 965", "Polar H10") is None
+
+    def test_a_declaration_needs_something_to_have_been_reported(self) -> None:
+        assert relaying_host_model(ProviderName.STRAVA, None, "Polar H10", True) is None
+
+    def test_the_grouping_key_pairs_sensor_with_recorder(self) -> None:
+        claims = claims_from_data_source(
+            ProviderName.STRAVA, "Garmin Forerunner 965", "Garmin Connect", "athlete_1", "Polar H10"
+        )
+        claim = _by_kind(claims, DeviceIdentityKind.AGGREGATOR_WRITER_MODEL)
+
+        assert claim is not None
+        assert claim.value.startswith("Polar H10||Garmin Forerunner 965")
+
+    def test_a_sensor_with_no_recorder_is_simply_the_unit(self) -> None:
+        """Nothing was reported to be the recorder, so there is no host to record."""
+        claims = claims_from_data_source(ProviderName.STRAVA, None, "strava", "athlete_1", "Polar H10")
+        claim = _by_kind(claims, DeviceIdentityKind.MODEL_STRING)
+
+        assert claim is not None
+        assert claim.value.startswith("Polar H10")
+
+    def test_the_declaration_replaces_the_writer_rather_than_joining_it(self) -> None:
+        """Two writers on one row would key the same unit two ways across syncs."""
+        claims = claims_from_data_source(ProviderName.APPLE, "iPhone15,3", "com.ouraring.oura", None, "Polar H10")
+
+        assert _by_kind(claims, DeviceIdentityKind.HEALTHKIT_BUNDLE) is None
+        claim = _by_kind(claims, DeviceIdentityKind.AGGREGATOR_WRITER_MODEL)
+        assert claim is not None
+        assert claim.value == "Polar H10||iPhone15,3"
+
+    def test_every_claim_stays_weak(self) -> None:
+        claims = claims_from_data_source(
+            ProviderName.STRAVA, "Garmin Forerunner 965", "Garmin Connect", "athlete_1", "Polar H10"
+        )
+
+        assert all(c.confidence is IdentityConfidence.WEAK for c in claims)

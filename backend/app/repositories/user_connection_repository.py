@@ -520,10 +520,12 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         account_label: str | None = None,
         account_email: str | None = None,
         device_label: str | None = None,
+        sensor_label: str | None = None,
         clear_account_type: bool = False,
         clear_account_label: bool = False,
         clear_account_email: bool = False,
         clear_device_label: bool = False,
+        clear_sensor_label: bool = False,
     ) -> UserConnection:
         """Rename an account or correct the e-mail / device recorded against it.
 
@@ -540,6 +542,8 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
             connection.account_email = None if clear_account_email else (account_email or "").strip() or None
         if device_label is not None or clear_device_label:
             connection.device_label = None if clear_device_label else device_label
+        if sensor_label is not None or clear_sensor_label:
+            connection.sensor_label = None if clear_sensor_label else sensor_label
         connection.updated_at = datetime.now(timezone.utc)
         db_session.add(connection)
         db_session.commit()

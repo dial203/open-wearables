@@ -89,6 +89,7 @@ class EventRecordRepository(
                 source=creator.source,
                 software_version=creator.software_version,
                 original_source_name=creator.source,
+                identity_claims=creator.identity_claims,
             )
             data_source_id = data_source.id
 
@@ -101,6 +102,8 @@ class EventRecordRepository(
             "provider",
             "user_connection_id",
             "software_version",
+            # Consumed by ensure_data_source above; never a column on event_record.
+            "identity_claims",
         ):
             creation_data.pop(redundant_key, None)
         return data_source_id, self.model(**creation_data)

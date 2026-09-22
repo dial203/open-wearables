@@ -141,10 +141,12 @@ class UserConnectionService(
             account_label=payload.account_label,
             account_email=str(payload.account_email) if payload.account_email is not None else None,
             device_label=payload.device_label,
+            sensor_label=payload.sensor_label,
             clear_account_type="account_type" in fields_set and payload.account_type is None,
             clear_account_label="account_label" in fields_set and payload.account_label is None,
             clear_account_email="account_email" in fields_set and payload.account_email is None,
             clear_device_label="device_label" in fields_set and payload.device_label is None,
+            clear_sensor_label="sensor_label" in fields_set and payload.sensor_label is None,
         )
 
         # A device label is also stamped onto already-ingested, device-less data

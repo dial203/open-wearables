@@ -27,6 +27,7 @@ WORKOUT_FIELDS: frozenset[str] = frozenset(
         "distance",
         "average_speed",
         "max_speed",
+        "average_cadence",
         "average_watts",
         "max_watts",
         "total_elevation_gain",

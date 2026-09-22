@@ -13,7 +13,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models import DataSource, Device, DeviceIdentity, User
+from app.models import DataSource, Device, DeviceIdentity, User, UserConnection
 from app.repositories.data_source_repository import DataSourceRepository
 from app.repositories.device_repository import DeviceRepository
 from app.schemas.enums import (
@@ -25,6 +25,7 @@ from app.schemas.enums import (
 )
 from app.services.devices.detection import DeviceDetectionService
 from app.services.devices.identity import IdentityClaim
+from tests.factories import UserConnectionFactory
 
 
 @pytest.fixture
@@ -51,6 +52,43 @@ def _ensure(
         device_model=device_model,
         source=source,
         identity_claims=claims,
+    )
+
+
+def _connection(
+    db: Session,
+    user: User,
+    provider: ProviderName,
+    *,
+    athlete_id: str,
+    sensor_label: str | None = None,
+) -> UserConnection:
+    """One connected account, as a study running an account per wearable would have."""
+    connection = UserConnectionFactory(
+        user=user,
+        provider=provider.value,
+        provider_user_id=athlete_id,
+        sensor_label=sensor_label,
+    )
+    db.flush()
+    return connection
+
+
+def _ensure_for(
+    db: Session,
+    user: User,
+    provider: ProviderName,
+    connection: UserConnection,
+    device_model: str | None,
+    source: str | None,
+) -> DataSource:
+    return DataSourceRepository().ensure_data_source(
+        db,
+        user_id=user.id,
+        provider=provider,
+        user_connection_id=connection.id,
+        device_model=device_model,
+        source=source,
     )
 
 
@@ -353,3 +391,111 @@ class TestDeliberateDetachment:
 
         assert resolved is not None
         assert source.device_id == resolved.id
+
+
+class TestAccountScopedGrouping:
+    """Several Strava accounts under one user, which is how a validation arm is run.
+
+    Grouping on the bare model string reproduces what a provider asserts, and that
+    holds while a user has one account. With several it silently pools two units of
+    the same model, which is the merge this module exists to prevent.
+    """
+
+    def test_two_accounts_with_the_same_model_stay_apart(self, db: Session, user: User) -> None:
+        left = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_1")
+        right = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_2")
+
+        first = _ensure_for(db, user, ProviderName.STRAVA, left, "Apple Watch Series 9", "Strava App")
+        second = _ensure_for(db, user, ProviderName.STRAVA, right, "Apple Watch Series 9", "Strava App")
+
+        assert first.device_id is not None
+        assert second.device_id is not None
+        assert first.device_id != second.device_id
+        assert len(_devices(db, user)) == 2
+
+    def test_one_account_still_groups_its_own_sources(self, db: Session, user: User) -> None:
+        """Over-splitting per account must not become over-splitting per sync."""
+        connection = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_1")
+
+        first = _ensure_for(db, user, ProviderName.STRAVA, connection, "COROS PACE 3", "COROS")
+        second = _ensure_for(db, user, ProviderName.STRAVA, connection, "COROS PACE 3", "File upload")
+
+        assert first.device_id == second.device_id
+        assert len(_devices(db, user)) == 1
+
+    def test_other_routes_keep_grouping_across_accounts(self, db: Session, user: User) -> None:
+        left = _connection(db, user, ProviderName.GARMIN, athlete_id="garmin_1")
+        right = _connection(db, user, ProviderName.GARMIN, athlete_id="garmin_2")
+
+        first = _ensure_for(db, user, ProviderName.GARMIN, left, "fenix 8", "garmin")
+        second = _ensure_for(db, user, ProviderName.GARMIN, right, "fenix 8", "garmin")
+
+        assert first.device_id == second.device_id
+
+
+class TestDeclaredSensor:
+    """The reference instrument no provider names.
+
+    Strava reports the watch that uploaded; a chest strap paired to it appears in no
+    field, and an activity with heart rate looks the same either way. Declaring it on
+    the connection is the only way the reference is nameable at all.
+    """
+
+    def test_the_strap_becomes_the_device_and_the_watch_its_host(self, db: Session, user: User) -> None:
+        connection = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_1", sensor_label="Polar H10")
+
+        source = _ensure_for(db, user, ProviderName.STRAVA, connection, "Garmin Forerunner 965", "Garmin Connect")
+
+        device = DeviceRepository().get(db, source.device_id)
+        assert device is not None
+        assert device.host_model_raw == "Garmin Forerunner 965"
+        # Never written where it would read as this unit's own model.
+        assert device.model_raw is None
+        assert device.label == "Polar H10"
+        assert device.device_type == DeviceType.CHEST_STRAP
+
+    def test_the_providers_report_survives_on_the_data_source(self, db: Session, user: User) -> None:
+        """A declaration reinterprets the report; it must not erase it."""
+        connection = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_1", sensor_label="Polar H10")
+
+        source = _ensure_for(db, user, ProviderName.STRAVA, connection, "Garmin Forerunner 965", "Garmin Connect")
+
+        assert source.device_model == "Garmin Forerunner 965"
+
+    def test_the_source_is_typed_by_the_sensor_not_the_recorder(self, db: Session, user: User) -> None:
+        """device_type ranks sources against each other, so the wrong one demotes the reference."""
+        connection = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_1", sensor_label="Polar H10")
+
+        source = _ensure_for(db, user, ProviderName.STRAVA, connection, "Garmin Forerunner 965", "Garmin Connect")
+
+        assert source.device_type == DeviceType.CHEST_STRAP
+
+    def test_an_account_without_a_declaration_is_unaffected(self, db: Session, user: User) -> None:
+        connection = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_2")
+
+        source = _ensure_for(db, user, ProviderName.STRAVA, connection, "Garmin Forerunner 965", "Garmin Connect")
+
+        device = DeviceRepository().get(db, source.device_id)
+        assert device is not None
+        assert device.model_raw == "Garmin Forerunner 965"
+        assert device.host_model_raw is None
+
+    def test_one_account_declared_does_not_reclassify_another(self, db: Session, user: User) -> None:
+        """The gold-standard account and a validation account, same watch model."""
+        reference = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_1", sensor_label="Polar H10")
+        validation = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_2")
+
+        gold = _ensure_for(db, user, ProviderName.STRAVA, reference, "Garmin Forerunner 965", "Garmin Connect")
+        other = _ensure_for(db, user, ProviderName.STRAVA, validation, "Garmin Forerunner 965", "Garmin Connect")
+
+        assert gold.device_id != other.device_id
+        assert gold.device_type == DeviceType.CHEST_STRAP
+        assert other.device_type == DeviceType.WATCH
+
+    def test_a_declaration_the_type_tables_do_not_recognise_falls_through(self, db: Session, user: User) -> None:
+        """A free-text note must not flatten a perfectly good model string to unknown."""
+        connection = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_3", sensor_label="reference strap")
+
+        source = _ensure_for(db, user, ProviderName.STRAVA, connection, "Garmin Forerunner 965", "Garmin Connect")
+
+        assert source.device_type == DeviceType.WATCH

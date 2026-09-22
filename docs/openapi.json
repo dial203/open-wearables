@@ -774,7 +774,7 @@
           "External: Connections"
         ],
         "summary": "Update Connection Account Endpoint",
-        "description": "Rename a connected account, or correct its e-mail or the device behind it.\n\nFields absent from the body are left alone; sending an explicit ``null``\nclears one. Setting ``device_label`` also stamps it onto this account's\nalready-ingested, device-less data sources, so history and future samples\nagree on what was worn.",
+        "description": "Rename a connected account, or correct its e-mail or the device behind it.\n\nFields absent from the body are left alone; sending an explicit ``null``\nclears one. Setting ``device_label`` also stamps it onto this account's\nalready-ingested, device-less data sources, so history and future samples\nagree on what was worn.\n\n``device_label`` and ``sensor_label`` answer different questions and are not\nalternatives. The first names hardware the provider never reported at all, and\nis only consulted when nothing was. The second says that what the provider *did*\nreport is the recorder rather than the unit - the watch a chest strap was paired\nto - and applies whether or not a model came through.",
         "operationId": "update_connection_account_endpoint_api_v1_users__user_id__connections_accounts__connection_id__patch",
         "security": [
           {
@@ -20223,6 +20223,19 @@
             ],
             "title": "Device Label",
             "description": "Device behind this account, e.g. \"Whoop 5.0\""
+          },
+          "sensor_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensor Label",
+            "description": "A sensor worn under the device this provider names, e.g. \"Polar H10\" on an account whose activities are recorded by a watch. Strava reports the device that uploaded and nothing about a strap paired to it, so this is declared rather than detected. When set, the reported model becomes the recorder (device.host_model_raw) and this names the unit."
           }
         },
         "additionalProperties": false,
@@ -20351,6 +20364,17 @@
               }
             ],
             "title": "Device Label"
+          },
+          "sensor_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensor Label"
           },
           "status": {
             "$ref": "#/components/schemas/ConnectionStatus"
