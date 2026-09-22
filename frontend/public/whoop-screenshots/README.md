@@ -14,12 +14,13 @@ still being collected.
 | `03-connection-status.png` | Connection management view: active WHOOP connection, last sync, disconnect control | pending |
 | `04-compare-sources.webp` | One night's sleep metrics from WHOOP next to every other source | done |
 | `05-device-landscape.png` | Accuracy vs trend fidelity across connected devices | done |
-| `06-whoop-agreement.png` | WHOOP 5.0 heart rate vs reference standard, scatter + Bland-Altman | done |
+| `06-whoop-agreement.png` | WHOOP 5.0 vs Polar H10: pooled agreement, per-participant table, night-by-night error | done |
 
 Before capturing:
 
-- Use your own WHOOP account or a demo user. No participant names, emails or
-  user IDs may be visible — blur anything identifying.
+- Use your own WHOOP account or a demo user. No participant names, initials,
+  emails or user IDs may be visible. `06-whoop-agreement.png` was captured with
+  participants relabelled P01-P04; keep that convention for any recapture.
 - WHOOP must be visibly attributed as the source in every view that displays
   WHOOP-derived metrics.
 - Capture at a consistent window width so the page reads as one set.
