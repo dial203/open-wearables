@@ -115,6 +115,60 @@ The API uses different response formats depending on the endpoint type:
 }
 ```
 
+#### Declared cadence on timeseries reads
+
+`GET /users/{user_id}/timeseries` adds a `metadata.series` block: one entry per
+(data source, series type) present in `data`, stating the cadence that response
+actually carries.
+
+```json
+"metadata": {
+  "resolution": "raw",
+  "sample_count": 5033,
+  "series": [
+    {
+      "data_source_id": "7a8f2b69-deb1-4891-9253-c4f0987b1a9d",
+      "type": "heart_rate",
+      "n": 5033,
+      "start": "2026-09-20T00:01:00Z",
+      "end": "2026-09-20T01:25:50Z",
+      "interval_s_median": 1.0,
+      "resolution_class": "per_second",
+      "complete": true,
+      "server_aggregated": false
+    }
+  ]
+}
+```
+
+Every value is measured from the samples being returned, never read off a
+capability table — a stale table is how a ten-minute series gets labelled
+per-second. `resolution_class` buckets `interval_s_median` as `beat_to_beat`
+(inter-beat intervals, where the heartbeat sets the cadence rather than a clock)
+· `per_second` (≤1.5 s) · `sub_minute` (≤60 s) · `minute` (≤300 s) · `coarse`
+(>300 s).
+
+This matters most for agreement and validation work, where a 6-second trace and
+a 1-second trace are different instruments: resampling one onto the other's grid
+manufactures autocorrelation and narrows the limits of agreement, so the
+agreement looks better than it is. Two sources on the same wrist routinely
+differ — an Apple Watch writing every 5 s and a chest strap at 1 Hz — and
+nothing else in the payload distinguishes them.
+
+Three things to read carefully:
+
+- `interval_s_median` is **null** when a series has fewer than two samples in
+  the response. One reading has no spacing, and inventing one would be the
+  failure this block exists to prevent.
+- `complete` is `false` whenever the page was truncated, for *every* series on
+  it. Which series the cut fell in is not knowable from the page alone, so the
+  flag is deliberately conservative — follow `pagination.next_cursor` for the
+  rest.
+- `server_aggregated` is `true` when `resolution` asked for bucketing, so the
+  spacing is the bucket width that was requested rather than what upstream
+  recorded. On the default `raw` read it is `false` and the spacing is
+  upstream's own.
+
 ### Error Response
 
 ```json

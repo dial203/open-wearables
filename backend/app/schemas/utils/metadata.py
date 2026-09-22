@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, computed_field
 
 from app.constants.devices_map import resolve_device_name
-from app.schemas.enums import DeviceType, Resolution
+from app.schemas.enums import DeviceType, Resolution, ResolutionClass, SeriesType
 from app.utils.device_naming import device_display_name
 
 
@@ -172,11 +172,71 @@ class RelayDedupMetadata(BaseModel):
     hidden: list[HiddenRelayInfo] = Field(default_factory=list)
 
 
+class SeriesDescriptor(BaseModel):
+    """What one (data source, series type) pair on this page actually is.
+
+    A series with an unstated cadence cannot be used for agreement work: a 6-second
+    trace and a 1-second trace are different instruments, and resampling one onto
+    the other's grid narrows the limits of agreement by roughly the square root of
+    the oversampling factor - the agreement looks better than it is. So every series
+    this API returns says what it measured like.
+
+    Every field here is derived from the samples *in this response*, never from a
+    capability table. A stale capability table is how a ten-minute series gets
+    labelled per-second.
+    """
+
+    data_source_id: UUID | None = Field(
+        None,
+        description="The data source these samples came from. Join to `data[].source.data_source_id`.",
+    )
+    type: SeriesType = Field(description="The series type this describes.")
+    n: int = Field(description="How many samples of this series are in this response.")
+    start: datetime | None = Field(None, description="First sample's timestamp, offset-aware.")
+    end: datetime | None = Field(None, description="Last sample's timestamp, offset-aware.")
+    interval_s_median: float | None = Field(
+        None,
+        description=(
+            "Median seconds between consecutive samples, measured across the samples returned. "
+            "Null when fewer than two samples are present, which is not enough to measure a cadence."
+        ),
+        example=1.0,
+    )
+    resolution_class: ResolutionClass | None = Field(
+        None,
+        description=(
+            "`interval_s_median` bucketed: beat_to_beat | per_second (<=1.5s) | sub_minute (<=60s) "
+            "| minute (<=300s) | coarse (>300s). Null when the cadence could not be measured."
+        ),
+    )
+    complete: bool = Field(
+        description=(
+            "False when this page was truncated, so more of this series may follow the cursor. "
+            "Conservative: a truncated page sets it false for every series on the page, because "
+            "which series the cut fell in is not knowable from the page itself."
+        ),
+    )
+    server_aggregated: bool = Field(
+        description=(
+            "True when `resolution` asked for server-side bucketing, so the spacing above is the "
+            "bucket width that was requested and not the cadence upstream actually recorded. "
+            "False on the default `raw` read, where the spacing is upstream's own."
+        ),
+    )
+
+
 class TimeseriesMetadata(BaseModel):
     resolution: Resolution | None = None
     sample_count: int | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None
+    series: list[SeriesDescriptor] | None = Field(
+        None,
+        description=(
+            "One entry per (data source, series type) present in `data`, stating the cadence that "
+            "was actually returned. Null only when the response carries no samples."
+        ),
+    )
     relay_dedup: RelayDedupMetadata | None = Field(
         None,
         description=(

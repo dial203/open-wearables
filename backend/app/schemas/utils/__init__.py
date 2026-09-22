@@ -7,6 +7,7 @@ from .archival import (
 from .metadata import (
     HiddenRelayInfo,
     RelayDedupMetadata,
+    SeriesDescriptor,
     SourceMetadata,
     TimeseriesMetadata,
 )
@@ -34,6 +35,7 @@ __all__ = [
     # Metadata
     "HiddenRelayInfo",
     "RelayDedupMetadata",
+    "SeriesDescriptor",
     "SourceMetadata",
     "TimeseriesMetadata",
 ]

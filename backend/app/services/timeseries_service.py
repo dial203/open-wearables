@@ -3,6 +3,7 @@ from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 from logging import Logger, getLogger
+from statistics import median
 from typing import Any
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from app.repositories.data_point_series_repository import AggregatedSample, Writ
 from app.schemas.enums import (
     Resolution,
     SeriesType,
+    classify_interval,
     get_series_type_from_id,
     get_series_type_id,
     get_series_type_unit,
@@ -31,6 +33,7 @@ from app.schemas.responses.activity import TimeSeriesSample
 from app.schemas.utils import (
     PaginatedResponse,
     Pagination,
+    SeriesDescriptor,
     SourceMetadata,
     TimeseriesMetadata,
 )
@@ -87,6 +90,60 @@ def _to_sample(
     )
 
 
+# Series whose samples are inter-beat intervals rather than clocked readings: their
+# cadence is the heartbeat, so they are classified by what they are and not by how
+# far apart the beats happened to fall.
+_INTERBEAT_SERIES: frozenset[SeriesType] = frozenset({SeriesType.rr_interval, SeriesType.pulse_to_pulse_interval})
+
+
+def _describe_series(
+    data: list[TimeSeriesSample],
+    truncated: bool,
+    server_aggregated: bool,
+) -> list[SeriesDescriptor] | None:
+    """Measure what each (data source, series type) in this response actually is.
+
+    Measured here rather than read off a capability table on purpose: the table is
+    what the provider is believed to do, and a stale one is how a ten-minute series
+    ends up labelled per-second. This describes the samples being handed over, which
+    is the only claim the response can actually stand behind.
+    """
+    if not data:
+        return None
+
+    timestamps_by_series: dict[tuple[UUID | None, SeriesType], list[datetime]] = defaultdict(list)
+    for sample in data:
+        source_id = sample.source.data_source_id if sample.source else None
+        timestamps_by_series[(source_id, sample.type)].append(sample.timestamp)
+
+    descriptors: list[SeriesDescriptor] = []
+    for (source_id, series_type), timestamps in timestamps_by_series.items():
+        timestamps.sort()
+        gaps = [(later - earlier).total_seconds() for earlier, later in zip(timestamps, timestamps[1:], strict=False)]
+        # One sample is a reading, not a cadence. Reporting a made-up interval for it
+        # would be the exact failure this block exists to prevent.
+        interval = round(median(gaps), 3) if gaps else None
+        descriptors.append(
+            SeriesDescriptor(
+                data_source_id=source_id,
+                type=series_type,
+                n=len(timestamps),
+                start=timestamps[0],
+                end=timestamps[-1],
+                interval_s_median=interval,
+                resolution_class=(
+                    classify_interval(interval, interbeat=series_type in _INTERBEAT_SERIES)
+                    if interval is not None
+                    else None
+                ),
+                complete=not truncated,
+                server_aggregated=server_aggregated,
+            )
+        )
+    descriptors.sort(key=lambda d: (d.type.value, str(d.data_source_id)))
+    return descriptors
+
+
 def _page(
     data: list[TimeSeriesSample],
     params: TimeSeriesQueryParams,
@@ -109,6 +166,11 @@ def _page(
             sample_count=len(data),
             start_time=params.start_datetime,
             end_time=params.end_datetime,
+            series=_describe_series(
+                data,
+                truncated=has_more,
+                server_aggregated=params.resolution is not Resolution.RAW,
+            ),
             relay_dedup=relay_dedup_metadata(relay_plan),
         ),
     )

@@ -309,3 +309,42 @@ Template:
   This fixes the split going forward. Rows already forked stay forked; merging
   them is a separate, opt-in repair, because it has to drop one side of every
   colliding second and that is not something a migration should do unasked.
+
+## Every timeseries series declares the cadence it actually returned
+
+- **Area**: backend, docs
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: `resolution=raw` returns stored samples untouched, which is correct, but
+  nothing in the response said what those samples measured like. A consumer could
+  not tell a per-second trace from a ten-minute one without counting samples and
+  guessing the span, and the same physical watch can arrive on three roads at three
+  cadences (activity ~1 Hz, daily wellness 15 s, relayed through an aggregator
+  ~2 min) with nothing in the payload distinguishing them.
+
+  That is fatal specifically for agreement work. A six-second series and a
+  one-second series are different instruments; resampling one onto the other's grid
+  manufactures autocorrelation and narrows the limits of agreement by roughly
+  √(oversampling factor), so the agreement looks better than it is. The failure is
+  silent — the numbers come out, they are just wrong.
+
+  `metadata.series` now carries one entry per (data source, series type) in the
+  response: `n`, `start`, `end`, `interval_s_median`, `resolution_class`,
+  `complete`, `server_aggregated`. Purely additive, no migration, and the default
+  read is unchanged.
+
+  Measured from the samples being returned rather than from a per-provider
+  capability table, deliberately: a stale table is exactly how a ten-minute series
+  ends up labelled per-second, and the table would have to be right for every
+  provider on every road forever. Three consequences of measuring are stated in the
+  response rather than hidden: fewer than two samples reports a null interval
+  instead of a guess; a truncated page marks every series incomplete, because which
+  series the cut fell in is not knowable from the page; and a server-bucketed read
+  says so, so a requested bucket width is never mistaken for upstream's own cadence.
+
+  `resolution_class` thresholds (per_second ≤1.5 s, sub_minute ≤60 s, minute ≤300 s,
+  coarse above) come from the consuming study's spec. `beat_to_beat` is not a
+  threshold: it names a series of inter-beat intervals, where the heartbeat sets the
+  cadence. Whether those came from an ECG strap or an optical sensor stays in the
+  series type (`rr_interval` vs `pulse_to_pulse_interval`), because that is
+  provenance, not resolution.

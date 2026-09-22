@@ -13,6 +13,8 @@ from .data_granularity import (
     GRANULARITY_WINDOW_SECONDS,
     DataGranularity,
     Resolution,
+    ResolutionClass,
+    classify_interval,
 )
 from .device_registry import (
     STRONG_IDENTITY_KINDS,
@@ -82,6 +84,8 @@ __all__ = [
     "daily_total_flag",
     "DataGranularity",
     "Resolution",
+    "ResolutionClass",
+    "classify_interval",
     "BUCKET_SIZES",
     "GRANULARITY_WINDOW_SECONDS",
     "EntrySource",
