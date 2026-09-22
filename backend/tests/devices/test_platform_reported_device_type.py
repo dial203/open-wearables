@@ -75,6 +75,10 @@ class TestTheReportCorrectsARelayedStream:
 
         _resolve(db, source, DeviceType.RING)
 
+        # Both rows: the data source is the ingest fingerprint, the device is what a
+        # person reads in the list. The device is created from the writing app's name,
+        # which for a package id like this one names no body part at all, so without
+        # the report it stays UNKNOWN however well the source is classified.
         assert source.device_type == DeviceType.RING.value
         assert DeviceRepository().get(db, source.device_id).device_type == DeviceType.RING.value
 
@@ -149,6 +153,21 @@ class TestPrecedence:
         _resolve(db, source, DeviceType.HEADBAND)
 
         assert source.device_type == DeviceType.EEG.value
+
+    def test_a_type_the_device_already_has_is_not_overwritten(self, db: Session, user: User) -> None:
+        """Detection proposes; a person decides. A set type is a decision.
+
+        Only a blank is filled - and nobody sets a type to "unknown" on purpose,
+        which is what makes UNKNOWN safe to treat as unset.
+        """
+        source = _ensure(db, user, ProviderName.HEALTH_CONNECT, "Pixel 9 Pro", "com.ultrahuman.app")
+        _resolve(db, source, DeviceType.RING)
+        device = DeviceRepository().get(db, source.device_id)
+        DeviceRepository().update_fields(db, device, {"device_type": DeviceType.CHEST_STRAP.value}, actor="tester")
+
+        _resolve(db, source, DeviceType.RING)
+
+        assert DeviceRepository().get(db, source.device_id).device_type == DeviceType.CHEST_STRAP.value
 
     def test_declaring_nothing_leaves_inference_alone(self, db: Session, user: User) -> None:
         """Apple syncs pass None here, and must not be downgraded by it."""

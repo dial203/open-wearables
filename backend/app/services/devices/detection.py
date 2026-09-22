@@ -155,6 +155,8 @@ class DeviceDetectionService:
                 actor=actor,
             )
 
+        self._fill_unknown_device_type(db_session, device, reported_device_type, actor)
+
         self.repo.touch_seen(db_session, device)
         if already is None:
             self.repo.attach_data_source(
@@ -231,6 +233,42 @@ class DeviceDetectionService:
 
         object.__setattr__(data_source, "device_type", resolved.value)
         db_session.flush()
+
+    def _fill_unknown_device_type(
+        self,
+        db_session: DbSession,
+        device: Device,
+        reported: DeviceType | None,
+        actor: str,
+    ) -> None:
+        """Give an unclassified device the type the platform declared for it.
+
+        The data source carries the classification either way, but the device is what
+        a person reads in the list, and a relayed stream is exactly the case where it
+        would otherwise stay blank: the device is created from the writing app's name,
+        which for a package id like ``com.ultrahuman.app`` names no body part at all.
+
+        Only ever fills a blank. A device's type is hand-editable and detection
+        proposes rather than decides, so a type already set - by an earlier sync or by
+        a person - stands. Nobody sets a type to "unknown" on purpose, which is what
+        makes UNKNOWN safe to treat as unset.
+
+        A reported PHONE is dropped on a relayed device for the same reason it is
+        dropped when one is created: the platform is describing the handset this
+        device's data was relayed through, not the device.
+        """
+        if reported is None or device.device_type != DeviceType.UNKNOWN.value:
+            return
+        if reported is DeviceType.PHONE and device.host_model_raw is not None:
+            return
+
+        self.repo.update_fields(
+            db_session,
+            device,
+            {"device_type": reported.value},
+            actor=actor,
+            reason="Device type declared by the platform that reported the data",
+        )
 
     def _resolve(
         self,
