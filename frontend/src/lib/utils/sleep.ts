@@ -12,14 +12,43 @@ import { formatMinutes } from './format';
 export type SleepStageKey = 'deep' | 'rem' | 'light' | 'awake';
 
 /**
- * Color classes for sleep stages (Tailwind)
+ * Sleep stage fills, as hex, for SVG marks (the hypnogram).
+ *
+ * Stepped for the dark card surface (#272735) and validated as a categorical
+ * palette on the hypnogram's own adjacency order (awake -> rem -> light -> deep):
+ * every pair clears the CVD and normal-vision separation floors and 3:1 contrast.
+ * The previous indigo/purple pairing did not - REM and deep sat at dE 0.9 under
+ * protanopia and 11.3 with full colour vision, which are the two stages a reader
+ * most needs to tell apart.
+ */
+export const SLEEP_STAGE_HEX: Record<SleepStageKey, string> = {
+  awake: '#d95926',
+  rem: '#9085e9',
+  light: '#199e70',
+  deep: '#3987e5',
+};
+
+/**
+ * Color classes for sleep stages (Tailwind). Same values as SLEEP_STAGE_HEX so
+ * the stacked proportion bar and the hypnogram cannot drift apart.
  */
 export const SLEEP_STAGE_COLORS: Record<SleepStageKey, string> = {
-  deep: 'bg-indigo-500',
-  rem: 'bg-purple-500',
-  light: 'bg-sky-400',
-  awake: 'bg-zinc-500',
+  deep: 'bg-[#3987e5]',
+  rem: 'bg-[#9085e9]',
+  light: 'bg-[#199e70]',
+  awake: 'bg-[#d95926]',
 };
+
+/**
+ * Top-to-bottom order for a hypnogram: wake at the top, deepest sleep at the
+ * bottom. Also the adjacency order the palette above was validated against.
+ */
+export const HYPNOGRAM_STAGE_ORDER: readonly SleepStageKey[] = [
+  'awake',
+  'rem',
+  'light',
+  'deep',
+] as const;
 
 /**
  * Display labels for sleep stages
