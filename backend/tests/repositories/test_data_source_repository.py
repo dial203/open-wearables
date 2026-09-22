@@ -75,6 +75,12 @@ class TestInferDeviceTypeFromSourceLabel:
             ("iPhone18,1", "Michael's Apple Watch Ultra 3", DeviceType.WATCH),
             ("iPhone18,1", "Oura", DeviceType.RING),
             ("iPhone18,1", "WHOOP", DeviceType.BAND),
+            # A sleep headband has no API of its own, so the relay is the only way
+            # its data ever arrives - if the label loses to the handset here, the
+            # type is wrong every time rather than only sometimes.
+            ("iPhone18,1", "Muse", DeviceType.EEG),
+            ("iPhone18,1", "Dreem", DeviceType.EEG),
+            ("iPhone18,1", "Michael's Headband", DeviceType.HEADBAND),
             # A phone label under a phone model stays a phone.
             ("iPhone18,1", "Michael's iPhone", DeviceType.PHONE),
             ("iPhone18,1", "Fitness", DeviceType.PHONE),

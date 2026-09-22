@@ -391,8 +391,21 @@ class DataSourceRepository(
             )
 
     # Types that name a body-worn recorder, as opposed to a handset or an app.
+    # Types that name something worn, and so outrank a relayed handset's model.
+    # EEG and HEADBAND belong here for the same reason the other four do: a sleep
+    # headband reaches the platform only by relay - it has no API of its own - so
+    # leaving them out meant the writing app's label could never beat the syncing
+    # iPhone, and the one device type the priority table ranks first for sleep was
+    # filed as a phone on every sync.
     _WEARABLE_TYPES: frozenset[DeviceType] = frozenset(
-        {DeviceType.WATCH, DeviceType.BAND, DeviceType.RING, DeviceType.CHEST_STRAP}
+        {
+            DeviceType.WATCH,
+            DeviceType.BAND,
+            DeviceType.RING,
+            DeviceType.CHEST_STRAP,
+            DeviceType.EEG,
+            DeviceType.HEADBAND,
+        }
     )
 
     def _infer_device_type(
