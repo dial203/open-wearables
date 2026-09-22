@@ -41,6 +41,7 @@ from app.schemas.enums import (
     LabelSource,
     ProviderName,
     infer_device_type_from_source_name,
+    reconcile_device_type,
 )
 from app.services.devices.identity import IdentityClaim, claims_from_data_source, relaying_host_model
 from app.utils.device_registry import humanize_device_model, relayed_brand, resolve_brand
@@ -70,6 +71,7 @@ class DeviceDetectionService:
         data_source: DataSource,
         extra_claims: list[IdentityClaim] | None = None,
         actor: str = SYSTEM_ACTOR,
+        reported_device_type: DeviceType | None = None,
     ) -> Device | None:
         """Attribute a data source to a device, creating one if warranted.
 
@@ -85,12 +87,22 @@ class DeviceDetectionService:
         - the detach survives only until the following batch, which is indistinguishable
         from the feature not working. ``attribution_locked_at`` is what makes the two
         states different; linking the source again clears it.
+
+        ``reported_device_type`` is the classification the platform itself declared,
+        where the route reports one at all; see
+        ``services/sdk/device_resolution.extract_reported_device_type``. It is applied
+        to the data source before the early return below, because the type describes
+        the source rather than its attribution and a detached source still deserves a
+        correct one.
         """
+        provider = getattr(data_source.provider, "value", data_source.provider)
+        account_scope, declared_sensor = self._account_context(db_session, data_source)
+
+        self._apply_reported_device_type(db_session, data_source, reported_device_type, declared_sensor)
+
         if data_source.attribution_locked_at is not None:
             return None
 
-        provider = getattr(data_source.provider, "value", data_source.provider)
-        account_scope, declared_sensor = self._account_context(db_session, data_source)
         claims = list(
             claims_from_data_source(
                 provider,
@@ -106,7 +118,7 @@ class DeviceDetectionService:
             return None
 
         device, conflicts = self._resolve(
-            db_session, data_source.user_id, provider, data_source, claims, declared_sensor
+            db_session, data_source.user_id, provider, data_source, claims, declared_sensor, reported_device_type
         )
         if device is None:
             return None
@@ -175,6 +187,51 @@ class DeviceDetectionService:
         scope = connection.provider_user_id or str(connection.id)
         return scope, connection.sensor_label
 
+    @staticmethod
+    def _apply_reported_device_type(
+        db_session: DbSession,
+        data_source: DataSource,
+        reported: DeviceType | None,
+        declared_sensor: str | None,
+    ) -> None:
+        """Record the classification the platform itself declared for this source.
+
+        Health Connect is the only route that declares one: a record's ``Metadata``
+        may carry a ``Device`` with a manufacturer, a model and a type enum, so a
+        writer that fills it in has said what kind of hardware produced the samples.
+        HealthKit's ``HKDevice`` has no such field, so nothing on the Apple route ever
+        reaches here and classification there stays inference over model strings.
+
+        A declared sensor still wins outright. It is a person's assertion about the
+        instrument actually worn, and a Health Connect writer knows no more about that
+        than HealthKit does: an app paired with a chest strap through a watch reports
+        the watch, because the watch is what it talks to.
+
+        Applied on every sync rather than only at row creation, for two reasons. Rows
+        predating this carry a type inferred from strings, and a writer that starts
+        populating ``Device`` correctly should fix what it already wrote. It is only
+        ever an upgrade - a sync that declares nothing leaves the stored type alone -
+        so a route that never reports one cannot erase what inference established.
+        """
+        if reported is None or declared_sensor:
+            return
+
+        try:
+            current = DeviceType(data_source.device_type) if data_source.device_type else DeviceType.UNKNOWN
+        except ValueError:
+            # A stored value no longer in the enum. Treated as no classification at
+            # all rather than preserved: device_type is a string column precisely so
+            # that adding a type is not a migration, and the cost of that is a row
+            # that can hold a value this build does not know how to rank.
+            current = DeviceType.UNKNOWN
+
+        resolved = reconcile_device_type(reported, current)
+        if resolved is current:
+            return
+
+        object.__setattr__(data_source, "device_type", resolved.value)
+        db_session.flush()
+
     def _resolve(
         self,
         db_session: DbSession,
@@ -183,6 +240,7 @@ class DeviceDetectionService:
         data_source: DataSource,
         claims: list[IdentityClaim],
         declared_sensor: str | None = None,
+        reported_device_type: DeviceType | None = None,
     ) -> tuple[Device | None, set[UUID]]:
         """Find the device these claims name, or create one. Returns (device, conflicts)."""
         conflicts: set[UUID] = set()
@@ -233,7 +291,9 @@ class DeviceDetectionService:
             return None, conflicts
 
         if host_model is not None:
-            device = self._create_relayed(db_session, user_id, provider, data_source, host_model, declared_sensor)
+            device = self._create_relayed(
+                db_session, user_id, provider, data_source, host_model, declared_sensor, reported_device_type
+            )
         else:
             device = self.repo.create(
                 db_session,
@@ -256,6 +316,7 @@ class DeviceDetectionService:
         data_source: DataSource,
         host_model: str,
         declared_sensor: str | None = None,
+        reported_device_type: DeviceType | None = None,
     ) -> Device:
         """Create the device behind a stream whose only model string named its carrier.
 
@@ -283,8 +344,16 @@ class DeviceDetectionService:
 
         # Not data_source.device_type: that was inferred from the host's model and says
         # "phone" for every relayed stream. The writer's name is the only description of
-        # the hardware left, and UNKNOWN where it names nothing.
-        device_type = infer_device_type_from_source_name(writer)
+        # the hardware left, and UNKNOWN where it names nothing - unless the platform
+        # declared a type of its own, which on Health Connect it sometimes does and
+        # which beats reading a package name.
+        #
+        # A declared PHONE is dropped here rather than trusted: reaching this branch
+        # means the model string named the host, so a report agreeing that this is a
+        # phone is describing the same carrier and would classify the relayed device
+        # as the handset it was relayed through.
+        reported = None if reported_device_type is DeviceType.PHONE else reported_device_type
+        device_type = reconcile_device_type(reported, infer_device_type_from_source_name(writer))
 
         return self.repo.create(
             db_session,

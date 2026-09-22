@@ -450,11 +450,17 @@ class ImportService:
         """Persist the HealthKit device identifiers the SDK sends and ingest drops.
 
         ``extract_device_info`` keeps device_model, software_version and the source
-        name; ``SourceInfo`` also carries ``deviceId``, the manufacturer, the hardware
-        and software versions and the SDK's own device type. ``deviceId`` in
-        particular is the strongest per-unit signal any route gives us for an Apple
-        Watch, and without it two identical watches on one account are
-        indistinguishable.
+        name; ``SourceInfo`` also carries ``deviceId``, the manufacturer and the
+        hardware and software versions. ``deviceId`` in particular is the strongest
+        per-unit signal any route gives us for an Apple Watch, and without it two
+        identical watches on one account are indistinguishable.
+
+        This pass also applies ``deviceType``, which only Health Connect populates and
+        which is the one device *classification* any route reports rather than leaves
+        us to infer from a model string. It runs here rather than at row creation
+        because the bulk time-series path keys data sources by
+        (user, device_model, source) alone, and widening that tuple to carry a type
+        would put a classification inside the identity of the row it classifies.
         """
         from app.services.devices.sdk_identities import record_sdk_identities
 

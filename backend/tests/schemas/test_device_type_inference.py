@@ -2,7 +2,13 @@
 
 import pytest
 
-from app.schemas.enums import DeviceType, infer_device_type_from_model, infer_device_type_from_source_name
+from app.schemas.enums import (
+    DeviceType,
+    device_type_from_platform_report,
+    infer_device_type_from_model,
+    infer_device_type_from_source_name,
+    reconcile_device_type,
+)
 
 
 @pytest.mark.parametrize(
@@ -98,3 +104,72 @@ def test_chest_strap_ranks_above_watch_by_default() -> None:
 )
 def test_infer_device_type_from_source_name(source_name: str | None, expected: DeviceType) -> None:
     assert infer_device_type_from_source_name(source_name) == expected
+
+
+class TestPlatformReportedDeviceType:
+    """Health Connect declares a device type; HealthKit has no such field.
+
+    The distinction matters because it is the only route that classifies hardware
+    instead of leaving us to read a classification out of a model string - and on a
+    relayed stream that model string names the phone.
+    """
+
+    @pytest.mark.parametrize(
+        ("reported", "expected"),
+        [
+            ("watch", DeviceType.WATCH),
+            ("ring", DeviceType.RING),
+            ("phone", DeviceType.PHONE),
+            ("scale", DeviceType.SCALE),
+            ("chest_strap", DeviceType.CHEST_STRAP),
+            # Health Connect's own spelling for a wrist band.
+            ("fitness_band", DeviceType.BAND),
+            ("smart_display", DeviceType.OTHER),
+            # Case and padding, since the value is relayed through a mobile SDK.
+            ("WATCH", DeviceType.WATCH),
+            ("  ring  ", DeviceType.RING),
+        ],
+    )
+    def test_the_platform_s_own_constants_map_across(self, reported: str, expected: DeviceType) -> None:
+        assert device_type_from_platform_report(reported) is expected
+
+    @pytest.mark.parametrize("reported", [None, "", "unknown", "UNKNOWN", "toaster", 7, object()])
+    def test_nothing_declared_is_none_not_unknown(self, reported: object) -> None:
+        """A writer that passed no Device has said nothing, which is not "unknown".
+
+        Collapsing the two would let an unfilled field overwrite a type a good model
+        string established.
+        """
+        assert device_type_from_platform_report(reported) is None
+
+    def test_head_mounted_is_a_headband_not_an_eeg(self) -> None:
+        """Health Connect says where a device sits, never what it measures.
+
+        EEG outranks every other type because of the modality, and an optical
+        forehead sensor is head-mounted too.
+        """
+        assert device_type_from_platform_report("head_mounted") is DeviceType.HEADBAND
+
+
+class TestReconcileDeviceType:
+    def test_the_platform_report_beats_inference(self) -> None:
+        """Inference reads a string; the report is the writer naming its hardware."""
+        assert reconcile_device_type(DeviceType.RING, DeviceType.PHONE) is DeviceType.RING
+
+    def test_nothing_reported_leaves_inference_alone(self) -> None:
+        assert reconcile_device_type(None, DeviceType.CHEST_STRAP) is DeviceType.CHEST_STRAP
+
+    def test_a_reported_unknown_leaves_inference_alone(self) -> None:
+        assert reconcile_device_type(DeviceType.UNKNOWN, DeviceType.WATCH) is DeviceType.WATCH
+
+    def test_a_model_string_may_refine_head_mounted_to_eeg(self) -> None:
+        """The one case where the guess adds what the platform has no field for."""
+        assert reconcile_device_type(DeviceType.HEADBAND, DeviceType.EEG) is DeviceType.EEG
+
+    def test_a_model_string_does_not_second_guess_a_reported_band(self) -> None:
+        """The writer had CHEST_STRAP available and chose FITNESS_BAND.
+
+        Overriding that would re-open classification to exactly the string matching
+        the refinement map exists to bound.
+        """
+        assert reconcile_device_type(DeviceType.BAND, DeviceType.CHEST_STRAP) is DeviceType.BAND

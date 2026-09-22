@@ -24,7 +24,7 @@ from app.repositories.device_repository import DeviceRepository
 from app.schemas.enums import ProviderName
 from app.services.devices.detection import DeviceDetectionService
 from app.services.devices.identity import claims_from_sdk_source
-from app.services.sdk.device_resolution import extract_device_info
+from app.services.sdk.device_resolution import extract_device_info, extract_reported_device_type
 from app.utils.connection_context import get_active_connection_id
 
 log = getLogger(__name__)
@@ -61,14 +61,25 @@ def record_sdk_identities(db_session: DbSession, user_id: UUID, provider: str, s
             seen.add(key)
 
             claims = claims_from_sdk_source(provider, source)
-            if not claims:
+            reported_device_type = extract_reported_device_type(source)
+            # A source carrying neither an identity claim nor a platform-declared type
+            # has nothing this pass can add. One carrying only the type still does:
+            # resolve_for_data_source applies it before it decides there is nothing to
+            # attribute, so the classification lands even though no device is created.
+            if not claims and reported_device_type is None:
                 continue
 
             data_source = _find_data_source(db_session, user_id, provider, device_model, original_source_name)
             if data_source is None:
                 continue
 
-            detector.resolve_for_data_source(db_session, data_source, extra_claims=claims, actor=ACTOR)
+            detector.resolve_for_data_source(
+                db_session,
+                data_source,
+                extra_claims=claims,
+                actor=ACTOR,
+                reported_device_type=reported_device_type,
+            )
             touched += 1
 
         db_session.commit()

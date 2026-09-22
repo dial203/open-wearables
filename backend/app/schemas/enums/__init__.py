@@ -27,8 +27,10 @@ from .device_registry import (
 from .device_type import (
     DEFAULT_DEVICE_TYPE_PRIORITY,
     DeviceType,
+    device_type_from_platform_report,
     infer_device_type_from_model,
     infer_device_type_from_source_name,
+    reconcile_device_type,
 )
 from .entry_source import EntrySource
 from .health_score_category import HealthScoreCategory
@@ -71,8 +73,10 @@ __all__ = [
     "DeviceHistoryAction",
     "LinkProposalStatus",
     "DEFAULT_DEVICE_TYPE_PRIORITY",
+    "device_type_from_platform_report",
     "infer_device_type_from_model",
     "infer_device_type_from_source_name",
+    "reconcile_device_type",
     "AggregationMethod",
     "AGGREGATION_METHOD_BY_TYPE",
     "daily_total_flag",
