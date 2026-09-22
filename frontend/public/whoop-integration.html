@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>WHOOP Integration — Open Wearables</title>
+    <style>
+      :root {
+        --bg: #0b0d0e;
+        --panel: #141719;
+        --panel-2: #1b1f21;
+        --line: #2a2f32;
+        --text: #e8ebec;
+        --muted: #9aa4a8;
+        --accent: #00f19f;
+        --radius: 10px;
+      }
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+      }
+      .wrap { max-width: 880px; margin: 0 auto; padding: 56px 16px 96px; }
+      header { border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 36px; }
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 12px;
+        color: var(--accent);
+        margin: 0 0 10px;
+      }
+      h1 { font-size: 30px; line-height: 1.25; margin: 0 0 14px; font-weight: 600; }
+      h2 {
+        font-size: 20px;
+        margin: 48px 0 6px;
+        font-weight: 600;
+        scroll-margin-top: 24px;
+      }
+      h3 { font-size: 16px; margin: 0 0 6px; font-weight: 600; }
+      p { margin: 0 0 14px; }
+      .lede { color: var(--muted); font-size: 17px; }
+      .muted { color: var(--muted); }
+      a { color: var(--accent); }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.88em;
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 1px 5px;
+      }
+      .meta { display: flex; flex-wrap: wrap; gap: 8px 10px; margin-top: 18px; }
+      .pill {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 999px;
+        padding: 5px 11px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 20px 22px;
+        margin: 22px 0;
+      }
+      .panel p:last-child { margin-bottom: 0; }
+      figure {
+        margin: 0 0 40px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        overflow: hidden;
+      }
+      figure img { display: block; width: 100%; height: auto; background: var(--panel-2); }
+      figcaption { padding: 14px 18px 16px; border-top: 1px solid var(--line); }
+      figcaption .cap { color: var(--muted); font-size: 14.5px; margin: 0; }
+      .placeholder {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 260px;
+        background: repeating-linear-gradient(
+          45deg, var(--panel-2), var(--panel-2) 12px, #181c1e 12px, #181c1e 24px
+        );
+        color: var(--muted);
+        font-size: 14px;
+        text-align: center;
+        padding: 24px;
+      }
+      ul { margin: 0 0 14px; padding-left: 20px; }
+      li { margin-bottom: 6px; }
+      table { width: 100%; border-collapse: collapse; margin: 6px 0 14px; font-size: 15px; }
+      th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
+      td code { white-space: nowrap; }
+      footer {
+        margin-top: 64px;
+        padding-top: 22px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 14px;
+      }
+      @media (max-width: 560px) {
+        .wrap { padding-top: 36px; }
+        h1 { font-size: 25px; }
+        table, th, td { font-size: 14px; }
+        th, td { padding: 8px 8px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <p class="eyebrow">Open Wearables</p>
+        <h1>WHOOP integration walkthrough</h1>
+        <p class="lede">
+          Screenshots of how this deployment requests, stores and presents WHOOP
+          data, prepared for the WHOOP Developer Platform review.
+        </p>
+        <div class="meta">
+          <span class="pill">App: openwearables</span>
+          <span class="pill">Client ID: 418ca45d-aee3-4b8f-bc2b-1836c7f93d60</span>
+          <span class="pill">Self-hosted</span>
+        </div>
+      </header>
+
+      <p>
+        Open Wearables is an open-source platform that unifies data from multiple
+        wearables behind a single API. This deployment is operated for exercise
+        physiology research: sleep and exercise data from WHOOP are aggregated
+        alongside data from the other devices the same member wears, so that
+        measures of the same night or the same session can be compared across
+        devices and analysed over time.
+      </p>
+      <p>
+        Members connect their own WHOOP account through OAuth after giving
+        informed consent, and can disconnect at any time. Data is stored on
+        infrastructure we control, is not sold or shared with third parties, and
+        is deleted on request. WHOOP is identified as the source everywhere WHOOP
+        data is displayed.
+      </p>
+
+      <h2>Scopes and what each one is used for</h2>
+      <table>
+        <thead>
+          <tr><th>Scope</th><th>Used for</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>read:recovery</code></td><td>Recovery score, HRV and resting heart rate shown on the member dashboard and used for day-to-day readiness trends.</td></tr>
+          <tr><td><code>read:sleep</code></td><td>Sleep duration, stage totals, sleep performance and respiratory rate, compared against the member's other sleep-capable devices.</td></tr>
+          <tr><td><code>read:cycles</code></td><td>Daily strain and energy expenditure, used as the daily training-load summary.</td></tr>
+          <tr><td><code>read:workout</code></td><td>Workout type, duration, strain and heart-rate summaries, matched to sessions recorded by other devices.</td></tr>
+          <tr><td><code>read:body_measurement</code></td><td>Height, weight and max heart rate, used to normalise metrics across members.</td></tr>
+          <tr><td><code>read:profile</code></td><td>Identifies the connected WHOOP account so records are attributed to the right member.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>1. Connecting a WHOOP account</h2>
+      <figure>
+        <img src="whoop-screenshots/01-connect.png" alt="Provider connection screen with WHOOP listed as an available integration" />
+        <figcaption>
+          <h3>Provider connection screen</h3>
+          <p class="cap">
+            The member chooses WHOOP from the list of supported providers. Selecting
+            it starts the OAuth 2.0 authorization code flow against
+            <code>api.prod.whoop.com</code>; no credentials are ever entered in this
+            application.
+          </p>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <img src="whoop-screenshots/02-authorize.png" alt="WHOOP authorization screen listing the requested scopes" />
+        <figcaption>
+          <h3>WHOOP authorization</h3>
+          <p class="cap">
+            WHOOP's own consent screen, showing the scopes being requested. The
+            member authorizes on WHOOP's domain and is returned to the registered
+            redirect URI, where the authorization code is exchanged for tokens
+            server-side.
+          </p>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <img src="whoop-screenshots/03-connection-status.png" alt="Connection management screen showing an active WHOOP connection with a disconnect control" />
+        <figcaption>
+          <h3>Connection management and revocation</h3>
+          <p class="cap">
+            Once connected, the member sees the connection status, when it last
+            synced, and a disconnect control that revokes the tokens and stops all
+            further data collection.
+          </p>
+        </figcaption>
+      </figure>
+
+      <h2>2. What the member sees</h2>
+      <figure>
+        <img src="whoop-screenshots/04-recovery.png" alt="Dashboard showing WHOOP recovery score, heart rate variability and resting heart rate" />
+        <figcaption>
+          <h3>Recovery, HRV and resting heart rate</h3>
+          <p class="cap">
+            WHOOP recovery score, HRV and resting heart rate on the member
+            dashboard, labelled with WHOOP as the source.
+          </p>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <img src="whoop-screenshots/05-sleep.png" alt="Sleep detail view showing duration, stage totals and sleep performance from WHOOP" />
+        <figcaption>
+          <h3>Sleep detail</h3>
+          <p class="cap">
+            Sleep duration, light / slow-wave / REM totals, sleep performance and
+            respiratory rate as reported by WHOOP for a single night.
+          </p>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <img src="whoop-screenshots/06-workout.png" alt="Workout view showing activity type, duration, strain and heart rate summary from WHOOP" />
+        <figcaption>
+          <h3>Workouts and daily strain</h3>
+          <p class="cap">
+            A WHOOP workout with activity type, duration, strain and heart-rate
+            summary, alongside the daily strain and energy expenditure from the
+            corresponding physiological cycle.
+          </p>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <img src="whoop-screenshots/07-cross-device.png" alt="Side-by-side comparison of the same night or session as recorded by WHOOP and by another wearable" />
+        <figcaption>
+          <h3>Cross-device comparison</h3>
+          <p class="cap">
+            The reason members connect WHOOP here: the same night, or the same
+            session, as recorded by WHOOP and by the member's other devices, shown
+            side by side with the source labelled. This comparison is not available
+            in any single vendor's own app.
+          </p>
+        </figcaption>
+      </figure>
+
+      <h2>How data is requested and stored</h2>
+      <div class="panel">
+        <ul>
+          <li>OAuth tokens are held server-side only and refreshed automatically; the client secret is never exposed to the browser or to any mobile client.</li>
+          <li>Data is retrieved from the documented v2 endpoints — <code>/v2/activity/sleep</code>, <code>/v2/recovery</code>, <code>/v2/cycle</code>, <code>/v2/activity/workout</code> and <code>/v2/user/measurement/body</code> — and normalised into the platform's shared schema.</li>
+          <li>Records are stored on infrastructure operated by this deployment. Nothing is sold, shared with third parties, or used for advertising.</li>
+          <li>Disconnecting revokes the tokens and stops collection; on request, previously collected WHOOP data is deleted.</li>
+        </ul>
+        <p class="muted">
+          WHOOP is a trademark of WHOOP, Inc. This is an independent integration
+          built on the WHOOP Developer Platform and is not endorsed by WHOOP, Inc.
+        </p>
+      </div>
+
+      <footer>
+        Open Wearables · <a href="https://openwearables.dialedup.info">openwearables.dialedup.info</a>
+      </footer>
+    </div>
+
+    <script>
+      // Show a labelled placeholder for any screenshot not yet dropped in,
+      // so the page stays readable while captures are being collected.
+      document.querySelectorAll("figure img").forEach(function (img) {
+        img.addEventListener("error", function () {
+          var box = document.createElement("div");
+          box.className = "placeholder";
+          box.textContent = "Screenshot pending — " + img.getAttribute("src");
+          img.replaceWith(box);
+        });
+      });
+    </script>
+  </body>
+</html>
