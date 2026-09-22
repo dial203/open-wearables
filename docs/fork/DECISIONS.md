@@ -280,3 +280,32 @@ Template:
   version and the upstream sync point — so staleness there is a real signal rather
   than an artefact. The args sit below `pnpm install` in the Dockerfile: they change on
   every commit, and above it they would bust the dependency layer cache on each build.
+
+## Orphan adoption is judged at the row's age, not the account count today
+
+- **Area**: backend
+- **Status**: active; refines "Several provider accounts per user"
+- **On conflict**: keep ours
+- **Why**: putting `user_connection_id` into the data-source identity made a
+  connection-less row and an otherwise identical connected row two different
+  sources. `_can_adopt_orphans` was meant to heal that by letting a connection
+  claim rows written before connections were recorded, but it asked how many
+  accounts the user holds *now* and refused at two or more. So linking a second
+  account retroactively unclaimed every older row of the *first* one: the next
+  sync created a fresh source beside each orphan and both kept being written.
+  Nothing re-files the old row afterwards, so the split is permanent and the
+  device reads as a doubled series to anything that pools by provider or device
+  — which is exactly what a validation study does. Seen in the wild on a Venu X1:
+  two sources, 5,037 and 5,033 samples, both clean 1 Hz, both the same run.
+
+  The question is now asked of the row: how many accounts existed when it was
+  written. One means that account is the only thing that could have produced it,
+  however many have been linked since. Two or more still refuses, because a wrong
+  merge pools two units' histories irreversibly while a wrong split does not.
+  Rows older than every connection (XML import, then connect) keep the previous
+  behaviour, and an empty read means the account is being created in the same
+  uncommitted transaction and is therefore the only candidate.
+
+  This fixes the split going forward. Rows already forked stay forked; merging
+  them is a separate, opt-in repair, because it has to drop one side of every
+  colliding second and that is not something a migration should do unasked.

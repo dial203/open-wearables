@@ -1,3 +1,4 @@
+from datetime import datetime
 from logging import getLogger
 from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
@@ -275,11 +276,11 @@ class DataSourceRepository(
         if existing is None and user_connection_id is not None:
             # Adopt a source ingested before connections were recorded against
             # them (an XML import, or any row predating this column) rather than
-            # creating a duplicate beside it. Only ever done when the user holds
-            # a single account with the provider: with two, there is no way to
+            # creating a duplicate beside it. Only ever done when a single account
+            # was alive when that row was written: with two, there is no way to
             # tell which of them the orphaned rows came from, and guessing would
             # file one unit's history under the other.
-            existing = self._adoptable_orphan(db_session, user_id, provider, device_model, source)
+            existing = self._adoptable_orphan(db_session, user_id, provider, device_model, source, user_connection_id)
 
         if existing:
             updated = False
@@ -325,20 +326,57 @@ class DataSourceRepository(
         self._attribute_device(db_session, result, identity_claims)
         return result
 
-    def _can_adopt_orphans(self, db_session: DbSession, user_id: UUID, provider: ProviderName) -> bool:
-        """Whether connection-less rows can safely be claimed by this user's account.
-
-        Only when there is exactly one account to claim them for. With two, the
-        rows could have come from either, and a wrong adoption silently merges
-        two units' histories - which, unlike a wrong split, cannot be undone.
-        """
-        connection_count = (
-            db_session.query(func.count(UserConnection.id))
+    def _provider_connections(
+        self, db_session: DbSession, user_id: UUID, provider: ProviderName
+    ) -> list[tuple[UUID, datetime]]:
+        """This user's accounts with one provider, oldest first, as (id, created_at)."""
+        rows = (
+            db_session.query(UserConnection.id, UserConnection.created_at)
             .filter(UserConnection.user_id == user_id, UserConnection.provider == provider.value)
-            .scalar()
-            or 0
+            .order_by(asc(UserConnection.created_at))
+            .all()
         )
-        return connection_count <= 1
+        return [(row[0], row[1]) for row in rows]
+
+    def _can_adopt_orphan(
+        self,
+        connections: list[tuple[UUID, datetime]],
+        user_connection_id: UUID,
+        orphan_created_at: datetime | None,
+    ) -> bool:
+        """Whether this account can safely claim one connection-less row.
+
+        The rule is still "only when exactly one account could have produced it", but
+        asked *of the row* rather than of the user as they stand today. A row written
+        while only one account existed can only have come from that account, however
+        many have been linked since; the previous form asked how many accounts exist
+        now, so linking a second one retroactively made every older row unclaimable
+        and forked each device into a connection-less row plus a new one. Nothing
+        upstream re-files the old row, so the split is permanent and both copies keep
+        being written - which is what a validation study reads as a phantom doubled
+        series.
+
+        The narrowing is deliberate: adoption still refuses whenever two accounts were
+        both alive when the row was written, because a wrong adoption merges two units'
+        histories and cannot be undone, while a wrong split can.
+
+        A row older than every connection (a one-time XML import that predates linking
+        the account) falls back to the whole set, preserving the original behaviour for
+        the import-then-connect flow.
+
+        No connections read at all means the account being ingested for is not visible
+        yet - it is being created in this same uncommitted transaction, which is exactly
+        the connect-then-backfill path - and it is therefore the only one that can claim
+        the row.
+        """
+        if not connections:
+            return True
+        candidates = connections
+        if orphan_created_at is not None:
+            earlier = [conn for conn in connections if conn[1] <= orphan_created_at]
+            if earlier:
+                candidates = earlier
+        return len(candidates) == 1 and candidates[0][0] == user_connection_id
 
     def _adoptable_orphan(
         self,
@@ -347,15 +385,22 @@ class DataSourceRepository(
         provider: ProviderName,
         device_model: str | None,
         source: str | None,
+        user_connection_id: UUID | None = None,
     ) -> DataSource | None:
         """A matching connection-less data source, when adopting it is unambiguous."""
-        if not self._can_adopt_orphans(db_session, user_id, provider):
+        if user_connection_id is None:
             return None
-        return (
+        orphan = (
             db_session.query(self.model)
             .filter(self._build_identity_filter(user_id, provider, device_model, source, None))
             .one_or_none()
         )
+        if orphan is None:
+            return None
+        connections = self._provider_connections(db_session, user_id, provider)
+        if not self._can_adopt_orphan(connections, user_connection_id, orphan.created_at):
+            return None
+        return orphan
 
     def _attribute_device(
         self,
@@ -522,44 +567,47 @@ class DataSourceRepository(
         missing = [stored for requested, stored in stored_by_requested.items() if requested not in result]
 
         # Adopt connection-less rows the same way ensure_data_source does, and
-        # under the same condition: only when the user holds a single account
-        # with this provider, so a row whose origin is unknowable is never
-        # guessed onto one of two units. Without this the events path (which
-        # adopts) and this time-series path (which would not) would file the
-        # same device under two data sources - the exact split this method's
-        # docstring exists to prevent.
+        # under the same condition: only when a single account was alive when the
+        # row was written, so a row whose origin is unknowable is never guessed
+        # onto one of two units. Without this the events path (which adopts) and
+        # this time-series path (which would not) would file the same device under
+        # two data sources - the exact split this method's docstring exists to
+        # prevent.
         if missing and user_connection_id is not None:
-            # Cached per user: a payload can carry dozens of identities and the
-            # answer is the same for every one of them.
-            adoption_allowed: dict[UUID, bool] = {}
+            # Read once: a payload can carry dozens of identities and the accounts
+            # are the same for every one of them.
+            connections_by_user: dict[UUID, list[tuple[UUID, datetime]]] = {}
 
-            def _allowed(user_id: UUID) -> bool:
-                if user_id not in adoption_allowed:
-                    adoption_allowed[user_id] = self._can_adopt_orphans(db_session, user_id, provider)
-                return adoption_allowed[user_id]
+            def _connections(user_id: UUID) -> list[tuple[UUID, datetime]]:
+                if user_id not in connections_by_user:
+                    connections_by_user[user_id] = self._provider_connections(db_session, user_id, provider)
+                return connections_by_user[user_id]
 
-            adoptable = {
-                (user_id, device_model, source) for user_id, device_model, source in missing if _allowed(user_id)
-            }
-            if adoptable:
-                orphan_conditions = [
-                    self._build_identity_filter(user_id, provider, device_model, source, None)
-                    for user_id, device_model, source in adoptable
-                ]
-                orphans = db_session.query(self.model).filter(or_(*orphan_conditions)).all()
+            orphan_conditions = [
+                self._build_identity_filter(user_id, provider, device_model, source, None)
+                for user_id, device_model, source in missing
+            ]
+            candidates = db_session.query(self.model).filter(or_(*orphan_conditions)).all()
+            # Filtered per row, not per user: which accounts were alive depends on
+            # when each row was written, so two orphans of one user can differ.
+            orphans = [
+                orphan
+                for orphan in candidates
+                if self._can_adopt_orphan(_connections(orphan.user_id), user_connection_id, orphan.created_at)
+            ]
+            if orphans:
                 for orphan in orphans:
                     object.__setattr__(orphan, "user_connection_id", user_connection_id)
                     ids_by_stored[(orphan.user_id, orphan.device_model, orphan.source)] = orphan.id
-                if orphans:
-                    db_session.flush()
-                    result.update(
-                        {
-                            requested: ids_by_stored[stored]
-                            for requested, stored in stored_by_requested.items()
-                            if requested not in result and stored in ids_by_stored
-                        }
-                    )
-                    missing = [stored for requested, stored in stored_by_requested.items() if requested not in result]
+                db_session.flush()
+                result.update(
+                    {
+                        requested: ids_by_stored[stored]
+                        for requested, stored in stored_by_requested.items()
+                        if requested not in result and stored in ids_by_stored
+                    }
+                )
+                missing = [stored for requested, stored in stored_by_requested.items() if requested not in result]
 
         if missing:
             values = []
