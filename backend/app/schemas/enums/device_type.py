@@ -184,3 +184,72 @@ def infer_device_type_from_source_name(source_name: str | None) -> DeviceType:
         return inferred
 
     return DeviceType.UNKNOWN
+
+
+# Health Connect's ``Device.type`` enum, as the mobile SDK relays it in
+# ``SourceInfo.deviceType``, mapped onto the types this system ranks.
+#
+# Health Connect is the only route that reports a device *classification* rather
+# than a model string: every record's ``Metadata`` may carry a ``Device`` with a
+# manufacturer, a model and a type. HealthKit's ``HKDevice`` carries name,
+# manufacturer, model and versions but no category field at all, so on the Apple
+# route there is nothing here to consume and classification stays inference from
+# strings. Google's cloud Health API surfaces the same enum, which is why a data
+# source can arrive whose entire model string is the literal "ring" or "watch".
+_PLATFORM_DEVICE_TYPES: dict[str, DeviceType] = {
+    "phone": DeviceType.PHONE,
+    "watch": DeviceType.WATCH,
+    "scale": DeviceType.SCALE,
+    "ring": DeviceType.RING,
+    "chest_strap": DeviceType.CHEST_STRAP,
+    "fitness_band": DeviceType.BAND,
+    # HEADBAND, not EEG. Health Connect says where a device sits, never what it
+    # measures, and the EEG rank exists for the modality: an optical forehead
+    # sensor and a Muse are both head-mounted, and only one of them is a reference
+    # instrument for sleep staging. A model string that names an EEG product still
+    # promotes it - see _PLATFORM_TYPE_REFINEMENTS.
+    "head_mounted": DeviceType.HEADBAND,
+    "smart_display": DeviceType.OTHER,
+}
+
+
+# Where a model string may refine the platform's classification instead of losing
+# to it. Deliberately one entry: the platform report is a fact the writer asserted
+# and inference is a guess about a string, so the guess wins only where it adds the
+# modality the platform has no field for. FITNESS_BAND against a model reading
+# "Polar H10" looks like the same case and is not - there the writer had
+# CHEST_STRAP available and chose otherwise, and second-guessing that would
+# re-open classification to exactly the string matching this map exists to bound.
+_PLATFORM_TYPE_REFINEMENTS: dict[DeviceType, frozenset[DeviceType]] = {
+    DeviceType.HEADBAND: frozenset({DeviceType.EEG}),
+}
+
+
+def device_type_from_platform_report(reported: object) -> DeviceType | None:
+    """The device type a platform declared for itself, or None if it declared none.
+
+    None and ``UNKNOWN`` are different answers and are kept apart: a writer that
+    passed no ``Device`` has said nothing, and overwriting a type inferred from a
+    good model string with "unknown" would lose information to a field that was
+    never filled in. Only a recognised, non-unknown constant returns a type.
+    """
+    value = getattr(reported, "value", reported)
+    if not isinstance(value, str):
+        return None
+    return _PLATFORM_DEVICE_TYPES.get(value.strip().casefold())
+
+
+def reconcile_device_type(reported: DeviceType | None, inferred: DeviceType) -> DeviceType:
+    """Combine a platform-declared device type with what the model strings infer.
+
+    The platform's own report wins. It is the writer naming its hardware, where
+    inference is pattern matching over a string that on a relayed stream describes
+    the phone that carried the data. The exception is a refinement: where the
+    inferred type is strictly more specific about modality than the reported one
+    can be, it stands. See _PLATFORM_TYPE_REFINEMENTS.
+    """
+    if reported is None or reported is DeviceType.UNKNOWN:
+        return inferred
+    if inferred in _PLATFORM_TYPE_REFINEMENTS.get(reported, frozenset()):
+        return inferred
+    return reported
