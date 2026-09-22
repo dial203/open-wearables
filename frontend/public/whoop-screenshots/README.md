@@ -7,15 +7,14 @@ Drop PNGs in here with these exact names. Any file that is missing renders as a
 labelled placeholder on the page, so the page stays readable while captures are
 still being collected.
 
-| File | What to capture |
-| --- | --- |
-| `01-connect.png` | Provider connection screen with WHOOP listed |
-| `02-authorize.png` | WHOOP's own consent screen showing the requested scopes |
-| `03-connection-status.png` | Connection management view: active WHOOP connection, last sync, disconnect control |
-| `04-recovery.png` | Dashboard with WHOOP recovery score, HRV, resting heart rate |
-| `05-sleep.png` | Sleep detail: duration, stage totals, sleep performance |
-| `06-workout.png` | A WHOOP workout with type, duration, strain, heart-rate summary |
-| `07-cross-device.png` | Same night or session from WHOOP next to another device |
+| File | What to capture | Status |
+| --- | --- | --- |
+| `01-connect.png` | Provider connection screen with WHOOP listed | pending |
+| `02-authorize.png` | WHOOP's own consent screen showing the requested scopes | pending |
+| `03-connection-status.png` | Connection management view: active WHOOP connection, last sync, disconnect control | pending |
+| `04-compare-sources.webp` | One night's sleep metrics from WHOOP next to every other source | done |
+| `05-device-landscape.png` | Accuracy vs trend fidelity across connected devices | done |
+| `06-whoop-agreement.png` | WHOOP 5.0 heart rate vs reference standard, scatter + Bland-Altman | done |
 
 Before capturing:
 
