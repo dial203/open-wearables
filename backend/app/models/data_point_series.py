@@ -9,6 +9,7 @@ from app.mappings import (
     FKDataSource,
     FKSeriesTypeDefinition,
     PrimaryKey,
+    json_object,
     numeric_10_3,
     str_10,
     str_100,
@@ -36,3 +37,14 @@ class DataPointSeries(BaseDbModel):
     value: Mapped[numeric_10_3]
     series_type_definition_id: Mapped[FKSeriesTypeDefinition]
     is_daily_total: Mapped[bool | None] # True = pre-aggregated daily total; False = granular intraday samples
+    # Per-sample metadata exactly as the platform sent it, or NULL when it sent none.
+    #
+    # On HealthKit this is where a heart-rate sample's provenance lives: the Bluetooth
+    # peripheral that produced it and where on the body it was measured. Nothing else on
+    # the row distinguishes a chest strap from a wrist sensor when both arrive through
+    # one writing app on one phone.
+    #
+    # Raw and uninterpreted on purpose. Keys differ per platform and per writer, and the
+    # iOS SDK stringifies values on the way out ("70 count/min"), so anything typed has
+    # to be derived from this rather than replace it.
+    provider_metadata: Mapped[json_object | None]

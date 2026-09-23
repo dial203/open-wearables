@@ -198,11 +198,17 @@ class DeviceDetectionService:
     ) -> None:
         """Record the classification the platform itself declared for this source.
 
-        Health Connect is the only route that declares one: a record's ``Metadata``
-        may carry a ``Device`` with a manufacturer, a model and a type enum, so a
-        writer that fills it in has said what kind of hardware produced the samples.
-        HealthKit's ``HKDevice`` has no such field, so nothing on the Apple route ever
-        reaches here and classification there stays inference over model strings.
+        Health Connect is the route this exists for: a record's ``Metadata`` may carry
+        a ``Device`` with a manufacturer, a model and a type enum, so a writer that
+        fills it in has said what kind of hardware produced the samples.
+
+        Nothing arrives here from Apple. ``HKDevice`` has no category field, so a
+        ``deviceType`` on an Apple payload is the iOS SDK's own inference rather than a
+        platform classification - and at the SDK versions in the field it is inferred
+        from the handset's ``productType``, so every relayed stream claims "phone".
+        ``extract_reported_device_type`` filters by route before anything reaches this
+        method; that filter is what stops a report overwriting a relayed wearable's
+        type with its carrier's.
 
         A declared sensor still wins outright. It is a person's assertion about the
         instrument actually worn, and a Health Connect writer knows no more about that

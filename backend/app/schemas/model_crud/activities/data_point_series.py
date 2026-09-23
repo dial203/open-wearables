@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -35,6 +35,10 @@ class TimeSeriesSampleCreate(TimeSeriesSampleBase):
     provider: str | None = None
     user_connection_id: UUID | None = None
     software_version: str | None = None
+    # Per-sample metadata as the platform sent it; see DataPointSeries.provider_metadata.
+    # On the create schema rather than the base: it is written at ingest and read from
+    # the column, and putting it on the base would add it to every response body.
+    provider_metadata: dict[str, Any] | None = None
 
 
 class TimeSeriesSampleUpdate(TimeSeriesSampleBase):

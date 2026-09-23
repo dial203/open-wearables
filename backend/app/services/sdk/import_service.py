@@ -47,6 +47,7 @@ from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
 from .device_resolution import extract_device_info
+from .record_metadata import normalize_record_metadata
 from .sleep_service import handle_sleep_data
 
 # Health Connect's own mg/dL converter uses exactly 18.0, so values written to HC
@@ -189,6 +190,7 @@ class ImportService:
                 software_version=software_version,
                 provider=provider,
                 user_id=user_uuid,
+                provider_metadata=normalize_record_metadata(wjson.metadata),
             )
 
             entry_source = get_unified_sdk_entry_source(wjson.source.recording_method if wjson.source else None)
@@ -260,6 +262,7 @@ class ImportService:
                 value=value,
                 series_type=series_type,
                 is_daily_total=daily_total_flag(series_type, is_daily=False),
+                provider_metadata=normalize_record_metadata(rjson.metadata),
             )
 
             match series_type:

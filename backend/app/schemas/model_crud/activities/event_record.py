@@ -84,6 +84,10 @@ class EventRecordCreate(EventRecordBase):
     user_connection_id: UUID | None = None
     data_source_id: UUID | None = None
     software_version: str | None = None
+    # Per-record metadata as the platform sent it; see EventRecord.provider_metadata.
+    # Unlike the keys popped in _build_creation below, this one *is* a column, so it
+    # passes straight through model_dump into the ORM object.
+    provider_metadata: dict[str, Any] | None = None
 
     # ``list[IdentityClaim]``: route-specific device evidence the provider pulled out
     # of the raw payload, handed to ``DataSourceRepository.ensure_data_source``
