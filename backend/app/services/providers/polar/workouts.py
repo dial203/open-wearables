@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from statistics import median
 from typing import Any, Iterable
@@ -71,18 +71,28 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         """
         raise NotImplementedError("Use _extract_dates_with_offset for Polar workouts")
 
+    @staticmethod
+    def _local_start(start_time: str) -> datetime:
+        """The exercise start as Polar reports it: naive wall-clock time where it was recorded."""
+        return isodate.parse_datetime(start_time).replace(tzinfo=None)
+
     def _extract_dates_with_offset(
         self,
         start_time: str,
         start_time_utc_offset: int,
         duration: str,
     ) -> tuple[datetime, datetime]:
-        """Extract start and end dates from timestamps with UTC offset."""
-        start_date = isodate.parse_datetime(start_time)
-        offset = timedelta(minutes=start_time_utc_offset)
-        start_date = start_date + offset
-        duration_td = isodate.parse_duration(duration)
-        end_date = start_date + duration_td
+        """Convert Polar's local start time and UTC offset into a UTC start and end.
+
+        ``start_time`` is naive local time and ``start_time_utc_offset`` is that zone's offset
+        from UTC in minutes, so UTC is local *minus* the offset. Adding it instead, as this
+        once did, stored every exercise twice the offset away from when it happened: 8 h
+        early in US Eastern daylight time, so an overnight chest-strap session sat on the
+        previous afternoon and no read over the sleep window could find its RR.
+        """
+        local_start = self._local_start(start_time)
+        start_date = (local_start - timedelta(minutes=start_time_utc_offset)).replace(tzinfo=timezone.utc)
+        end_date = start_date + isodate.parse_duration(duration)
         return start_date, end_date
 
     def _build_metrics(self, raw_workout: PolarExerciseJSON) -> EventRecordMetrics:
@@ -269,7 +279,10 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         zone_offset = offset_to_iso(raw_workout.start_time_utc_offset * 60)
 
         try:
-            v4_rows = polar_v4_data.rr_rows_for_session(db, user_id, start_date, day_cache)
+            # v4 reports sessions in local wall-clock time, so match on the local start.
+            v4_rows = polar_v4_data.rr_rows_for_session(
+                db, user_id, self._local_start(raw_workout.start_time), day_cache
+            )
         except Exception as exc:  # noqa: BLE001 - v4 is an upgrade, never a dependency
             self.logger.warning(
                 "Polar v4 RR lookup failed for exercise %s, falling back to v3: %s", raw_workout.id, exc

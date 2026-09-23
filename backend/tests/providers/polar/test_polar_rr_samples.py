@@ -6,7 +6,7 @@ tests pin down how the timeline is reconstructed and how missing beats are handl
 """
 
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -85,9 +85,9 @@ class TestBuildRrSamples:
 
         assert [int(s.value) for s in samples] == [1000, 900, 1100]
         assert [s.recorded_at for s in samples] == [
-            datetime(2024, 1, 15, 22, 0, 1),
-            datetime(2024, 1, 15, 22, 0, 1, 900000),
-            datetime(2024, 1, 15, 22, 0, 3),
+            datetime(2024, 1, 15, 22, 0, 1, tzinfo=timezone.utc),
+            datetime(2024, 1, 15, 22, 0, 1, 900000, tzinfo=timezone.utc),
+            datetime(2024, 1, 15, 22, 0, 3, tzinfo=timezone.utc),
         ]
         assert all(s.series_type == SeriesType.rr_interval for s in samples)
         assert all(s.device_model == "Polar H10" for s in samples)
@@ -103,7 +103,7 @@ class TestBuildRrSamples:
 
         # Only real beats are stored, but the clock still reaches the end of the session.
         assert [int(s.value) for s in samples] == [1000, 1000, 1000]
-        assert samples[-1].recorded_at == datetime(2024, 1, 15, 22, 0, 5)
+        assert samples[-1].recorded_at == datetime(2024, 1, 15, 22, 0, 5, tzinfo=timezone.utc)
 
     def test_median_fills_the_gap_when_duration_leaves_no_deficit(self, workouts: PolarWorkouts) -> None:
         """A paused session can be shorter than its beats; fall back to the median interval."""
@@ -115,25 +115,60 @@ class TestBuildRrSamples:
         samples = workouts._rr_samples_for(MagicMock(), exercise, uuid4())
 
         assert [s.recorded_at for s in samples] == [
-            datetime(2024, 1, 15, 22, 0, 1),
-            datetime(2024, 1, 15, 22, 0, 3),
+            datetime(2024, 1, 15, 22, 0, 1, tzinfo=timezone.utc),
+            datetime(2024, 1, 15, 22, 0, 3, tzinfo=timezone.utc),
         ]
 
-    def test_start_time_offset_is_applied_to_the_beat_clock(self, workouts: PolarWorkouts) -> None:
+    @pytest.mark.parametrize(
+        ("local_start", "offset_minutes", "zone", "first_beat_utc"),
+        [
+            # Polar's start time is local; UTC is local minus the offset.
+            ("2024-01-15T22:00:00", 120, "+02:00", datetime(2024, 1, 15, 20, 0, 1, tzinfo=timezone.utc)),
+            # An overnight H10 session in US Eastern daylight time lands after midnight UTC,
+            # not on the previous afternoon as it did when the offset was added.
+            ("2026-09-22T23:00:00", -240, "-04:00", datetime(2026, 9, 23, 3, 0, 1, tzinfo=timezone.utc)),
+        ],
+    )
+    def test_the_beat_clock_starts_at_the_utc_start(
+        self,
+        workouts: PolarWorkouts,
+        local_start: str,
+        offset_minutes: int,
+        zone: str,
+        first_beat_utc: datetime,
+    ) -> None:
         exercise = PolarExerciseJSON(
             id="2AC312F",
             device="Polar H10",
             sport="OTHER",
-            start_time="2024-01-15T22:00:00",
-            start_time_utc_offset=120,
+            start_time=local_start,
+            start_time_utc_offset=offset_minutes,
             duration="PT2S",
             samples=[{"recording-rate": 0, "sample-type": "11", "data": "1000"}],
         )
 
         samples = workouts._rr_samples_for(MagicMock(), exercise, uuid4())
 
-        assert samples[0].recorded_at == datetime(2024, 1, 16, 0, 0, 1)
-        assert samples[0].zone_offset == "+02:00"
+        assert samples[0].recorded_at == first_beat_utc
+        assert samples[0].zone_offset == zone
+
+    def test_v4_is_matched_on_the_local_start(self, workouts: PolarWorkouts) -> None:
+        """v4 lists sessions in local time, so the lookup must not be given the UTC start."""
+        exercise = PolarExerciseJSON(
+            id="2AC312F",
+            device="Polar H10",
+            sport="OTHER",
+            start_time="2026-09-22T23:00:00",
+            start_time_utc_offset=-240,
+            duration="PT2S",
+        )
+
+        with patch(
+            "app.services.providers.polar.workouts.polar_v4_data.rr_rows_for_session", return_value=None
+        ) as lookup:
+            workouts._rr_samples_for(MagicMock(), exercise, uuid4())
+
+        assert lookup.call_args.args[2] == datetime(2026, 9, 22, 23, 0)
 
 
 class TestSamplesAreRequested:
