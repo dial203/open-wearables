@@ -826,6 +826,10 @@ class Oura247Data(Base247DataTemplate):
                             zone_offset=interval_zone_offset,
                             value=Decimal(str(value)),
                             series_type=series_type,
+                            # Each item summarises one interval (300 s for sleep HRV/HR).
+                            # Stated so /timeseries can say so: without it a consumer
+                            # cannot tell a 5-minute RMSSD from Apple's ~1-minute SDNN.
+                            provider_metadata={"interval_seconds": interval_data.interval},
                         )
                         for i, value in enumerate(interval_data.items)
                         if value is not None

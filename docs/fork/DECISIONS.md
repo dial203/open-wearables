@@ -309,3 +309,24 @@ Template:
   This fixes the split going forward. Rows already forked stay forked; merging
   them is a separate, opt-in repair, because it has to drop one side of every
   colliding second and that is not something a migration should do unasked.
+
+## `/timeseries` reads a comma-joined `types` list, and says how long each sample's window is
+
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: FastAPI only understands the repeated `types=a&types=b` form. A client
+  that joined the list (`types=a,b`, which the Sleep Validation Hub did) got a
+  400 on every sync, reported as a failed timeseries pull while every night
+  looked like one with no HRV series, so Oura's 5-minute sleep RMSSD, stored
+  here all along, never reached the hub. The route now splits comma-joined
+  values before the enum check. An unknown name in a joined list is still
+  refused, the same as it is in the repeated form.
+
+  Oura's sleep `hrv` and `heart_rate` arrays are 300-second windows, but a
+  `/timeseries` row carried nothing to say so. A consumer re-windowing a chest
+  strap onto the sample had to guess, and guessed Apple's ~60 s SDNN window.
+  The Oura save path now stamps `provider_metadata.interval_seconds`, and raw
+  `/timeseries` rows expose it as `interval_seconds`: null where no provider
+  stated a window, never inferred from cadence. Existing rows pick it up on the
+  next sleep sync, because the upsert fills `provider_metadata` when the stored
+  value differs.

@@ -67,6 +67,7 @@ def _to_sample(
     value: Decimal,
     is_daily_total: bool | None,
     data_source: DataSource | None,
+    provider_metadata: dict | None = None,
 ) -> TimeSeriesSample:
     series_type = get_series_type_from_id(series_type_definition_id)
     source = None
@@ -84,7 +85,18 @@ def _to_sample(
         unit=get_series_type_unit(series_type),
         source=source,
         is_daily_total=is_daily_total,
+        interval_seconds=_interval_seconds(provider_metadata),
     )
+
+
+def _interval_seconds(provider_metadata: dict | None) -> int | None:
+    """The window length a provider stated for this sample, or None when it stated none."""
+    if not isinstance(provider_metadata, dict):
+        return None
+    value = provider_metadata.get("interval_seconds")
+    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+        return None
+    return int(value)
 
 
 def _page(
@@ -362,6 +374,7 @@ class TimeSeriesService(
                 sample.value,
                 sample.is_daily_total,
                 data_source,
+                sample.provider_metadata,
             )
             for sample, data_source in samples
         ]
