@@ -194,8 +194,10 @@ def infer_device_type_from_source_name(source_name: str | None) -> DeviceType:
 # manufacturer, a model and a type. HealthKit's ``HKDevice`` carries name,
 # manufacturer, model and versions but no category field at all, so on the Apple
 # route there is nothing here to consume and classification stays inference from
-# strings. Google's cloud Health API surfaces the same enum, which is why a data
-# source can arrive whose entire model string is the literal "ring" or "watch".
+# strings - and a ``deviceType`` on an Apple payload is the iOS SDK's own guess, which
+# services/sdk/device_resolution filters out by route before it reaches this map.
+# Google's cloud Health API surfaces the same enum, which is why a data source can
+# arrive whose entire model string is the literal "ring" or "watch".
 _PLATFORM_DEVICE_TYPES: dict[str, DeviceType] = {
     "phone": DeviceType.PHONE,
     "watch": DeviceType.WATCH,

@@ -61,7 +61,7 @@ def record_sdk_identities(db_session: DbSession, user_id: UUID, provider: str, s
             seen.add(key)
 
             claims = claims_from_sdk_source(provider, source)
-            reported_device_type = extract_reported_device_type(source)
+            reported_device_type = extract_reported_device_type(provider, source)
             # A source carrying neither an identity claim nor a platform-declared type
             # has nothing this pass can add. One carrying only the type still does:
             # resolve_for_data_source applies it before it decides there is nothing to

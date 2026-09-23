@@ -49,15 +49,35 @@ def _resolve(db: Session, data_source: DataSource, reported: DeviceType | None) 
 class TestExtractionFromTheSdkPayload:
     def test_health_connect_device_type_survives_ingest(self) -> None:
         source = SourceInfo(appId="com.ouraring.oura", deviceModel="Pixel 9 Pro", deviceType="ring")
-        assert extract_reported_device_type(source) is DeviceType.RING
+        assert extract_reported_device_type(ProviderName.HEALTH_CONNECT, source) is DeviceType.RING
 
     def test_a_healthkit_source_declares_nothing(self) -> None:
         """HKDevice has name, manufacturer, model and versions - and no category."""
         source = SourceInfo(bundleIdentifier="com.ouraring.oura", productType="iPhone18,1")
-        assert extract_reported_device_type(source) is None
+        assert extract_reported_device_type(ProviderName.APPLE, source) is None
 
     def test_no_source_at_all_declares_nothing(self) -> None:
-        assert extract_reported_device_type(None) is None
+        assert extract_reported_device_type(ProviderName.HEALTH_CONNECT, None) is None
+
+    def test_an_apple_payload_carrying_a_type_is_still_ignored(self) -> None:
+        """The iOS SDK synthesises ``deviceType``; HealthKit never declares one.
+
+        At the SDK versions in the field it is synthesised from the handset's
+        productType, so a headband relayed through an iPhone arrives claiming "phone".
+        The route check - not the field being absent - is what keeps it out.
+        """
+        source = SourceInfo(name="Muse", productType="iPhone18,1", deviceType="phone")
+        assert extract_reported_device_type(ProviderName.APPLE, source) is None
+
+    def test_samsung_and_google_health_are_trusted_like_health_connect(self) -> None:
+        source = SourceInfo(appId="com.sec.android.app.shealth", deviceModel="SM-R960", deviceType="watch")
+        assert extract_reported_device_type(ProviderName.SAMSUNG, source) is DeviceType.WATCH
+        assert extract_reported_device_type(ProviderName.GOOGLE_HEALTH, source) is DeviceType.WATCH
+
+    def test_an_unknown_route_is_not_trusted(self) -> None:
+        source = SourceInfo(appId="whatever", deviceType="ring")
+        assert extract_reported_device_type("garmin", source) is None
+        assert extract_reported_device_type(None, source) is None
 
 
 class TestTheReportCorrectsARelayedStream:
@@ -200,3 +220,34 @@ class TestApplicationIsIndependentOfAttribution:
         assert source.device_type == DeviceType.RING.value
         assert len(DeviceRepository().list_for_user(db, user.id)) == 1
         assert DeviceRepository().pending_proposals(db, user.id) == []
+
+
+class TestAnAppleReportNeverDemotesARelayedWearable:
+    """The regression the route guard exists to prevent.
+
+    A Muse headband reaches Apple Health only by relay, so its data source carries the
+    phone's model and the writing app's name. ``_infer_device_type`` resolves that to
+    EEG - the one device type the priority table ranks first for sleep. The iOS SDK
+    sends ``deviceType: "phone"`` alongside it, inferred from the same handset model.
+    Trusting that would overwrite the study's reference instrument with its carrier,
+    and /summaries/sleep would drop its nights again.
+    """
+
+    def test_a_relayed_muse_keeps_its_eeg_classification(self, db: Session, user: User) -> None:
+        source = _ensure(db, user, ProviderName.APPLE, "iPhone18,1", "Muse")
+        assert source.device_type == DeviceType.EEG.value
+
+        payload = SourceInfo(name="Muse", productType="iPhone18,1", deviceType="phone")
+        _resolve(db, source, extract_reported_device_type(ProviderName.APPLE, payload))
+
+        assert source.device_type == DeviceType.EEG.value
+        assert DeviceRepository().get(db, source.device_id).device_type == DeviceType.EEG.value
+
+    def test_the_same_payload_shape_is_still_honoured_on_health_connect(self, db: Session, user: User) -> None:
+        """The guard is by route, not by value: a real platform report still wins."""
+        source = _ensure(db, user, ProviderName.HEALTH_CONNECT, "Pixel 9 Pro", "com.ultrahuman.app")
+        payload = SourceInfo(appId="com.ultrahuman.app", deviceModel="Pixel 9 Pro", deviceType="ring")
+
+        _resolve(db, source, extract_reported_device_type(ProviderName.HEALTH_CONNECT, payload))
+
+        assert source.device_type == DeviceType.RING.value
