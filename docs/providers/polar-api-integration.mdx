@@ -96,6 +96,25 @@ a validation design, never the ECG criterion. Beats recorded off the wrist or du
 offline period are dropped; `movement` beats are kept, since motion artefact is part of
 what an optical sensor does.
 
+**PPI timestamps.** v4 gives each beat as `offsetMillis` "from the beginning of the day" of
+its `date`, and the response carries no timezone. The day is the watch's local calendar day,
+so each day needs a UTC offset from elsewhere. It is resolved per day, in this order:
+
+1. The `zone_offset` of the user's stored Polar record (in practice an exercise, which
+   carries the watch's own `start_time_utc_offset`) starting nearest that day's local
+   midnight, within 3 days. On a validation night this is usually the H10 session itself.
+2. The account's timezone setting from v4 `/user/account-data`. This is one current value,
+   so it is an hour off for days on the other side of a DST change. It needs the
+   `profile:read` scope, which `POLAR_V4_DEFAULT_SCOPE` does not include by default.
+   Without that scope, this step is skipped.
+
+A day that resolves neither way is not stored, and the sync logs a warning. Every stored
+PPI beat carries the `zone_offset` it was placed with. On the two DST-change days a year,
+one offset (the one in force at midnight, when the record chosen is nearest midnight)
+covers the whole day. That is right if `offsetMillis` counts elapsed time from midnight.
+If it counts wall-clock time, beats after the 02:00 change are an hour off. Polar's
+documentation does not say which.
+
 <Warning>
 **Connect v4 before backfilling.** The two reconstructions place beats on different
 timestamps — v4 exactly, v3 by estimating across dropouts — and the time series upserts on

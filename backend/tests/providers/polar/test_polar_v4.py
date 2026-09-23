@@ -6,16 +6,19 @@ v4 wins when it has data, that v3 still runs when it doesn't, and that optical P
 gets filed as ECG RR.
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.orm import Session
 
+from app.models import User
 from app.schemas.enums import ProviderName, SeriesType
 from app.schemas.providers.polar import ExerciseJSON as PolarExerciseJSON
 from app.services.providers.polar.v4_data import PolarV4Data
 from app.services.providers.polar.workouts import PolarWorkouts
+from tests.factories import DataSourceFactory, EventRecordFactory, UserFactory
 
 SESSION = {
     "trainingSessions": [
@@ -84,100 +87,181 @@ class TestRrRowsForSession:
         assert get.call_count == 1
 
 
-class TestNormalizePpi:
-    def test_beats_are_timestamped_from_the_start_of_the_day(self, v4: PolarV4Data) -> None:
-        raw = {
-            "dailyPpiSamples": [
-                {
-                    "date": "2024-01-15",
-                    "ppiSamplesPerDevice": [
-                        {
-                            "ppiSamples": [
-                                {"offsetMillis": 1000, "ppInterval": 900, "skinContact": True, "offline": False},
-                                {"offsetMillis": 2000, "ppInterval": 950, "skinContact": True, "offline": False},
-                            ]
-                        }
-                    ],
-                }
-            ]
-        }
+def _ppi_day(day: str, *beats: dict) -> dict:
+    return {"dailyPpiSamples": [{"date": day, "ppiSamplesPerDevice": [{"ppiSamples": list(beats)}]}]}
 
-        samples = v4.normalize_ppi(raw, uuid4())
+
+UTC_DAY = {date(2024, 1, 15): 0}
+
+
+class TestNormalizePpi:
+    def test_beats_are_timestamped_from_local_midnight_at_utc_plus_0(self, v4: PolarV4Data) -> None:
+        raw = _ppi_day(
+            "2024-01-15",
+            {"offsetMillis": 1000, "ppInterval": 900, "skinContact": True, "offline": False},
+            {"offsetMillis": 2000, "ppInterval": 950, "skinContact": True, "offline": False},
+        )
+
+        samples = v4.normalize_ppi(raw, uuid4(), UTC_DAY)
 
         assert [s.recorded_at for s in samples] == [
-            datetime(2024, 1, 15, 0, 0, 1),
-            datetime(2024, 1, 15, 0, 0, 2),
+            datetime(2024, 1, 15, 0, 0, 1, tzinfo=timezone.utc),
+            datetime(2024, 1, 15, 0, 0, 2, tzinfo=timezone.utc),
         ]
         assert [int(s.value) for s in samples] == [900, 950]
 
-    def test_ppi_is_never_stored_as_ecg_rr(self, v4: PolarV4Data) -> None:
-        raw = {
-            "dailyPpiSamples": [
-                {
-                    "date": "2024-01-15",
-                    "ppiSamplesPerDevice": [
-                        {"ppiSamples": [{"offsetMillis": 0, "ppInterval": 900, "skinContact": True}]}
-                    ],
-                }
-            ]
-        }
+    def test_edt_beats_land_at_true_utc(self, v4: PolarV4Data) -> None:
+        """offsetMillis counts from *local* midnight; in EDT that midnight is 04:00Z.
 
-        samples = v4.normalize_ppi(raw, uuid4())
+        Stored naively, 23:30 local on the 15th sat at 23:30Z on the 15th — 4 h early and
+        outside the H10 session it has to be compared against.
+        """
+        half_past_eleven = (23 * 3600 + 30 * 60) * 1000
+        raw = _ppi_day(
+            "2024-07-15",
+            {"offsetMillis": 0, "ppInterval": 900, "skinContact": True},
+            {"offsetMillis": half_past_eleven, "ppInterval": 950, "skinContact": True},
+        )
+
+        samples = v4.normalize_ppi(raw, uuid4(), {date(2024, 7, 15): -240})
+
+        assert [s.recorded_at for s in samples] == [
+            datetime(2024, 7, 15, 4, 0, tzinfo=timezone.utc),
+            datetime(2024, 7, 16, 3, 30, tzinfo=timezone.utc),
+        ]
+        assert {s.zone_offset for s in samples} == {"-04:00"}
+
+    def test_east_of_utc_the_day_starts_the_evening_before(self, v4: PolarV4Data) -> None:
+        raw = _ppi_day("2024-01-15", {"offsetMillis": 0, "ppInterval": 900, "skinContact": True})
+
+        sample = v4.normalize_ppi(raw, uuid4(), {date(2024, 1, 15): 120})[0]
+
+        assert sample.recorded_at == datetime(2024, 1, 14, 22, 0, tzinfo=timezone.utc)
+        assert sample.zone_offset == "+02:00"
+
+    def test_a_day_without_a_known_offset_is_skipped_not_guessed(self, v4: PolarV4Data) -> None:
+        raw = _ppi_day("2024-01-15", {"offsetMillis": 0, "ppInterval": 900, "skinContact": True})
+
+        assert v4.normalize_ppi(raw, uuid4(), {}) == []
+
+    def test_ppi_is_never_stored_as_ecg_rr(self, v4: PolarV4Data) -> None:
+        raw = _ppi_day("2024-01-15", {"offsetMillis": 0, "ppInterval": 900, "skinContact": True})
+
+        samples = v4.normalize_ppi(raw, uuid4(), UTC_DAY)
 
         assert all(s.series_type == SeriesType.pulse_to_pulse_interval for s in samples)
         assert not any(s.series_type == SeriesType.rr_interval for s in samples)
 
     def test_beats_off_the_wrist_or_offline_are_dropped(self, v4: PolarV4Data) -> None:
-        raw = {
-            "dailyPpiSamples": [
-                {
-                    "date": "2024-01-15",
-                    "ppiSamplesPerDevice": [
-                        {
-                            "ppiSamples": [
-                                {"offsetMillis": 0, "ppInterval": 900, "skinContact": False, "offline": False},
-                                {"offsetMillis": 1, "ppInterval": 900, "skinContact": True, "offline": True},
-                                {"offsetMillis": 2, "ppInterval": 900, "skinContact": True, "offline": False},
-                            ]
-                        }
-                    ],
-                }
-            ]
-        }
+        raw = _ppi_day(
+            "2024-01-15",
+            {"offsetMillis": 0, "ppInterval": 900, "skinContact": False, "offline": False},
+            {"offsetMillis": 1, "ppInterval": 900, "skinContact": True, "offline": True},
+            {"offsetMillis": 2, "ppInterval": 900, "skinContact": True, "offline": False},
+        )
 
-        assert len(v4.normalize_ppi(raw, uuid4())) == 1
+        assert len(v4.normalize_ppi(raw, uuid4(), UTC_DAY)) == 1
 
     def test_movement_beats_are_kept(self, v4: PolarV4Data) -> None:
         """Motion artefact is part of what an optical comparator does; dropping it would flatter it."""
-        raw = {
-            "dailyPpiSamples": [
-                {
-                    "date": "2024-01-15",
-                    "ppiSamplesPerDevice": [
-                        {"ppiSamples": [{"offsetMillis": 0, "ppInterval": 900, "skinContact": True, "movement": True}]}
-                    ],
-                }
-            ]
-        }
+        raw = _ppi_day("2024-01-15", {"offsetMillis": 0, "ppInterval": 900, "skinContact": True, "movement": True})
 
-        assert len(v4.normalize_ppi(raw, uuid4())) == 1
+        assert len(v4.normalize_ppi(raw, uuid4(), UTC_DAY)) == 1
 
     def test_ppi_lands_on_the_ordinary_polar_source(self, v4: PolarV4Data) -> None:
-        raw = {
-            "dailyPpiSamples": [
-                {
-                    "date": "2024-01-15",
-                    "ppiSamplesPerDevice": [
-                        {"ppiSamples": [{"offsetMillis": 0, "ppInterval": 900, "skinContact": True}]}
-                    ],
-                }
-            ]
-        }
+        raw = _ppi_day("2024-01-15", {"offsetMillis": 0, "ppInterval": 900, "skinContact": True})
 
-        sample = v4.normalize_ppi(raw, uuid4())[0]
+        sample = v4.normalize_ppi(raw, uuid4(), UTC_DAY)[0]
 
         assert sample.provider == ProviderName.POLAR
         assert sample.source == ProviderName.POLAR
+
+
+class TestPpiUtcOffsets:
+    """Where a PPI day's offset comes from, since /ppi-samples carries none."""
+
+    @staticmethod
+    def _polar_record(
+        db: Session,
+        user: User,
+        start: datetime,
+        zone_offset: str | None,
+        provider: ProviderName = ProviderName.POLAR,
+    ) -> None:
+        source = DataSourceFactory(user=user, provider=provider, source=provider.value)
+        EventRecordFactory(data_source=source, start_datetime=start, zone_offset=zone_offset)
+        db.flush()
+
+    def test_a_nearby_polar_exercise_lends_its_offset(self, db: Session, v4: PolarV4Data) -> None:
+        user = UserFactory()
+        self._polar_record(db, user, datetime(2024, 7, 16, 3, 0, tzinfo=timezone.utc), "-04:00")
+
+        with patch.object(v4, "_get") as get:
+            offsets = v4.ppi_utc_offsets(db, user.id, date(2024, 7, 15), date(2024, 7, 16))
+
+        assert offsets == {date(2024, 7, 15): -240, date(2024, 7, 16): -240}
+        get.assert_not_called()
+
+    def test_the_record_nearest_local_midnight_wins_across_a_dst_change(self, db: Session, v4: PolarV4Data) -> None:
+        """US DST ended 2026-11-01 02:00. offsetMillis counts from midnight, so that day is EDT."""
+        user = UserFactory()
+        self._polar_record(db, user, datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc), "-04:00")  # 20:00 EDT, 31 Oct
+        self._polar_record(db, user, datetime(2026, 11, 2, 3, 0, tzinfo=timezone.utc), "-05:00")  # 22:00 EST, 1 Nov
+
+        offsets = v4.ppi_utc_offsets(db, user.id, date(2026, 11, 1), date(2026, 11, 2))
+
+        assert offsets == {date(2026, 11, 1): -240, date(2026, 11, 2): -300}
+
+    def test_other_providers_and_other_users_do_not_count(self, db: Session, v4: PolarV4Data) -> None:
+        user = UserFactory()
+        start = datetime(2024, 7, 15, 12, 0, tzinfo=timezone.utc)
+        self._polar_record(db, user, start, "+09:00", provider=ProviderName.GARMIN)
+        self._polar_record(db, UserFactory(), start, "+02:00")
+
+        with patch.object(v4, "_get", return_value=None):
+            assert v4.ppi_utc_offsets(db, user.id, date(2024, 7, 15), date(2024, 7, 15)) == {}
+
+    def test_a_record_outside_the_window_does_not_count(self, db: Session, v4: PolarV4Data) -> None:
+        user = UserFactory()
+        self._polar_record(db, user, datetime(2024, 7, 1, 12, 0, tzinfo=timezone.utc), "-04:00")
+
+        with patch.object(v4, "_get", return_value=None):
+            assert v4.ppi_utc_offsets(db, user.id, date(2024, 7, 15), date(2024, 7, 15)) == {}
+
+    def test_falls_back_to_the_account_timezone_once(self, db: Session, v4: PolarV4Data) -> None:
+        user = UserFactory()
+        account = {"accountData": {"localizationSettings": {"timezoneOffsetMinutes": -240}}}
+
+        with patch.object(v4, "_get", return_value=account) as get:
+            offsets = v4.ppi_utc_offsets(db, user.id, date(2024, 7, 15), date(2024, 7, 17))
+
+        assert offsets == {date(2024, 7, 15): -240, date(2024, 7, 16): -240, date(2024, 7, 17): -240}
+        get.assert_called_once()
+        assert get.call_args.args[2] == "/v4/data/user/account-data"
+
+
+class TestPpiLinesUpWithH10:
+    """The point of the fix: an EDT night's optical beats sit on the same UTC clock as the H10's."""
+
+    def test_same_beat_same_instant(self, v4: PolarV4Data) -> None:
+        exercise = PolarExerciseJSON(
+            id="2AC312F",
+            device="Polar H10",
+            sport="OTHER",
+            start_time="2024-07-15T23:00:00",
+            start_time_utc_offset=-240,
+            duration="PT3S",
+            samples=[{"recording-rate": 0, "sample-type": "11", "data": "1000,900"}],
+        )
+        with patch("app.services.providers.polar.workouts.polar_v4_data.rr_rows_for_session", return_value=None):
+            rr = TestHybridPreference._workouts()._rr_samples_for(MagicMock(), exercise, uuid4())
+
+        # The watch sees the same R-wave-closing beat 23:00:01 local on the 15th.
+        raw = _ppi_day("2024-07-15", {"offsetMillis": (23 * 3600 + 1) * 1000, "ppInterval": 1000, "skinContact": True})
+        ppi = v4.normalize_ppi(raw, uuid4(), {date(2024, 7, 15): -240})
+
+        assert rr[0].recorded_at == datetime(2024, 7, 16, 3, 0, 1, tzinfo=timezone.utc)
+        assert ppi[0].recorded_at == rr[0].recorded_at
 
 
 class TestHybridPreference:

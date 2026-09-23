@@ -14,15 +14,18 @@ anything downstream except that the data is better. Everything here degrades to 
 when the user has not connected a v4 token.
 """
 
-from datetime import date, datetime, timedelta
+import re
+from collections.abc import Mapping
+from datetime import date, datetime, time, timedelta, timezone
 from logging import getLogger
 from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 
 from app.database import DbSession
-from app.models import User
+from app.models import DataSource, EventRecord, User
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.enums import ProviderName, SeriesType
@@ -35,11 +38,29 @@ from app.schemas.providers.polar.v4 import (
 from app.services.providers.api_client import make_authenticated_request
 from app.services.providers.polar.v4_oauth import POLAR_V4_BASE_URL, PolarV4OAuth
 from app.services.timeseries_service import timeseries_service
+from app.utils.dates import offset_to_iso
 
 # How far apart a v3 exercise and a v4 training session may start and still be the same
 # session. The two APIs report the same recording from different stores, so a few seconds
 # of skew is normal; minutes would mean a different session.
 SESSION_MATCH_TOLERANCE = timedelta(seconds=120)
+
+# How far from a PPI day's local midnight a stored Polar record may start and still lend
+# that day its UTC offset. Wide enough to reach the usual workout-a-few-times-a-week
+# cadence, narrow enough that a DST change or a trip rarely falls in between.
+PPI_OFFSET_WINDOW = timedelta(days=3)
+
+_ZONE_OFFSET = re.compile(r"^([+-])(\d{2}):(\d{2})$")
+
+
+def _zone_minutes(zone_offset: str | None) -> int | None:
+    """'+02:00' -> 120, '-04:00' -> -240; None for anything unparseable."""
+    match = _ZONE_OFFSET.match(zone_offset or "")
+    if not match:
+        return None
+    sign, hours, minutes = match.groups()
+    total = int(hours) * 60 + int(minutes)
+    return -total if sign == "-" else total
 
 
 class PolarV4Data:
@@ -179,8 +200,15 @@ class PolarV4Data:
     # Pulse-to-pulse intervals — the optical comparator
     # -------------------------------------------------------------------------
 
-    def normalize_ppi(self, raw: dict[str, Any], user_id: UUID) -> list[TimeSeriesSampleCreate]:
-        """Turn a /ppi-samples response into samples timestamped from the start of each day.
+    def normalize_ppi(
+        self, raw: dict[str, Any], user_id: UUID, utc_offsets: Mapping[date, int]
+    ) -> list[TimeSeriesSampleCreate]:
+        """Turn a /ppi-samples response into samples at true UTC.
+
+        v4 gives each beat as ``offsetMillis`` from the start of its ``date``, and neither
+        carries a zone: the day is the device's local calendar day. ``utc_offsets`` maps each
+        day to its UTC offset in minutes (see ``ppi_utc_offsets``); a day missing from it
+        cannot be placed on a true clock and is skipped rather than stored at a guess.
 
         Beats recorded off the wrist or during an offline period are not measurements, so
         they are dropped. ``movement`` beats are kept: motion artefact is part of what an
@@ -194,9 +222,20 @@ class PolarV4Data:
             if not day.date:
                 continue
             try:
-                midnight = datetime.fromisoformat(day.date)
+                local_day = date.fromisoformat(day.date)
             except ValueError:
                 continue
+            offset = utc_offsets.get(local_day)
+            if offset is None:
+                beats = sum(len(device.ppi_samples or []) for device in day.ppi_samples_per_device or [])
+                if beats:
+                    self.logger.warning(
+                        "Polar v4 PPI: no UTC offset for %s, skipped %d beats for user %s", local_day, beats, user_id
+                    )
+                continue
+            zone = timezone(timedelta(minutes=offset))
+            midnight = datetime.combine(local_day, time(), tzinfo=zone).astimezone(timezone.utc)
+            zone_offset = offset_to_iso(offset * 60)
             for device in day.ppi_samples_per_device or []:
                 for beat in device.ppi_samples or []:
                     if beat.offline or not beat.skin_contact or beat.pp_interval <= 0:
@@ -209,6 +248,7 @@ class PolarV4Data:
                             provider=ProviderName.POLAR,
                             source=ProviderName.POLAR,
                             recorded_at=midnight + timedelta(milliseconds=beat.offset_millis),
+                            zone_offset=zone_offset,
                             value=beat.pp_interval,
                             series_type=SeriesType.pulse_to_pulse_interval,
                         )
@@ -216,6 +256,74 @@ class PolarV4Data:
         if dropped:
             self.logger.info("Polar v4 PPI: dropped %d beats (offline or no skin contact)", dropped)
         return samples
+
+    def ppi_utc_offsets(self, db: DbSession, user_id: UUID, first: date, last: date) -> dict[date, int]:
+        """The UTC offset, in minutes, to place each local PPI day in ``[first, last]`` on.
+
+        /ppi-samples carries no zone, so it has to come from elsewhere. In order:
+
+        1. **A stored Polar record near that day's local midnight.** Polar exercises carry
+           the device's own ``start_time_utc_offset`` (stored as ``zone_offset``), so this
+           is what the watch itself was set to, travel and DST included. The record nearest
+           midnight wins, because ``offsetMillis`` counts from midnight; on a validation
+           night that is usually the H10 session itself. Only records within
+           ``PPI_OFFSET_WINDOW`` count.
+        2. **The account's timezone setting** (v4 ``/user/account-data``). It is a single
+           current value, so it is right for recent days and wrong by an hour for days on
+           the other side of a DST change. It needs the ``profile:read`` scope; without it
+           this step silently yields nothing.
+
+        A day neither resolves is left out, and ``normalize_ppi`` skips it.
+        """
+        lo = datetime.combine(first, time(), tzinfo=timezone.utc) - PPI_OFFSET_WINDOW - timedelta(days=1)
+        hi = datetime.combine(last, time(), tzinfo=timezone.utc) + PPI_OFFSET_WINDOW + timedelta(days=1)
+        rows = db.execute(
+            select(EventRecord.start_datetime, EventRecord.zone_offset)
+            .join(DataSource, DataSource.id == EventRecord.data_source_id)
+            .where(
+                DataSource.user_id == user_id,
+                DataSource.provider == ProviderName.POLAR,
+                EventRecord.zone_offset.is_not(None),
+                EventRecord.start_datetime.between(lo, hi),
+            )
+        ).all()
+        anchors = [
+            (start if start.tzinfo else start.replace(tzinfo=timezone.utc), minutes)
+            for start, zone_offset in rows
+            if (minutes := _zone_minutes(zone_offset)) is not None
+        ]
+
+        offsets: dict[date, int] = {}
+        account_offset: int | None = None
+        account_checked = False
+        day = first
+        while day <= last:
+            best: tuple[timedelta, int] | None = None
+            for start, minutes in anchors:
+                # The instant this day began under this record's offset.
+                midnight = datetime.combine(day, time(), tzinfo=timezone(timedelta(minutes=minutes)))
+                distance = abs(start - midnight)
+                if distance <= PPI_OFFSET_WINDOW and (best is None or distance < best[0]):
+                    best = (distance, minutes)
+            if best is not None:
+                offsets[day] = best[1]
+            else:
+                if not account_checked:
+                    account_offset = self.get_account_utc_offset(db, user_id)
+                    account_checked = True
+                if account_offset is not None:
+                    offsets[day] = account_offset
+            day += timedelta(days=1)
+        return offsets
+
+    def get_account_utc_offset(self, db: DbSession, user_id: UUID) -> int | None:
+        """The account's preferred timezone as minutes east of UTC, if the token may read it."""
+        raw = self._get(db, user_id, "/v4/data/user/account-data", {})
+        if not isinstance(raw, dict):
+            return None
+        settings = (raw.get("accountData") or {}).get("localizationSettings") or {}
+        minutes = settings.get("timezoneOffsetMinutes")
+        return minutes if isinstance(minutes, int) else None
 
     def load_ppi_samples(self, db: DbSession, user_id: UUID, start_time: datetime, end_time: datetime) -> int:
         """Pull and store PPI for a date range. Returns the number of beats written."""
@@ -225,6 +333,7 @@ class PolarV4Data:
         written = 0
         day = start_time.date()
         last = end_time.date()
+        utc_offsets = self.ppi_utc_offsets(db, user_id, day, last)
         while day <= last:
             raw = self._get(
                 db,
@@ -233,7 +342,7 @@ class PolarV4Data:
                 {"from": day.isoformat(), "to": (day + timedelta(days=1)).isoformat(), "features": "samples"},
             )
             if raw:
-                samples = self.normalize_ppi(raw, user_id)
+                samples = self.normalize_ppi(raw, user_id, utc_offsets)
                 if samples:
                     written += int(timeseries_service.bulk_create_samples(db, samples))
             day += timedelta(days=1)
