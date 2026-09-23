@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.apple.apple_xml.xml_service import XMLService
+from app.services.providers.apple.apple_xml.xml_service import XMLService
 
 logger = getLogger(__name__)
 

@@ -63,10 +63,22 @@ class ProviderName(str, Enum):
         return cls.UNKNOWN
 
 
+# Default order for a fresh deployment. Covers every provider a user can connect;
+# UNKNOWN and INTERNAL are deliberately absent because they are not configurable;
+# POLAR_V4 is too, because it only holds tokens and its data files under POLAR.
 DEFAULT_PROVIDER_PRIORITY: dict[ProviderName, int] = {
     ProviderName.APPLE: 1,
     ProviderName.GARMIN: 2,
     ProviderName.POLAR: 3,
     ProviderName.SUUNTO: 4,
     ProviderName.WHOOP: 5,
+    ProviderName.FITBIT: 6,
+    ProviderName.GOOGLE_HEALTH: 7,
+    ProviderName.HEALTH_CONNECT: 8,
+    ProviderName.OURA: 9,
+    ProviderName.SAMSUNG: 10,
+    ProviderName.SENSORBIO: 11,
+    ProviderName.STRAVA: 12,
+    ProviderName.ULTRAHUMAN: 13,
+    ProviderName.WITHINGS: 14,
 }

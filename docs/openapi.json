@@ -2761,6 +2761,24 @@
             "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out."
           },
           {
+            "name": "is_nap",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "When true, return only naps; when false, only main sleep. Omit to return both.",
+              "title": "Is Nap"
+            },
+            "description": "When true, return only naps; when false, only main sleep. Omit to return both."
+          },
+          {
             "name": "filter_by_priority",
             "in": "query",
             "required": false,
@@ -3616,6 +3634,45 @@
       }
     },
     "/api/v1/oauth/{provider}/callback": {
+      "head": {
+        "tags": [
+          "System: OAuth"
+        ],
+        "summary": "Probe Oauth Callback",
+        "description": "Answer the reachability probe Withings sends when the callback URL is registered.",
+        "operationId": "probe_oauth_callback_api_v1_oauth__provider__callback_head",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "tags": [
           "System: OAuth"
@@ -17000,6 +17057,30 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "Display name (e.g., 'Apple Health', 'Garmin')."
+          },
+          "icon_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon Url",
+            "description": "Relative URL to provider icon (e.g., '/static/provider-icons/garmin.svg'). Resolve against the API base URL."
           }
         },
         "type": "object",
