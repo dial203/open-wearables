@@ -12,6 +12,7 @@ import { useUserConnections } from '@/hooks/api/use-health';
 import { buildAccountMap } from '@/lib/utils/account';
 import { SectionHeader } from '@/components/common/section-header';
 import { formatMinutes, parseApiDate } from '@/lib/utils/format';
+import { sleepSessionDayKey } from '@/lib/utils/sleep';
 import type {
   RecoverySummary,
   SleepSession,
@@ -261,8 +262,9 @@ export function CompareSection({ userId }: CompareSectionProps) {
     const byKey = new Map<string, SleepSession>();
     for (const s of sessionData?.data ?? []) {
       if (!s.sleep_stage_intervals?.length) continue;
-      // Attributed to the morning you woke, matching the table above.
-      if (format(parseApiDate(s.end_time), 'yyyy-MM-dd') !== dayKey) continue;
+      // Attributed to the morning you woke, matching the table above. Not
+      // parseApiDate: end_time is a timestamp, not a date-only string.
+      if (sleepSessionDayKey(s.end_time) !== dayKey) continue;
       const key = sourceKey(s.source);
       const existing = byKey.get(key);
       // Keep the main sleep period when a source also filed naps.

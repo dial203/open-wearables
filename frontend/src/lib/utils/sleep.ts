@@ -3,8 +3,29 @@ import type {
   SleepSummary,
   SleepStagesSummary,
 } from '@/lib/api/types';
+import { format } from 'date-fns';
 import { providerLabel } from '@/components/common/source-badge';
 import { formatMinutes } from './format';
+
+/**
+ * The local calendar day a sleep session belongs to - the morning you woke.
+ *
+ * Takes the session's ``end_time``, which is a full ISO timestamp. It is
+ * deliberately not ``parseApiDate``: that helper splits a *date-only* string on
+ * "-" and hands the pieces to the Date constructor, so a timestamp yields
+ * ``[2026, 9, NaN]`` -> Invalid Date, and formatting one throws "Invalid time
+ * value" and takes the whole view down with it.
+ *
+ * Returns null rather than throwing when the timestamp is unusable, so one bad
+ * record is one missing row instead of a blank page.
+ */
+export function sleepSessionDayKey(
+  endTime: string | null | undefined
+): string | null {
+  if (!endTime) return null;
+  const parsed = new Date(endTime);
+  return Number.isNaN(parsed.getTime()) ? null : format(parsed, 'yyyy-MM-dd');
+}
 
 /**
  * Sleep stage type keys
