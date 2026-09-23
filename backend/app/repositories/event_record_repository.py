@@ -64,6 +64,12 @@ def _relay_conditions(relay_plan: "RelayDedupPlan | None") -> list[ColumnElement
     )
 
 
+def _nap_condition(is_nap: bool) -> ColumnElement[bool]:
+    """Match sleep records by nap flag; a missing detail row or NULL flag counts as main sleep."""
+    flagged_nap = EventRecord.sleep_detail.has(SleepDetails.is_nap.is_(True))
+    return flagged_nap if is_nap else ~flagged_nap
+
+
 class EventRecordRepository(
     CrudRepository[EventRecord, EventRecordCreate, EventRecordUpdate],
 ):
@@ -330,6 +336,9 @@ class EventRecordRepository(
         if query_params.source_name:
             filters.append(EventRecord.source_name.ilike(f"%{query_params.source_name}%"))
 
+        if query_params.is_nap is not None:
+            filters.append(_nap_condition(query_params.is_nap))
+
         filters.extend(source_filter_conditions(query_params, EventRecord.data_source_id))
 
         if relay_plan is not None:
@@ -474,6 +483,8 @@ class EventRecordRepository(
             filters.append(EventRecord.start_datetime >= query_params.start_datetime)
         if query_params.end_datetime:
             filters.append(EventRecord.end_datetime < query_params.end_datetime)
+        if query_params.is_nap is not None:
+            filters.append(_nap_condition(query_params.is_nap))
 
         ranked = (
             db_session.query(

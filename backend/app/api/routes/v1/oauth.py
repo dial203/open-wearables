@@ -130,6 +130,12 @@ def _just_connected(db: DbSession, oauth_state: OAuthState, provider_name: Provi
     return accounts[-1] if accounts else None
 
 
+@router.head("/{provider}/callback", tags=["System: OAuth"])
+def probe_oauth_callback(provider: str) -> None:
+    """Answer the reachability probe Withings sends when the callback URL is registered."""
+    get_oauth_strategy(resolve_provider(provider))
+
+
 @router.get("/{provider}/callback", tags=["System: OAuth"])
 def oauth_callback(
     provider: str,
