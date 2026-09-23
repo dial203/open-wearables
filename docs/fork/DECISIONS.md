@@ -312,6 +312,7 @@ Template:
 
 ## `/timeseries` reads a comma-joined `types` list, and says how long each sample's window is
 
+- **Area**: backend
 - **Status**: active
 - **On conflict**: keep ours
 - **Why**: FastAPI only understands the repeated `types=a&types=b` form. A client
