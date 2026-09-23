@@ -127,10 +127,14 @@ class PolarV4Data:
         self,
         db: DbSession,
         user_id: UUID,
-        start_datetime: datetime,
+        local_start: datetime,
         day_cache: dict[date, list[TrainingSessionJSON]] | None = None,
     ) -> list[tuple[int, bool]] | None:
         """The (interval_ms, offline) beats v4 holds for the session starting at this time.
+
+        ``local_start`` is the session's start in local wall-clock time, the frame v4 lists
+        and dates sessions in. Passing a UTC time here (or the mis-shifted one the v3 path
+        once produced) misses every session outside UTC+0 by the offset.
 
         Returns None when v4 has nothing to say — no connection, no matching session, or a
         session recorded without a strap — which is the caller's signal to fall back to v3.
@@ -151,7 +155,7 @@ class PolarV4Data:
                 cache[day] = self.get_training_sessions(db, user_id, day)
             return cache[day]
 
-        naive_start = start_datetime.replace(tzinfo=None)
+        naive_start = local_start.replace(tzinfo=None)
         sessions = sessions_on(naive_start.date())
         # A session that began just before local midnight is filed under the previous day.
         if not sessions:

@@ -4,7 +4,7 @@ Tests for Polar workouts implementation.
 Tests the PolarWorkouts class for fetching and processing workout data from Polar API.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -97,6 +97,8 @@ class TestPolarWorkoutsDateExtraction:
         assert isinstance(end_date, datetime)
         assert end_date > start_date
         assert (end_date - start_date).total_seconds() == 3600  # 1 hour
+        # 08:00 local at UTC+1 is 07:00 UTC: the offset is subtracted, not added.
+        assert start_date == datetime(2024, 1, 15, 7, 0, tzinfo=timezone.utc)
 
     def test_extract_dates_with_offset_negative_offset(self, db: Session) -> None:
         """Test extracting dates with negative UTC offset."""
@@ -135,6 +137,8 @@ class TestPolarWorkoutsDateExtraction:
         assert isinstance(start_date, datetime)
         assert isinstance(end_date, datetime)
         assert (end_date - start_date).total_seconds() == 1800  # 30 minutes
+        # 08:00 local at UTC-5 is 13:00 UTC.
+        assert start_date == datetime(2024, 1, 15, 13, 0, tzinfo=timezone.utc)
 
     def test_extract_dates_not_implemented_fallback(self, db: Session) -> None:
         """Test that _extract_dates raises NotImplementedError for Polar."""

@@ -6,7 +6,7 @@ v4 wins when it has data, that v3 still runs when it doesn't, and that optical P
 gets filed as ECG RR.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -227,7 +227,7 @@ class TestHybridPreference:
         # The offline beat still advances the clock but is not stored, so the third beat
         # sits at 1000 + 850 + 900 ms — a timestamp the v3 path could only estimate.
         assert [int(s.value) for s in samples] == [1000, 900]
-        assert samples[-1].recorded_at == datetime(2024, 1, 15, 22, 0, 2, 750000)
+        assert samples[-1].recorded_at == datetime(2024, 1, 15, 22, 0, 2, 750000, tzinfo=timezone.utc)
 
     def test_v3_still_runs_when_v4_has_nothing(self) -> None:
         workouts = self._workouts()
