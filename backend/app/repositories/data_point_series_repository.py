@@ -7,6 +7,7 @@ from uuid import UUID
 
 from psycopg import Connection as PGConnection
 from psycopg.errors import UniqueViolation
+from psycopg.types.json import Jsonb
 from sqlalchemy import (
     Column,
     ColumnElement,
@@ -282,6 +283,10 @@ class DataPointSeriesRepository(
         value: Decimal | float | int
         series_type_definition_id: int
         is_daily_total: bool | None
+        # Wrapped in psycopg's Jsonb rather than passed as a bare dict: COPY picks a
+        # dumper from the Python type, and a plain dict has none registered, so the row
+        # would fail to adapt. The wrapper also serialises None as a proper SQL NULL.
+        provider_metadata: Jsonb | None
 
     # Single source of truth for the COPY/INSERT column list, derived from _StagingRow's
     # own field names above so the SQL text and the row shape can't drift apart.
@@ -315,6 +320,7 @@ class DataPointSeriesRepository(
                     value=creator.value,
                     series_type_definition_id=get_series_type_id(creator.series_type),
                     is_daily_total=creator.is_daily_total,
+                    provider_metadata=Jsonb(creator.provider_metadata) if creator.provider_metadata else None,
                 )
             )
 
@@ -361,11 +367,22 @@ class DataPointSeriesRepository(
                             external_id = excluded.external_id,
                             value = excluded.value,
                             zone_offset = excluded.zone_offset,
-                            is_daily_total = excluded.is_daily_total
+                            is_daily_total = excluded.is_daily_total,
+                            -- COALESCE, not a plain overwrite: a re-sync of the same
+                            -- sample from a route that sends no metadata must not erase
+                            -- what a route that does already stored.
+                            provider_metadata = COALESCE(
+                                excluded.provider_metadata, data_point_series.provider_metadata
+                            )
                         WHERE data_point_series.value IS DISTINCT FROM excluded.value
                            OR data_point_series.external_id IS DISTINCT FROM excluded.external_id
                            OR data_point_series.zone_offset IS DISTINCT FROM excluded.zone_offset
                            OR data_point_series.is_daily_total IS DISTINCT FROM excluded.is_daily_total
+                           OR (
+                                excluded.provider_metadata IS NOT NULL
+                                AND data_point_series.provider_metadata
+                                    IS DISTINCT FROM excluded.provider_metadata
+                              )
                         RETURNING (xmax = 0) AS was_insert
                     )
                     SELECT count(*) FILTER (WHERE was_insert) FROM merged
