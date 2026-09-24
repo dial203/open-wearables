@@ -353,3 +353,23 @@ Template:
     `lastNightAvg` sits in the same series at the sleep start and is now
     flagged `is_daily_total`, so it is not read as the first window and is left
     out of bucketed reads, as Google's daily HRV already is.
+
+## Google Health defaults to list, not reconcile
+
+- **Area**: backend
+- **Status**: active; follows from "OW is a complete store, not the reconciler"
+- **On conflict**: keep ours
+- **Why**: `dataPoints:reconcile` returns one stream merged across every source
+  on the Google account, with no device attribution. That is what the Fitbit
+  app shows, and it is the right default for step totals. For a study that
+  compares devices it is fatal: a Fitbit Air, an Amazfit strap relayed through
+  Health Connect and a ring on one account become a single series under no
+  device, and nothing downstream can separate them again. List mode keeps each
+  source's points, each tagged with its device.
+
+  The fork therefore defaults `google_use_reconcile` to `False`, and
+  `.env.example` does the same. Two things follow:
+  - A deployment whose `.env` sets `GOOGLE_USE_RECONCILE=true` explicitly keeps
+    that value. This change does not reach it, so check the `.env`.
+  - Rows already written under reconcile stay under their merged,
+    device-less source. The switch applies from the next sync onward.
