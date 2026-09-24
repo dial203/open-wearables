@@ -393,5 +393,6 @@ Template:
   Deliberately separate from `SleepScoreService._parse_wearable_stages_for_interruptions`,
   which is upstream's and feeds the sleep score: that one ends WASO at the final
   awakening and treats `in_bed` and `unknown` intervals as sleep, so an Apple
-  session's `in_bed` window puts onset at the session start. Changing it would
+  session's `in_bed` window can put onset at the session start, depending on
+  interval order. Changing it would
   change every sleep score; it is left as upstream wrote it.
