@@ -54,8 +54,8 @@ The Health API exposes the same underlying data through three different operatio
 
 | Fetch mode | Operation | Resolution | Cross-source | Device attribution |
 |------------|-----------|------------|--------------|--------------------|
-| `GOOGLE_USE_RECONCILE=true` **(default)** | `dataPoints:reconcile` | native | **merged & deduplicated** | none |
-| `GOOGLE_USE_RECONCILE=false` | `dataPoints` (list) | native | raw, per-source | **per-device** |
+| `GOOGLE_USE_RECONCILE=true` | `dataPoints:reconcile` | native | **merged & deduplicated** | none |
+| `GOOGLE_USE_RECONCILE=false` **(default in this fork)** | `dataPoints` (list) | native | raw, per-source | **per-device** |
 
 <Warning>
 Windowed `dataPoints:rollUp` aggregates are currently disabled. A rollUp window starts wherever the requested range does, so the same reading came back under a different timestamp on a later sync and was inserted as a duplicate rather than updated.
@@ -144,7 +144,7 @@ GOOGLE_USE_RECONCILE=true
     | `GOOGLE_CLIENT_ID` | OAuth Client ID | — |
     | `GOOGLE_CLIENT_SECRET` | OAuth Client Secret | — |
     | `GOOGLE_DEFAULT_SCOPE` | Space-separated Health API scopes to request | (full read-only set) |
-    | `GOOGLE_USE_RECONCILE` | `true` = reconcile (merged, app-accurate, no device attribution); `false` = list (per-device). | `true` |
+    | `GOOGLE_USE_RECONCILE` | `true` = reconcile (merged, app-accurate, no device attribution); `false` = list (per-device). | `false` (this fork) |
     | `DEFAULT_DATA_GRANULARITY` | Must be `raw` for Google Health while `rollUp` is disabled — see the [fetch modes](#data-granularity-and-fetch-modes) table | `raw` |
 
     <Note>

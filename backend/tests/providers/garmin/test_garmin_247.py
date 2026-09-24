@@ -858,3 +858,41 @@ class TestGarmin247Data:
 
         mock_bulk_create.assert_called_once()
         assert count == 1
+
+
+class TestGarminHrvWindows:
+    """The 5-minute `hrvValues` state their window; `lastNightAvg` is flagged as the night's figure."""
+
+    def _build(self, hrv_values: dict[str, int] | None) -> list:
+        data_247 = Garmin247Data(provider_name="garmin", api_base_url="https://apis.garmin.com", oauth=MagicMock())
+        raw = {
+            "summaryId": "hrv-1",
+            "calendarDate": "2026-01-14",
+            "lastNightAvg": 84,
+            "startTimeOffsetInSeconds": 3600,
+            "startTimeInSeconds": 1768340715,
+        }
+        if hrv_values is not None:
+            raw["hrvValues"] = hrv_values
+        return data_247._build_hrv_samples(uuid4(), raw)
+
+    def test_each_window_states_the_payloads_spacing(self) -> None:
+        samples = self._build({"265": 70, "565": 73, "865": 68})
+
+        windows = [s for s in samples if s.external_id != "hrv-1"]
+        assert len(windows) == 3
+        assert all(s.provider_metadata == {"interval_seconds": 300} for s in windows)
+
+    def test_the_nightly_average_is_not_a_window(self) -> None:
+        samples = self._build({"265": 70, "565": 73})
+
+        (avg,) = [s for s in samples if s.external_id == "hrv-1"]
+        assert avg.value == Decimal("84")
+        assert avg.is_daily_total is True
+        assert avg.provider_metadata is None
+
+    def test_a_single_value_states_no_window(self) -> None:
+        samples = self._build({"265": 70})
+
+        (window,) = [s for s in samples if s.external_id != "hrv-1"]
+        assert window.provider_metadata is None

@@ -309,3 +309,67 @@ Template:
   This fixes the split going forward. Rows already forked stay forked; merging
   them is a separate, opt-in repair, because it has to drop one side of every
   colliding second and that is not something a migration should do unasked.
+
+## `/timeseries` reads a comma-joined `types` list, and says how long each sample's window is
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: FastAPI only understands the repeated `types=a&types=b` form. A client
+  that joined the list (`types=a,b`, which the Sleep Validation Hub did) got a
+  400 on every sync, reported as a failed timeseries pull while every night
+  looked like one with no HRV series, so Oura's 5-minute sleep RMSSD, stored
+  here all along, never reached the hub. The route now splits comma-joined
+  values before the enum check. An unknown name in a joined list is still
+  refused, the same as it is in the repeated form.
+
+  Oura's sleep `hrv` and `heart_rate` arrays are 300-second windows, but a
+  `/timeseries` row carried nothing to say so. A consumer re-windowing a chest
+  strap onto the sample had to guess, and guessed Apple's ~60 s SDNN window.
+  The Oura save path now stamps `provider_metadata.interval_seconds`, and raw
+  `/timeseries` rows expose it as `interval_seconds`: null where no provider
+  stated a window, never inferred from cadence. Existing rows pick it up on the
+  next sleep sync, because the upsert fills `provider_metadata` when the stored
+  value differs.
+
+## Polar and Garmin 5-minute HRV reach `/timeseries` as windows
+
+- **Area**: backend
+- **Status**: active; extends the entry above
+- **On conflict**: keep ours
+- **Why**: a validation study reads each wearable's 5-minute RMSSD against a
+  chest strap, window by window. Oura's reached `/timeseries` with its window
+  stated. The other two makers whose APIs publish the series did not:
+  - **Polar:** Nightly Recharge's `hrv_samples` (AccessLink v3, keyed "HH:MM",
+    5-minute RMSSD) were parsed and discarded. They are now stored, each at its
+    window start. The keys are a wall clock with no offset, so each night is
+    placed on the same night's sleep record (`sleep_start_time` carries the
+    offset). A night with no sleep record is skipped and logged rather than put
+    on a guessed zone. The sync fetches sleep once and shares it between the two
+    tasks. This mapping follows the published v3 field names and has not yet
+    been checked against a live payload.
+  - **Garmin:** `hrvValues` state their window from the payload's own offset
+    spacing (300 s in every payload seen; a single value states none).
+    `lastNightAvg` sits in the same series at the sleep start and is now
+    flagged `is_daily_total`, so it is not read as the first window and is left
+    out of bucketed reads, as Google's daily HRV already is.
+
+## Google Health defaults to list, not reconcile
+
+- **Area**: backend
+- **Status**: active; follows from "OW is a complete store, not the reconciler"
+- **On conflict**: keep ours
+- **Why**: `dataPoints:reconcile` returns one stream merged across every source
+  on the Google account, with no device attribution. That is what the Fitbit
+  app shows, and it is the right default for step totals. For a study that
+  compares devices it is fatal: a Fitbit Air, an Amazfit strap relayed through
+  Health Connect and a ring on one account become a single series under no
+  device, and nothing downstream can separate them again. List mode keeps each
+  source's points, each tagged with its device.
+
+  The fork therefore defaults `google_use_reconcile` to `False`, and
+  `.env.example` does the same. Two things follow:
+  - A deployment whose `.env` sets `GOOGLE_USE_RECONCILE=true` explicitly keeps
+    that value. This change does not reach it, so check the `.env`.
+  - Rows already written under reconcile stay under their merged,
+    device-less source. The switch applies from the next sync onward.

@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Query
+from pydantic import BeforeValidator
 
 from app.database import DbSession
 from app.schemas.enums import ProviderName, Resolution, SeriesType
@@ -15,6 +16,19 @@ from app.utils.pagination import DEFAULT_PAGE_SIZE, PageLimitQueryParam
 router = APIRouter()
 
 
+def _split_comma_types(value: object) -> object:
+    """Accept ``types=a,b`` as well as the repeated ``types=a&types=b``.
+
+    FastAPI only understands the repeated form; a comma-joined value reaches the enum as
+    one string and the whole request is rejected with 422. Clients building the query
+    with a join (the Sleep Validation Hub did) then lose every series silently, because
+    the failure looks like a night with no samples.
+    """
+    if isinstance(value, list):
+        return [part.strip() for item in value for part in str(item).split(",") if part.strip()]
+    return value
+
+
 @router.get("/users/{user_id}/timeseries")
 def get_timeseries(
     user_id: UUID,
@@ -22,7 +36,7 @@ def get_timeseries(
     end_time: DateTimeQueryParam,
     db: DbSession,
     _api_key: ApiKeyDep,
-    types: Annotated[list[SeriesType], Query()] = [],
+    types: Annotated[list[SeriesType], Query(), BeforeValidator(_split_comma_types)] = [],
     resolution: Resolution = Resolution.RAW,
     cursor: str | None = None,
     limit: PageLimitQueryParam = DEFAULT_PAGE_SIZE,

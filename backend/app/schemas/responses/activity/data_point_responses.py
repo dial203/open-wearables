@@ -18,6 +18,12 @@ class TimeSeriesSample(BaseModel):
     # True = daily total. False/None = not a daily total (summable sample); None is a
     # legacy row and is treated as False by the aggregation.
     is_daily_total: bool | None = None
+    # Seconds of signal the value summarises, when the provider states it (Oura's sleep
+    # `hrv` / `heart_rate` arrays are 300 s windows). None = not stated, never a guess:
+    # an RMSSD over five minutes and one over a minute are different measurements, and a
+    # consumer re-windowing a reference recording onto this sample has to know which.
+    # Only raw samples carry it; an aggregated bucket's span is the requested resolution.
+    interval_seconds: int | None = None
 
 
 class ActivityAggregateResult(TypedDict):

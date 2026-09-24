@@ -19944,6 +19944,17 @@
               }
             ],
             "title": "Is Daily Total"
+          },
+          "interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interval Seconds"
           }
         },
         "type": "object",

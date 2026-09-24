@@ -267,7 +267,10 @@ class Settings(BaseSettings):
     google_service_account_file: str | None = None
     # How 24/7 data is fetched, at native resolution either way.
     # true - reconcile, false - list; for details check docs
-    google_use_reconcile: bool = True
+    # Fork default: list. Reconcile merges every source on the account into one stream
+    # with no device attribution, so a Fitbit, a strap relayed through Health Connect and a
+    # ring become one series. See docs/fork/DECISIONS.md.
+    google_use_reconcile: bool = False
     # Compatibility patch: keep emitting the pre-split /oauth/google/callback redirect URI so
     # an upgrade needs no change to the registered OAuth client. Removed in 1.0.
     google_legacy_oauth_path: bool = True

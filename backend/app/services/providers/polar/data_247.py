@@ -60,6 +60,7 @@ from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.raw_payload_storage import store_raw_payload
 from app.services.timeseries_service import timeseries_service
+from app.utils.dates import offset_to_iso
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
@@ -534,6 +535,78 @@ class Polar247Data(Base247DataTemplate):
             )
         return scores
 
+    # Nightly Recharge states its HRV as 5-minute RMSSD windows (AccessLink v3
+    # `hrv_samples`, keyed "HH:MM" local clock time, one value per 5 minutes).
+    RECHARGE_HRV_INTERVAL_SECONDS = 300
+
+    def normalize_nightly_recharge_hrv(
+        self,
+        raw_items: list[dict[str, Any]],
+        sleep_starts: dict[str, datetime],
+        user_id: UUID,
+    ) -> list[TimeSeriesSampleCreate]:
+        """Expand each night's `hrv_samples` into RMSSD samples at each window's start.
+
+        The keys are a wall clock with no offset. The night's sleep record carries the
+        offset (`sleep_start_time`), so each night is anchored on its own sleep start:
+        a night with no sleep record to anchor on is skipped and logged, not placed on a
+        guessed zone. A series placed an hour off still looks like a clean series and
+        misaligns with every reference recording.
+        """
+        samples: list[TimeSeriesSampleCreate] = []
+        for raw in raw_items:
+            if (parsed := self._parse(raw, NightlyRechargeJSON, user_id, "nightly_recharge")) is None:
+                continue
+            if not parsed.hrv_samples or not parsed.date:
+                continue
+            sleep_start = sleep_starts.get(parsed.date)
+            utc_offset = sleep_start.utcoffset() if sleep_start is not None else None
+            if sleep_start is None or utc_offset is None:
+                log_structured(
+                    self.logger,
+                    "warning",
+                    "Polar Nightly Recharge HRV skipped: no sleep record to anchor its clock times",
+                    provider="polar",
+                    user_id=str(user_id),
+                    date=parsed.date,
+                )
+                continue
+            for recorded_at, value in self._recharge_times(parsed.hrv_samples, sleep_start):
+                if value is None or value <= 0:
+                    continue
+                samples.append(
+                    TimeSeriesSampleCreate(
+                        id=uuid4(),
+                        user_id=user_id,
+                        provider=ProviderName.POLAR,
+                        source=ProviderName.POLAR,
+                        recorded_at=recorded_at,
+                        zone_offset=offset_to_iso(int(utc_offset.total_seconds())),
+                        value=Decimal(str(value)),
+                        series_type=SeriesType.heart_rate_variability_rmssd,
+                        provider_metadata={"interval_seconds": self.RECHARGE_HRV_INTERVAL_SECONDS},
+                    )
+                )
+        return samples
+
+    def _recharge_times(self, items: dict[str, Any], sleep_start: datetime) -> list[tuple[datetime, Any]]:
+        """Place "HH:MM" keys on the night that starts at `sleep_start`.
+
+        `_hhmm_to_datetimes` starts on the anchor's calendar date, which is wrong for a
+        night that begins just before midnight while its first window falls just after
+        it. A first key more than twelve hours earlier on the clock than the sleep start
+        belongs to the next day.
+        """
+        if not items:
+            return []
+        first = self._parse_time_key(next(iter(items)))
+        anchor = sleep_start
+        start_clock = sleep_start.hour * 3600 + sleep_start.minute * 60 + sleep_start.second
+        first_clock = first.hour * 3600 + first.minute * 60 + first.second
+        if start_clock - first_clock > 12 * 3600:
+            anchor = sleep_start + timedelta(days=1)
+        return self._hhmm_to_datetimes(items, anchor)
+
     # -------------------------------------------------------------------------
     # SleepWise — Alertness: GET /v3/users/sleepwise/alertness
     # -------------------------------------------------------------------------
@@ -915,8 +988,10 @@ class Polar247Data(Base247DataTemplate):
         user_id: UUID,
         start_time: datetime,
         end_time: datetime,
+        raw_items: list[dict[str, Any]] | None = None,
     ) -> int:
-        raw_items = self.get_sleep_data(db, user_id, start_time, end_time)
+        if raw_items is None:
+            raw_items = self.get_sleep_data(db, user_id, start_time, end_time)
         normalized = self.normalize_sleep(raw_items, user_id)
         count = 0
         scores: list[HealthScoreCreate] = []
@@ -941,6 +1016,35 @@ class Polar247Data(Base247DataTemplate):
         self._save_timeseries(db, hr_samples)
         return count
 
+    def _save_nightly_recharge(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        start_time: datetime,
+        end_time: datetime,
+        sleep_items: Callable[[], list[dict[str, Any]]],
+    ) -> int:
+        raw_items = self.get_nightly_recharge_data(db, user_id, start_time, end_time)
+        count = self._save_scores(db, self.normalize_nightly_recharge(raw_items, user_id))
+        if any(item.get("hrv_samples") for item in raw_items):
+            self._save_timeseries(
+                db, self.normalize_nightly_recharge_hrv(raw_items, self._sleep_starts(sleep_items(), user_id), user_id)
+            )
+        return count
+
+    def _sleep_starts(self, raw_sleeps: list[dict[str, Any]], user_id: UUID) -> dict[str, datetime]:
+        """Night date -> the sleep record's own start, with the offset Polar stated for it."""
+        starts: dict[str, datetime] = {}
+        for raw in raw_sleeps:
+            parsed = self._parse(raw, SleepJSON, user_id, "sleep")
+            if parsed is None or not parsed.date or not parsed.sleep_start_time:
+                continue
+            try:
+                starts[parsed.date] = datetime.fromisoformat(parsed.sleep_start_time)
+            except ValueError:
+                continue
+        return starts
+
     # -------------------------------------------------------------------------
     # Load and save all — entry point for sync_vendor_data task
     # -------------------------------------------------------------------------
@@ -962,8 +1066,18 @@ class Polar247Data(Base247DataTemplate):
         if not end_time:
             end_time = datetime.now(timezone.utc)
 
+        # Fetched once and shared: Nightly Recharge's HRV series is a zoneless wall clock
+        # that only the same night's sleep record can place.
+        sleep_raw: list[dict[str, Any]] | None = None
+
+        def sleep_items() -> list[dict[str, Any]]:
+            nonlocal sleep_raw
+            if sleep_raw is None:
+                sleep_raw = self.get_sleep_data(db, user_id, start_time, end_time)
+            return sleep_raw
+
         tasks: dict[str, Callable[[], int]] = {
-            "sleep": lambda: self._save_sleep(db, user_id, start_time, end_time),
+            "sleep": lambda: self._save_sleep(db, user_id, start_time, end_time, sleep_items()),
             "daily_activity": lambda: self._save_timeseries(
                 db,
                 self.normalize_daily_activity(
@@ -977,12 +1091,7 @@ class Polar247Data(Base247DataTemplate):
             "cardio_load": lambda: self._save_scores(
                 db, self.normalize_cardio_load(self.get_cardio_load_data(db, user_id, start_time, end_time), user_id)
             ),
-            "nightly_recharge": lambda: self._save_scores(
-                db,
-                self.normalize_nightly_recharge(
-                    self.get_nightly_recharge_data(db, user_id, start_time, end_time), user_id
-                ),
-            ),
+            "nightly_recharge": lambda: self._save_nightly_recharge(db, user_id, start_time, end_time, sleep_items),
             "alertness": lambda: self._save_scores(
                 db, self.normalize_alertness(self.get_alertness_data(db, user_id, start_time, end_time), user_id)
             ),
