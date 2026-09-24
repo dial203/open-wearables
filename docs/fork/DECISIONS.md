@@ -373,3 +373,26 @@ Template:
     that value. This change does not reach it, so check the `.env`.
   - Rows already written under reconcile stay under their merged,
     device-less source. The switch applies from the next sync onward.
+
+## Sleep-onset latency and WASO derived from stage intervals
+
+- **Area**: backend
+- **Status**: active, upstreamable
+- **On conflict**: keep ours; `derived_from_stages` is one additive field on
+  `SleepSession` and one call in `EventRecordService.get_sleep_sessions`, so
+  re-apply both on top of upstream's version of either file
+- **Why**: Muse S reaches this fork only as an Apple Health relay, which carries a
+  total awake figure and no WASO or latency (HealthKit has no latency type). The
+  total differs from WASO by the latency, so it cannot stand in for it, and the
+  sleep-validation study scoring devices against the headband needs both.
+  `app/algorithms/sleep_onset.py` derives them from the stored intervals for any
+  source that has them. Onset is the first sleep interval; WASO runs to the end
+  of the session, and wake after the final sleep interval is reported beside it.
+  It is served under its own name rather than written into `stages`, because it
+  is a figure this fork computed and not one the source stated.
+  Deliberately separate from `SleepScoreService._parse_wearable_stages_for_interruptions`,
+  which is upstream's and feeds the sleep score: that one ends WASO at the final
+  awakening and treats `in_bed` and `unknown` intervals as sleep, so an Apple
+  session's `in_bed` window can put onset at the session start, depending on
+  interval order. Changing it would
+  change every sleep score; it is left as upstream wrote it.

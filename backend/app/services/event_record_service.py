@@ -4,10 +4,12 @@ from decimal import Decimal
 from logging import Logger, getLogger
 from uuid import UUID, uuid4
 
+from pydantic import ValidationError
 from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Query
 
 import app.services.raw_payload_storage as raw_payload_storage
+from app.algorithms.sleep_onset import derive_sleep_onset_metrics
 from app.config import settings
 from app.database import DbSession
 from app.models import (
@@ -75,6 +77,20 @@ def pace_sec_per_km(distance_meters: float | None, seconds: int | None) -> float
     if distance_meters is None or seconds is None or distance_meters <= 0 or seconds <= 0:
         return None
     return round(seconds / (distance_meters / 1000), 1)
+
+
+def _stored_stages(raw: object) -> list[SleepStage] | None:
+    """The stored stage intervals, or None if absent or any interval is malformed.
+
+    All or nothing: dropping one bad interval would leave a gap that a derivation
+    reads as unscored time, describing a session the source never published.
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    try:
+        return [SleepStage.model_validate(s) for s in raw]
+    except ValidationError:
+        return None
 
 
 class EventRecordService(
@@ -1012,6 +1028,9 @@ class EventRecordService(
                 efficiency_percent=as_float(details.sleep_efficiency_score) if details else None,
                 is_nap=details.is_nap if (details and details.is_nap is not None) else False,
                 sleep_stage_intervals=details.sleep_stages if details and with_stages else None,
+                derived_from_stages=derive_sleep_onset_metrics(
+                    _stored_stages(details.sleep_stages if details else None), record.start_datetime
+                ),
                 stages=SleepStagesSummary(
                     deep_minutes=details.sleep_deep_minutes,
                     light_minutes=details.sleep_light_minutes,

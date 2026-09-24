@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.algorithms.sleep_onset import SleepOnsetMetrics
 from app.schemas.enums import EntrySource, WorkoutIntensity
 from app.schemas.model_crud.activities import SleepStage
 from app.schemas.model_crud.activities.zones import HRZones, PowerZones
@@ -95,6 +96,14 @@ class SleepSession(BaseModel):
     efficiency_percent: float | None = None
     stages: SleepStagesSummary | None = None
     sleep_stage_intervals: list[SleepStage] | None = None
+    derived_from_stages: SleepOnsetMetrics | None = Field(
+        None,
+        description=(
+            "Sleep-onset latency and WASO computed by Open Wearables from the stored stage "
+            "intervals, not reported by the source. Null when the session has no intervals "
+            "or none is scored as sleep. Served whether or not include=stages is requested."
+        ),
+    )
     is_nap: bool = False
 
 
