@@ -1000,6 +1000,55 @@ class TestGetSleepSessions:
         assert intervals is not None
         assert intervals[0].stage == "light"
 
+    def test_latency_and_waso_are_derived_from_stored_stages(self, db: Session) -> None:
+        """A source that publishes only total awake still gets WASO and latency off its intervals."""
+        user = UserFactory()
+        start = datetime(2026, 9, 21, 23, 0, tzinfo=timezone.utc)
+        record = EventRecordFactory(
+            mapping=DataSourceFactory(user=user, source="Muse"),
+            category="sleep",
+            type_="sleep",
+            start_datetime=start,
+            end_datetime=start + timedelta(hours=8),
+        )
+        intervals = [
+            SleepStage(stage="awake", start_time=start, end_time=start + timedelta(minutes=20)),
+            SleepStage(stage="light", start_time=start + timedelta(minutes=20), end_time=start + timedelta(hours=3)),
+            SleepStage(
+                stage="awake",
+                start_time=start + timedelta(hours=3),
+                end_time=start + timedelta(hours=3, minutes=12),
+            ),
+            SleepStage(
+                stage="deep",
+                start_time=start + timedelta(hours=3, minutes=12),
+                end_time=start + timedelta(hours=8),
+            ),
+        ]
+        SleepDetailsFactory(
+            event_record=record,
+            sleep_awake_minutes=32,
+            sleep_stages=[i.model_dump(mode="json") for i in intervals],
+        )
+
+        params = EventRecordQueryParams(
+            start_datetime=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            end_datetime=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        )
+        # Served without include=stages: the derivation does not need the payload.
+        session = next(
+            s for s in event_record_service.get_sleep_sessions(db, user.id, params).data if s.id == record.id
+        )
+
+        derived = session.derived_from_stages
+        assert derived is not None
+        assert derived.latency_minutes == 20
+        assert derived.waso_minutes == 12
+        assert derived.total_awake_minutes == 32
+        # The source's own total is left as the source stated it.
+        assert session.stages is not None
+        assert session.stages.awake_minutes == 32
+
     def test_time_in_bed_comes_from_the_provider_not_the_record_span(self, db: Session) -> None:
         """The reported time in bed differs from end-minus-start often enough to be worth returning."""
         user = UserFactory()

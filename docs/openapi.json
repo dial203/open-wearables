@@ -18011,6 +18011,76 @@
         "title": "SleepInclude",
         "description": "Optional expansions for sleep read models, requested via the `include` query parameter."
       },
+      "SleepOnsetMetrics": {
+        "properties": {
+          "onset_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Onset Time",
+            "description": "Start of the first interval scored as sleep"
+          },
+          "latency_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Minutes",
+            "description": "Session start to onset. Null unless the run-up is scored as awake. Measured from the session's own start, which for most sources is a window the device detected."
+          },
+          "waso_minutes": {
+            "type": "number",
+            "title": "Waso Minutes",
+            "description": "Awake minutes after onset, through the end of the session"
+          },
+          "terminal_wake_minutes": {
+            "type": "number",
+            "title": "Terminal Wake Minutes",
+            "description": "Of waso_minutes, the awake minutes after the last sleep interval"
+          },
+          "awakenings": {
+            "type": "integer",
+            "title": "Awakenings",
+            "description": "Distinct awake episodes after onset; touching intervals count once"
+          },
+          "unaccounted_after_onset_minutes": {
+            "type": "number",
+            "title": "Unaccounted After Onset Minutes",
+            "description": "After onset, minutes scored neither awake nor asleep (unknown, or no interval). Not in WASO."
+          },
+          "first_sleep_run_minutes": {
+            "type": "number",
+            "title": "First Sleep Run Minutes",
+            "description": "Length of the unbroken sleep that begins at onset"
+          },
+          "short_first_sleep_run": {
+            "type": "boolean",
+            "title": "Short First Sleep Run",
+            "description": "first_sleep_run_minutes is under 10"
+          },
+          "total_awake_minutes": {
+            "type": "number",
+            "title": "Total Awake Minutes",
+            "description": "Every awake minute in the intervals, before onset included"
+          }
+        },
+        "type": "object",
+        "required": [
+          "onset_time",
+          "waso_minutes",
+          "terminal_wake_minutes",
+          "awakenings",
+          "unaccounted_after_onset_minutes",
+          "first_sleep_run_minutes",
+          "short_first_sleep_run",
+          "total_awake_minutes"
+        ],
+        "title": "SleepOnsetMetrics",
+        "description": "Latency and WASO derived from stage intervals. See ``app.algorithms.sleep_onset``."
+      },
       "SleepSession": {
         "properties": {
           "id": {
@@ -18102,6 +18172,17 @@
               }
             ],
             "title": "Sleep Stage Intervals"
+          },
+          "derived_from_stages": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SleepOnsetMetrics"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sleep-onset latency and WASO computed by Open Wearables from the stored stage intervals, not reported by the source. Null when the session has no intervals or none is scored as sleep. Served whether or not include=stages is requested."
           },
           "is_nap": {
             "type": "boolean",
