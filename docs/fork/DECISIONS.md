@@ -331,3 +331,25 @@ Template:
   stated a window, never inferred from cadence. Existing rows pick it up on the
   next sleep sync, because the upsert fills `provider_metadata` when the stored
   value differs.
+
+## Polar and Garmin 5-minute HRV reach `/timeseries` as windows
+
+- **Area**: backend
+- **Status**: active; extends the entry above
+- **On conflict**: keep ours
+- **Why**: a validation study reads each wearable's 5-minute RMSSD against a
+  chest strap, window by window. Oura's reached `/timeseries` with its window
+  stated. The other two makers whose APIs publish the series did not:
+  - **Polar:** Nightly Recharge's `hrv_samples` (AccessLink v3, keyed "HH:MM",
+    5-minute RMSSD) were parsed and discarded. They are now stored, each at its
+    window start. The keys are a wall clock with no offset, so each night is
+    placed on the same night's sleep record (`sleep_start_time` carries the
+    offset). A night with no sleep record is skipped and logged rather than put
+    on a guessed zone. The sync fetches sleep once and shares it between the two
+    tasks. This mapping follows the published v3 field names and has not yet
+    been checked against a live payload.
+  - **Garmin:** `hrvValues` state their window from the payload's own offset
+    spacing (300 s in every payload seen; a single value states none).
+    `lastNightAvg` sits in the same series at the sleep start and is now
+    flagged `is_daily_total`, so it is not read as the first window and is left
+    out of bucketed reads, as Google's daily HRV already is.

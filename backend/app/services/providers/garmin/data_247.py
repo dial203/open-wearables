@@ -884,6 +884,18 @@ class Garmin247Data(Base247DataTemplate):
     # HRV (Heart Rate Variability) - /wellness-api/rest/hrv
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _hrv_interval_metadata(hrv_values: dict[str, Any]) -> dict[str, int] | None:
+        """The window each `hrvValues` entry summarises, from the payload's own spacing.
+
+        Garmin does not name the window; consecutive offsets are 300 s apart in every
+        payload seen, and the spacing is what the series itself says. A night with a
+        single value states no spacing, so it states no window rather than a guessed one.
+        """
+        offsets = sorted(int(k) for k in hrv_values if str(k).lstrip("-").isdigit())
+        gaps = [b - a for a, b in zip(offsets, offsets[1:], strict=False) if b > a]
+        return {"interval_seconds": min(gaps)} if gaps else None
+
     def _build_hrv_samples(
         self,
         user_id: UUID,
@@ -921,6 +933,9 @@ class Garmin247Data(Base247DataTemplate):
                     value=Decimal(str(last_night_avg)),
                     series_type=SeriesType.heart_rate_variability_rmssd,
                     external_id=summary_id,
+                    # A whole-night figure, not a window: flagged so a consumer reading the
+                    # 5-minute series beside it does not take it for the first window.
+                    is_daily_total=True,
                 )
             )
             self.logger.debug(f"Collecting HRV nightly avg={last_night_avg}ms for {calendar_date}")
@@ -928,6 +943,7 @@ class Garmin247Data(Base247DataTemplate):
         # Collect individual HRV readings from hrvValues
         hrv_values = raw_hrv.get("hrvValues", {})
         if hrv_values and isinstance(hrv_values, dict):
+            interval_metadata = self._hrv_interval_metadata(hrv_values)
             for offset_str, hrv_ms in hrv_values.items():
                 try:
                     offset_seconds = int(offset_str)
@@ -941,6 +957,7 @@ class Garmin247Data(Base247DataTemplate):
                         value=Decimal(str(hrv_ms)),
                         series_type=SeriesType.heart_rate_variability_rmssd,
                         external_id=f"{summary_id}:{offset_str}" if summary_id else None,
+                        provider_metadata=interval_metadata,
                     )
                     samples.append(sample)
                 except Exception as e:
