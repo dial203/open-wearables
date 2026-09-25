@@ -550,3 +550,44 @@ Template:
   provider sends a stable `external_id` for sleep. For a night older than the
   provider will return, leave the record and exclude it from analysis - deleting it
   would lose the half that survived.
+
+
+## Daily summaries are per account, not pooled across accounts
+
+- **Area**: backend, frontend
+- **Status**: active; supersedes the sleep-summary half of "Sources are linked to
+  devices from the rows that show their data" (sleep summaries now carry both ids, so
+  a Compare column holding one can name its source)
+- **On conflict**: keep ours; re-add `DataSource.user_connection_id` to the group-by of
+  every daily aggregate upstream touches, and keep the account in the activity
+  cursor
+- **Why**: The daily sleep and activity aggregates grouped on provider, source and
+  model - the whole of `data_source` identity before this fork added the account to
+  it. Garmin sends no model with sleep, so two Garmin accounts on one participant fell
+  into one group, and every daily figure pooled both:
+  - sleep durations and stage minutes were added (a 400- and a 380-minute night read
+    as one 780-minute night, on the priority-filtered path too);
+  - each night's vitals averaged both accounts' heart rate, because the laterals that
+    attach them matched on the same three columns;
+  - each row carried both accounts' sessions;
+  - steps and energy were summed;
+  - active and intensity minutes were counted from per-minute buckets holding both
+    units' steps or heart rate;
+  - the live/archive merge treated one account's archived day as already covered by
+    the other's live day and dropped it.
+
+  `get_sleep_summaries` now groups on the account and the data source id (one group
+  is one data source), scopes its vitals and sessions to that id, and returns both
+  ids on `SourceMetadata`. The five activity queries (live aggregate, archive, active
+  minutes, intensity minutes, workout aggregates) group on the account, and the
+  service joins them and merges the archive on (date, source, model, account). The
+  activity cursor gains the account as a fourth field; three-field cursors issued
+  before this still decode. The rows are now ordered by the full cursor key rather
+  than by date alone - the cursor compares on that key, so a date-only order could
+  skip or repeat a row at a page boundary on any day with several sources. For the
+  same reason the cursor now stores a missing source as empty, as the sort does,
+  rather than as `unknown`, which sorted after `apple` and skipped it.
+
+  `_filter_by_priority` needed nothing: it keeps the first of each day's sorted
+  candidates, so finer groups add candidates without adding winners. The Compare tab
+  keys its columns on the account as well.

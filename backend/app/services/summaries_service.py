@@ -1,6 +1,7 @@
 """Service for daily summaries (sleep, activity, recovery, body)."""
 
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from logging import Logger, getLogger
@@ -96,6 +97,27 @@ def _attribution(row: dict, device_fields: dict[UUID, dict]) -> dict:
     fields: dict = {"device_type": row.get("device_type"), "device_id": row.get("device_id")}
     fields.update(device_fields.get(row.get("device_id")) or {})
     return fields
+
+
+def _account_str(row: Mapping) -> str:
+    """The row's account as it sits in a cursor or sort key; empty for none."""
+    account = row.get("user_connection_id")
+    return str(account) if account else ""
+
+
+def _activity_key(day: date, row: Mapping) -> tuple:
+    """What joins one day's activity rows from their separate queries.
+
+    The account is in it because two units of one brand on two accounts report the
+    same source and model: keyed without it, one account's active minutes or workout
+    elevation would be read into the other's row.
+    """
+    return (day, row["source"], row.get("device_model"), row.get("user_connection_id"))
+
+
+def _page_key(row: Mapping) -> tuple:
+    """The activity cursor's ordering, for sorting and for comparing against a cursor."""
+    return (row["activity_date"], row["source"] or "", row.get("device_model") or "", _account_str(row))
 
 
 # Activity summary constants
@@ -364,7 +386,7 @@ class SummariesService:
 
         If archival is enabled, some days may only have data in the archive table.
         This method queries the archive and merges rows, preferring live data when
-        both exist for the same (date, source, device_model) key.
+        both exist for the same (date, source, device_model, account) key.
         """
         try:
             self.archival_settings_repo.get(db_session)
@@ -380,16 +402,13 @@ class SummariesService:
         if not archive_results:
             return live_results
 
-        # Build lookup from live data keyed on (date, source, device_model)
-        live_keys: set[tuple] = set()
-        for r in live_results:
-            live_keys.add((r["activity_date"], r["source"], r.get("device_model")))
+        # Build lookup from live data keyed on (date, source, device_model, account)
+        live_keys = {_activity_key(r["activity_date"], r) for r in live_results}
 
         # Add archive rows that are NOT already covered by live data
         merged = list(live_results)
         for ar in archive_results:
-            key = (ar["activity_date"], ar["source"], ar.get("device_model"))
-            if key not in live_keys:
+            if _activity_key(ar["activity_date"], ar) not in live_keys:
                 merged.append(ar)
 
         # Sort by date
@@ -508,6 +527,8 @@ class SummariesService:
                     provider=result.get("provider") or "unknown",
                     source=result.get("source"),
                     device=result.get("device_model"),
+                    data_source_id=result.get("data_source_id"),
+                    user_connection_id=result.get("user_connection_id"),
                     **_attribution(result, device_fields),
                 ),
                 start_time=start_time,
@@ -700,11 +721,8 @@ class SummariesService:
             ),
         )
 
-        # Build lookup dict for workout data by (date, provider, device)
-        workout_lookup: dict[tuple, dict] = {}
-        for wa in workout_aggregates:
-            key = (wa["workout_date"], wa["source"], wa.get("device_model"))
-            workout_lookup[key] = wa
+        # Build lookup dict for workout data by (date, source, device, account)
+        workout_lookup: dict[tuple, dict] = {_activity_key(wa["workout_date"], wa): wa for wa in workout_aggregates}
 
         # Get active/sedentary minutes from step data
         activity_minutes = self.data_point_repo.get_daily_active_minutes(
@@ -717,10 +735,9 @@ class SummariesService:
         )
 
         # Build lookup for activity minutes
-        activity_lookup: dict[tuple, ActiveMinutesResult] = {}
-        for am in activity_minutes:
-            key = (am["activity_date"], am["source"], am.get("device_model"))
-            activity_lookup[key] = am
+        activity_lookup: dict[tuple, ActiveMinutesResult] = {
+            _activity_key(am["activity_date"], am): am for am in activity_minutes
+        }
 
         # Get intensity minutes from HR data
         # Calculate HR zone thresholds based on user's max HR (220 - age)
@@ -739,53 +756,39 @@ class SummariesService:
         )
 
         # Build lookup for intensity minutes
-        intensity_lookup: dict[tuple, IntensityMinutesResult] = {}
-        for im in intensity_minutes_data:
-            key = (im["activity_date"], im["source"], im.get("device_model"))
-            intensity_lookup[key] = im
+        intensity_lookup: dict[tuple, IntensityMinutesResult] = {
+            _activity_key(im["activity_date"], im): im for im in intensity_minutes_data
+        }
 
-        # Sort results based on sort_order (default ascending from DB)
-        if sort_order == "desc":
-            results = list(reversed(results))
+        # Order by the full cursor key, not the date alone: the cursor below compares
+        # on (date, source, device, account), which only walks a list sorted the same
+        # way. Sorted by date only, a day holding several sources could skip or repeat
+        # a row at a page boundary. The cursors carry the same values _page_key sorts
+        # on - an empty source, not "unknown", which sorts after most real ones.
+        results = sorted(results, key=_page_key, reverse=sort_order == "desc")
 
-        # Apply cursor-based pagination using compound key (date, provider, device)
-        # This ensures we don't skip records when multiple providers exist for the same date
+        # Apply cursor-based pagination using compound key (date, source, device, account)
+        # This ensures we don't skip records when multiple sources exist for the same date
         if cursor:
-            cursor_date, cursor_provider, cursor_device, direction = decode_activity_cursor(cursor)
-            cursor_key = (cursor_date, cursor_provider, cursor_device or "")
+            cursor_date, cursor_provider, cursor_device, cursor_account, direction = decode_activity_cursor(cursor)
+            cursor_key = (cursor_date, cursor_provider, cursor_device or "", cursor_account or "")
 
             if direction == "prev":
                 # Backward pagination: get items BEFORE cursor key (in current sort order)
                 if sort_order == "desc":
                     # In desc order, "before" means items with GREATER keys
-                    results = [
-                        r
-                        for r in results
-                        if (r["activity_date"], r["source"] or "", r.get("device_model") or "") > cursor_key
-                    ]
+                    results = [r for r in results if _page_key(r) > cursor_key]
                 else:
-                    results = [
-                        r
-                        for r in results
-                        if (r["activity_date"], r["source"] or "", r.get("device_model") or "") < cursor_key
-                    ]
+                    results = [r for r in results if _page_key(r) < cursor_key]
                 # Reverse to get correct order for backward pagination
                 results = list(reversed(results))
             else:
                 # Forward pagination: get items AFTER cursor key (in current sort order)
                 if sort_order == "desc":
                     # In desc order, "after" means items with SMALLER keys
-                    results = [
-                        r
-                        for r in results
-                        if (r["activity_date"], r["source"] or "", r.get("device_model") or "") < cursor_key
-                    ]
+                    results = [r for r in results if _page_key(r) < cursor_key]
                 else:
-                    results = [
-                        r
-                        for r in results
-                        if (r["activity_date"], r["source"] or "", r.get("device_model") or "") > cursor_key
-                    ]
+                    results = [r for r in results if _page_key(r) > cursor_key]
 
         # Check for more data
         has_more = len(results) > limit
@@ -801,21 +804,29 @@ class SummariesService:
             if has_more:
                 last = results[-1]
                 next_cursor = encode_activity_cursor(
-                    last["activity_date"], last["source"] or "unknown", last.get("device_model"), "next"
+                    last["activity_date"],
+                    last["source"] or "",
+                    last.get("device_model"),
+                    "next",
+                    account_id=_account_str(last),
                 )
 
             # Previous cursor if we had a cursor (not first page)
             if cursor:
                 first = results[0]
                 previous_cursor = encode_activity_cursor(
-                    first["activity_date"], first["source"] or "unknown", first.get("device_model"), "prev"
+                    first["activity_date"],
+                    first["source"] or "",
+                    first.get("device_model"),
+                    "prev",
+                    account_id=_account_str(first),
                 )
 
         # Transform to schema
         data = []
         for result in results:
             # Look up workout data for this day/provider/device
-            result_key = (result["activity_date"], result["source"], result.get("device_model"))
+            result_key = _activity_key(result["activity_date"], result)
             workout_data = workout_lookup.get(result_key, {})
             activity_data = activity_lookup.get(result_key, {})
             intensity_data = intensity_lookup.get(result_key, {})
@@ -885,6 +896,7 @@ class SummariesService:
                     source=result.get("source"),
                     device=result.get("device_model"),
                     device_type=result.get("device_type"),
+                    user_connection_id=result.get("user_connection_id"),
                 ),
                 steps=steps if steps is not None else None,
                 distance_meters=total_distance,

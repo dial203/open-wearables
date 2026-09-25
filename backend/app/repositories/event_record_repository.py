@@ -692,11 +692,12 @@ class EventRecordRepository(
         limit: int,
         relay_plan: "RelayDedupPlan | None" = None,
     ) -> list[dict]:
-        """Get daily sleep summaries aggregated by date, source, and device_model.
+        """Get daily sleep summaries, one row per date and data source.
 
         Returns list of dicts with keys:
         - sleep_date, min_start_time, max_end_time, total_duration_minutes
         - provider, source, device_model, device_type, device_id, record_id
+        - data_source_id, user_connection_id
         - time_in_bed_minutes, efficiency_percent
         - deep_minutes, light_minutes, rem_minutes, awake_minutes
         - nap_count, nap_duration_minutes
@@ -742,8 +743,14 @@ class EventRecordRepository(
                 DataSource.provider,
                 DataSource.source,
                 DataSource.device_model,
-                # Functionally dependent on the three columns above (uq_data_source_identity),
-                # so grouping by them as well cannot change the number of groups.
+                # The account is part of the data source's identity (uq_data_source_identity):
+                # two accounts with one provider report the same provider, source and model,
+                # and without it in the group their nights pooled into one row - durations
+                # and stage minutes added across two people's devices. With it, a group is
+                # exactly one data source, so the id and everything below are functionally
+                # dependent on it and cannot change the number of groups.
+                DataSource.user_connection_id,
+                DataSource.id.label("data_source_id"),
                 DataSource.device_type,
                 DataSource.device_id,
                 func.min(cast(EventRecord.id, String)).label("record_id_text"),
@@ -796,6 +803,8 @@ class EventRecordRepository(
                 DataSource.provider,
                 DataSource.source,
                 DataSource.device_model,
+                DataSource.user_connection_id,
+                DataSource.id,
                 DataSource.device_type,
                 DataSource.device_id,
             )
@@ -810,10 +819,10 @@ class EventRecordRepository(
 
         # Lateral subquery: for each sleep row, average physio data within
         # [min_start_time, max_end_time) — exact window, no date-grouping mismatch.
-        # Scoped to the *same* data source as the sleep row (provider/source/device,
-        # the grouping identity above): averaging over every source the user owns made
-        # each source's row report the same pooled vitals, so an Oura night could show
-        # a Whoop HRV. COALESCE mirrors the data_source identity semantics for NULLs.
+        # Scoped to the *same* data source as the sleep row: averaging over every source
+        # the user owns made each source's row report the same pooled vitals, so an Oura
+        # night could show a Whoop HRV - and matching on provider/source/model alone did
+        # the same across two accounts with one provider.
         physio_lateral = lateral(
             select(
                 func.avg(case((DataPointSeries.series_type_definition_id == hr_id, DataPointSeries.value))).label(
@@ -837,13 +846,8 @@ class EventRecordRepository(
                 func.avg(case((DataPointSeries.series_type_definition_id == spo2_id, DataPointSeries.value))).label(
                     "avg_spo2"
                 ),
-            )
-            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
-            .where(
-                DataSource.user_id == user_id,
-                DataSource.provider == subquery.c.provider,
-                func.coalesce(DataSource.source, "") == func.coalesce(subquery.c.source, ""),
-                func.coalesce(DataSource.device_model, "") == func.coalesce(subquery.c.device_model, ""),
+            ).where(
+                DataPointSeries.data_source_id == subquery.c.data_source_id,
                 DataPointSeries.series_type_definition_id.in_(
                     [hr_id, resting_hr_id, sdnn_id, rmssd_id, resp_id, spo2_id]
                 ),
@@ -863,13 +867,8 @@ class EventRecordRepository(
         daily_spo2_lateral = lateral(
             select(
                 func.avg(DataPointSeries.value).label("daily_spo2"),
-            )
-            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
-            .where(
-                DataSource.user_id == user_id,
-                DataSource.provider == subquery.c.provider,
-                func.coalesce(DataSource.source, "") == func.coalesce(subquery.c.source, ""),
-                func.coalesce(DataSource.device_model, "") == func.coalesce(subquery.c.device_model, ""),
+            ).where(
+                DataPointSeries.data_source_id == subquery.c.data_source_id,
                 DataPointSeries.series_type_definition_id == spo2_id,
                 # Compare in UTC explicitly — a bare ::date would follow the session
                 # TimeZone and could land the day-boundary stamp on the wrong date.
@@ -888,6 +887,8 @@ class EventRecordRepository(
                 subquery.c.provider,
                 subquery.c.source,
                 subquery.c.device_model,
+                subquery.c.user_connection_id,
+                subquery.c.data_source_id,
                 subquery.c.device_type,
                 subquery.c.device_id,
                 record_id_col,
@@ -953,6 +954,11 @@ class EventRecordRepository(
                     # the device rather than the phone that relayed it. Functionally
                     # dependent on the grouping identity, hence safe in the group by.
                     "device_id": row.device_id,
+                    # One row is one data source, so it can say which - and which
+                    # account it came through, which is what separates two units of
+                    # one brand on one participant.
+                    "data_source_id": row.data_source_id,
+                    "user_connection_id": row.user_connection_id,
                     "record_id": row.record_id,
                     "time_in_bed_minutes": int(row.time_in_bed_minutes)
                     if row.time_in_bed_minutes is not None
@@ -975,16 +981,10 @@ class EventRecordRepository(
             )
 
         # Attach per-session breakdown (individual sleep/nap records) for each summary,
-        # keyed by the same (date, provider, source, device_model) grouping identity.
+        # keyed by the same (date, data source) grouping identity.
         sessions_by_key = self._get_sleep_sessions(db_session, user_id, start_date, end_date)
         for summary in summaries:
-            key = (
-                summary["sleep_date"],
-                summary["provider"],
-                summary["source"],
-                summary["device_model"],
-            )
-            summary["sessions"] = sessions_by_key.get(key, [])
+            summary["sessions"] = sessions_by_key.get((summary["sleep_date"], summary["data_source_id"]), [])
 
         return summaries
 
@@ -995,7 +995,7 @@ class EventRecordRepository(
         start_date: datetime,
         end_date: datetime,
     ) -> dict[tuple, list[dict]]:
-        """Get individual sleep/nap sessions keyed by (sleep_date, provider, source, device_model).
+        """Get individual sleep/nap sessions keyed by (sleep_date, data_source_id).
 
         Mirrors the date filter and grouping identity of ``get_sleep_summaries`` but returns one
         entry per underlying EventRecord instead of collapsing them. Per-session duration prefers
@@ -1024,9 +1024,7 @@ class EventRecordRepository(
                 EventRecord.zone_offset.label("zone_offset"),
                 duration_seconds.label("duration_seconds"),
                 func.coalesce(SleepDetails.is_nap, False).label("is_nap"),
-                DataSource.provider,
-                DataSource.source,
-                DataSource.device_model,
+                DataSource.id.label("data_source_id"),
             )
             .join(DataSource, EventRecord.data_source_id == DataSource.id)
             .outerjoin(SleepDetails, SleepDetails.record_id == EventRecord.id)
@@ -1043,7 +1041,7 @@ class EventRecordRepository(
 
         sessions_by_key: dict[tuple, list[dict]] = {}
         for row in rows:
-            key = (row.sleep_date, row.provider, row.source, row.device_model)
+            key = (row.sleep_date, row.data_source_id)
             sessions_by_key.setdefault(key, []).append(
                 {
                     "start_time": row.start_time,
@@ -1068,7 +1066,7 @@ class EventRecordRepository(
         Aggregates WorkoutDetails data by date for activity summaries.
 
         Returns list of dicts with keys:
-        - workout_date, source, device_model
+        - workout_date, source, device_model, user_connection_id
         - elevation_meters, distance_meters, energy_burned_kcal
         """
         local_workout_date = cast(
@@ -1081,6 +1079,7 @@ class EventRecordRepository(
                 local_workout_date.label("workout_date"),
                 DataSource.source,
                 DataSource.device_model,
+                DataSource.user_connection_id,
                 # Sum elevation gain for all workouts on that day
                 func.sum(WorkoutDetails.total_elevation_gain).label("elevation_sum"),
                 # Sum distance for all workouts
@@ -1103,6 +1102,7 @@ class EventRecordRepository(
                 local_workout_date,
                 DataSource.source,
                 DataSource.device_model,
+                DataSource.user_connection_id,
             )
             .order_by(asc(local_workout_date))
             .all()
@@ -1115,6 +1115,7 @@ class EventRecordRepository(
                     "workout_date": row.workout_date,
                     "source": row.source,
                     "device_model": row.device_model,
+                    "user_connection_id": row.user_connection_id,
                     "elevation_meters": float(row.elevation_sum) if row.elevation_sum is not None else None,
                     "distance_meters": float(row.distance_sum) if row.distance_sum is not None else None,
                     "energy_burned_kcal": float(row.energy_sum) if row.energy_sum is not None else None,

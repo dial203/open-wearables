@@ -60,16 +60,15 @@ const sourceKey = (source: SourceMetadata | null | undefined) =>
     source?.user_connection_id ?? ''
   }`;
 
-// The table's columns join a sleep summary to a recovery row, and only one of them
-// can name its data source: a sleep summary is an aggregate grouped on provider,
-// writer, model and device, while a recovery row is one score from one source. So
-// the columns key on what both carry. `device_id` is among it, which is what still
-// separates two same-model units on two accounts - once each is filed under its
-// own device.
+// The table's columns join a sleep summary to a recovery row from the same source.
+// Both are one data source per row and carry the account it came through, so the
+// account is in the key: two units of one brand on two accounts report the same
+// provider, writer and model, and are two columns whether or not anyone has filed
+// them under devices yet.
 const columnKey = (source: SourceMetadata | null | undefined) =>
   `${source?.provider ?? 'unknown'}|${source?.source ?? ''}|${source?.device ?? ''}|${
-    source?.device_id ?? ''
-  }`;
+    source?.user_connection_id ?? ''
+  }|${source?.device_id ?? ''}`;
 
 /**
  * One column per source that reported sleep or recovery on `dayKey`.
@@ -97,9 +96,9 @@ export function buildSourceColumns(
       return col;
     }
     // The header names a data source - its account, a link to a device - only
-    // when every row in the column agrees on one. A sleep summary names none and
-    // may pool two accounts' model-less sources, so a column holding one cannot
-    // honestly borrow the id of the recovery row beside it.
+    // when every row in the column agrees on one. A score stored before scores had
+    // a data source names none, and a column holding one cannot honestly borrow
+    // the id of the row beside it.
     if (
       (source?.data_source_id ?? null) !== (col.source?.data_source_id ?? null)
     ) {

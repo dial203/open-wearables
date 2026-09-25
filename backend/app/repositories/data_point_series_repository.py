@@ -1045,9 +1045,13 @@ class DataPointSeriesRepository(
                 DataSource.provider.label("provider"),
                 DataSource.source.label("source"),
                 DataSource.device_model.label("device_model"),
-                # device_type is functionally dependent on the three columns above
-                # (uq_data_source_identity is unique per user on provider/device_model/source),
-                # so adding it to the GROUP BY cannot change the number of groups.
+                # The account is part of uq_data_source_identity: two accounts with one
+                # provider report the same provider, source and model, and grouped on
+                # those alone their days pooled - steps and energy summed across both.
+                DataSource.user_connection_id.label("user_connection_id"),
+                # device_type is functionally dependent on the four columns above
+                # (uq_data_source_identity), so adding it to the GROUP BY cannot change
+                # the number of groups.
                 DataSource.device_type.label("device_type"),
                 # Steps - prefer daily total, else sum samples
                 prefer_daily_sum(steps_id).label("steps_sum"),
@@ -1091,6 +1095,7 @@ class DataPointSeriesRepository(
                 DataSource.provider,
                 DataSource.source,
                 DataSource.device_model,
+                DataSource.user_connection_id,
                 DataSource.device_type,
             )
             .order_by(asc(local_date))
@@ -1106,6 +1111,7 @@ class DataPointSeriesRepository(
                     "provider": row.provider,
                     "source": row.source,
                     "device_model": row.device_model,
+                    "user_connection_id": row.user_connection_id,
                     "device_type": row.device_type,
                     "steps_sum": int(row.steps_sum) if row.steps_sum else 0,
                     "active_energy_sum": float(row.active_energy_sum) if row.active_energy_sum else 0.0,
@@ -1161,6 +1167,9 @@ class DataPointSeriesRepository(
                 local_date.label("activity_date"),
                 DataSource.source,
                 DataSource.device_model,
+                # Per account: two units of one brand bucketed together would add their
+                # steps, or average their heart rates, within the same minute.
+                DataSource.user_connection_id,
                 minute_trunc.label("minute_bucket"),
                 func.sum(self.model.value).label("steps_in_minute"),
             )
@@ -1178,6 +1187,7 @@ class DataPointSeriesRepository(
                 local_date,
                 DataSource.source,
                 DataSource.device_model,
+                DataSource.user_connection_id,
                 minute_trunc,
             )
             .subquery()
@@ -1189,6 +1199,7 @@ class DataPointSeriesRepository(
                 minute_bucket.c.activity_date,
                 minute_bucket.c.source,
                 minute_bucket.c.device_model,
+                minute_bucket.c.user_connection_id,
                 # Count minutes where steps >= threshold (active)
                 func.sum(case((minute_bucket.c.steps_in_minute >= active_threshold, 1), else_=0)).label(
                     "active_minutes"
@@ -1200,6 +1211,7 @@ class DataPointSeriesRepository(
                 minute_bucket.c.activity_date,
                 minute_bucket.c.source,
                 minute_bucket.c.device_model,
+                minute_bucket.c.user_connection_id,
             )
             .order_by(asc(minute_bucket.c.activity_date))
             .all()
@@ -1216,6 +1228,7 @@ class DataPointSeriesRepository(
                     "activity_date": row.activity_date,
                     "source": row.source,
                     "device_model": row.device_model,
+                    "user_connection_id": row.user_connection_id,
                     "active_minutes": active,
                     "tracked_minutes": tracked,
                     "sedentary_minutes": sedentary,
@@ -1266,6 +1279,9 @@ class DataPointSeriesRepository(
                 local_date.label("activity_date"),
                 DataSource.source,
                 DataSource.device_model,
+                # Per account: two units of one brand bucketed together would add their
+                # steps, or average their heart rates, within the same minute.
+                DataSource.user_connection_id,
                 minute_trunc.label("minute_bucket"),
                 func.avg(self.model.value).label("avg_hr_in_minute"),
             )
@@ -1282,6 +1298,7 @@ class DataPointSeriesRepository(
                 local_date,
                 DataSource.source,
                 DataSource.device_model,
+                DataSource.user_connection_id,
                 minute_trunc,
             )
             .subquery()
@@ -1293,6 +1310,7 @@ class DataPointSeriesRepository(
                 minute_bucket.c.activity_date,
                 minute_bucket.c.source,
                 minute_bucket.c.device_model,
+                minute_bucket.c.user_connection_id,
                 # Light: 50-63% of max HR
                 func.sum(
                     case(
@@ -1331,6 +1349,7 @@ class DataPointSeriesRepository(
                 minute_bucket.c.activity_date,
                 minute_bucket.c.source,
                 minute_bucket.c.device_model,
+                minute_bucket.c.user_connection_id,
             )
             .order_by(asc(minute_bucket.c.activity_date))
             .all()
@@ -1343,6 +1362,7 @@ class DataPointSeriesRepository(
                     "activity_date": row.activity_date,
                     "source": row.source,
                     "device_model": row.device_model,
+                    "user_connection_id": row.user_connection_id,
                     "light_minutes": int(row.light_minutes) if row.light_minutes else 0,
                     "moderate_minutes": int(row.moderate_minutes) if row.moderate_minutes else 0,
                     "vigorous_minutes": int(row.vigorous_minutes) if row.vigorous_minutes else 0,

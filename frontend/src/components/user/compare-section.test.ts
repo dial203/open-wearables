@@ -19,7 +19,6 @@ function source(overrides: Partial<SourceMetadata> = {}): SourceMetadata {
   };
 }
 
-// A sleep summary is an aggregate: the API never gives it a data source or account.
 function sleep(src: SourceMetadata, minutes = 420): SleepSummary {
   return {
     date: DAY,
@@ -32,38 +31,43 @@ function recovery(src: SourceMetadata): RecoverySummary {
   return { date: DAY, source: src } as RecoverySummary;
 }
 
+// A model-less Garmin data source on one account, as both summaries now name it.
+const left = source({ data_source_id: 'ds-left', user_connection_id: 'left' });
+const right = source({
+  data_source_id: 'ds-right',
+  user_connection_id: 'right',
+});
+
 describe('buildSourceColumns', () => {
   it('joins a sleep summary and the recovery row from the same source', () => {
-    // The recovery row names its data source; the sleep summary cannot. Keying on
-    // the id would split one Garmin into a sleep column and a recovery column.
-    const cols = buildSourceColumns(
-      [sleep(source())],
-      [
-        recovery(
-          source({ data_source_id: 'ds-1', user_connection_id: 'conn-1' })
-        ),
-      ],
-      DAY
-    );
+    const cols = buildSourceColumns([sleep(left)], [recovery(left)], DAY);
 
     expect(cols).toHaveLength(1);
     expect(cols[0].sleep).toBeDefined();
     expect(cols[0].recovery).toBeDefined();
+    // Every row agrees, so the header can name the account and link the source.
+    expect(cols[0].source?.data_source_id).toBe('ds-left');
+    expect(cols[0].source?.user_connection_id).toBe('left');
   });
 
-  it('names no data source when the sleep summary may be pooling several', () => {
+  it('keeps two accounts of one brand apart before any device is mapped', () => {
     const cols = buildSourceColumns(
-      [sleep(source())],
-      [
-        recovery(
-          source({ data_source_id: 'ds-1', user_connection_id: 'conn-1' })
-        ),
-      ],
+      [sleep(left, 400), sleep(right, 380)],
+      [recovery(left), recovery(right)],
       DAY
     );
 
-    expect(cols[0].source?.data_source_id ?? null).toBeNull();
-    expect(cols[0].source?.user_connection_id ?? null).toBeNull();
+    expect(cols).toHaveLength(2);
+    expect(cols.map((c) => c.source?.user_connection_id).sort()).toEqual([
+      'left',
+      'right',
+    ]);
+    for (const col of cols) {
+      expect(col.sleep?.source.data_source_id).toBe(col.source?.data_source_id);
+      expect(col.recovery?.source.data_source_id).toBe(
+        col.source?.data_source_id
+      );
+    }
   });
 
   it('keeps the data source on a column only that source reported into', () => {
@@ -80,12 +84,14 @@ describe('buildSourceColumns', () => {
     expect(cols[0].source?.user_connection_id).toBe('conn-polar');
   });
 
-  it('names neither source when two land in one column', () => {
+  it('names neither source when rows in one column disagree on it', () => {
+    // A guard rather than a case the API produces today: the key is the source's
+    // identity, so two rows sharing it should share a data source too.
     const cols = buildSourceColumns(
       [],
       [
         recovery(source({ data_source_id: 'ds-a', user_connection_id: 'a' })),
-        recovery(source({ data_source_id: 'ds-b', user_connection_id: 'b' })),
+        recovery(source({ data_source_id: 'ds-b', user_connection_id: 'a' })),
       ],
       DAY
     );
