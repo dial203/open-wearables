@@ -474,6 +474,8 @@ export interface SourceMetadata {
    * GET /users/{id}/connections for its classification, name and e-mail.
    */
   user_connection_id?: string | null;
+  /** Canonical brand the data came from ("Oura" on an Apple Health relay). */
+  original_source_name?: string | null;
   /** The attributed physical unit, null when the source is not attributed to one. */
   device_id?: string | null;
   /** Human-assigned name for that device, if one has been set. */

@@ -63,6 +63,7 @@ src/
 | `MetricCard`       | Statistics card with icon, value, label, and selection state |
 | `SectionHeader`    | Section title with optional date range selector              |
 | `CursorPagination` | Previous/next navigation for cursor-based pagination         |
+| `DataSourceInfo`   | Provider/account/device of a row; `userId` adds Map device   |
 
 ### layout/
 

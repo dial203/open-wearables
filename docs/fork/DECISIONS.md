@@ -412,3 +412,35 @@ Template:
   account's `rr_interval` series is a participant's cardiac reference, so it has
   to be a value a consumer can filter on rather than an account label. Stored as a
   plain string like the rest of the set: no migration.
+
+## Sources are linked to devices from the rows that show their data
+
+- **Area**: backend, frontend, docs
+- **Status**: active
+- **On conflict**: keep ours; in `event_record_repository.get_records_with_filters`
+  re-add `selectinload(DataSource.device)` on top of upstream's query, and keep the
+  three identity keys in `health_score_repository.get_recovery_summaries`
+- **Why**: A source with no device reads "Device info not available" wherever its data
+  is shown, and the only way to attribute it was the Devices tab - where it is one of a
+  list of bare provider/model strings, away from the night or workout that makes it
+  recognisable. `DataSourceInfo` now takes the user id and, on any row that names its
+  data source, shows the login e-mail of the account it came through and a "Map device"
+  control that opens the Devices tab's own link dialog (moved to
+  `components/user/link-data-source-dialog.tsx`, not copied). Daily aggregates (sleep,
+  activity and body summaries) group several sources into one row and carry no
+  `data_source_id`, so they stay read-only: linking from one would have to guess which
+  source was meant.
+
+  Two backend changes make that work. The event read path (sleep sessions, workouts,
+  cycles) never loaded `DataSource.device`, so `SourceMetadata` sent the device id with
+  no name and a source linked by hand still read "Device info not available" -
+  `get_records_with_filters` now eager-loads it, one `IN` query per page. And recovery
+  summaries, which are one score from one source, now carry `data_source_id`,
+  `user_connection_id` and `original_source_name` like the event rows already did.
+
+  That last change would have split the Compare tab: its columns joined a sleep summary
+  to a recovery row by `data_source_id`, falling back to a composite, and only the
+  recovery row can now name its source. The columns key on what both summaries carry
+  (provider, writer, model, `device_id`) instead, and a column names a data source only
+  when every row in it agrees on one - a sleep summary can pool two accounts'
+  model-less sources, so its column cannot borrow the id of the recovery row beside it.

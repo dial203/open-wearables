@@ -93,7 +93,7 @@ function WorkoutRow({
       {/* Main row - always visible */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-3 flex flex-col gap-1.5 text-left"
+        className="w-full px-4 pt-3 pb-1.5 flex flex-col text-left"
       >
         <div className="w-full flex items-center gap-4">
           {/* Workout type emoji */}
@@ -165,9 +165,13 @@ function WorkoutRow({
             </div>
           </div>
         </div>
-
-        <DataSourceInfo source={workout.source} />
       </button>
+
+      {/* Outside the toggle: it holds its own control for linking the source to a
+          device, and a button cannot sit inside another. */}
+      <div className="px-4 pb-3">
+        <DataSourceInfo source={workout.source} userId={userId} />
+      </div>
 
       {/* Expanded details */}
       {isExpanded && (

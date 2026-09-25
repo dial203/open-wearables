@@ -313,7 +313,15 @@ class EventRecordRepository(
                 DataSource,
                 EventRecord.data_source_id == DataSource.id,
             )
-            .options(*[selectinload(r) for r in EventRecord.detail_relationship(query_params.category)])
+            .options(
+                *[selectinload(r) for r in EventRecord.detail_relationship(query_params.category)],
+                # The attributed device, so each record's SourceMetadata can name it.
+                # Without this SourceMetadata sees the relationship unloaded and sends
+                # the id with no name, and a source someone has just linked by hand
+                # still reads "Device info not available". One IN query per page of
+                # records, over a user's handful of devices.
+                selectinload(DataSource.device),
+            )
         )
 
         filters = [DataSource.user_id == UUID(user_id)]

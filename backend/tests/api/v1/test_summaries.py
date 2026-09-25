@@ -19,6 +19,7 @@ from tests.factories import (
     PersonalRecordFactory,
     SeriesTypeDefinitionFactory,
     SleepDetailsFactory,
+    UserConnectionFactory,
     UserFactory,
     WorkoutDetailsFactory,
 )
@@ -1565,6 +1566,40 @@ class TestRecoverySummaryEndpoint:
         assert item["date"] == "2025-12-26"
         assert item["recovery_score"] == 78
         assert item["source"]["provider"] == "whoop"
+
+    def test_source_names_its_data_source_and_account(self, client: TestClient, db: Session) -> None:
+        """Each row carries the ids a viewer needs to attribute or audit its source.
+
+        A score belongs to exactly one data source, so the row can say which - and
+        which connected account it came through - without a second request.
+        """
+        user = UserFactory()
+        connection = UserConnectionFactory(user=user, provider="polar")
+        source = DataSourceFactory(
+            user=user,
+            provider=ProviderName.POLAR,
+            source="polar",
+            device_model=None,
+            user_connection_id=connection.id,
+            original_source_name="Polar",
+        )
+        HealthScoreFactory(
+            data_source=source,
+            category=HealthScoreCategory.RECOVERY,
+            value=Decimal("70"),
+            provider=ProviderName.POLAR,
+            recorded_at=datetime(2025, 12, 26, 0, 0, 0, tzinfo=timezone.utc),
+        )
+        api_key = ApiKeyFactory()
+
+        response = client.get(self._url(user.id), headers=api_key_headers(api_key.plain_key), params=self.BASE_PARAMS)
+
+        assert response.status_code == 200
+        item = response.json()["data"][0]["source"]
+        assert item["data_source_id"] == str(source.id)
+        assert item["user_connection_id"] == str(connection.id)
+        assert item["original_source_name"] == "Polar"
+        assert item["device_id"] is None
 
     def test_returns_component_metrics(self, client: TestClient, db: Session) -> None:
         """RHR, HRV and SpO2 are populated from HealthScore components."""

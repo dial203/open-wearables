@@ -25,7 +25,7 @@ interface CompareSectionProps {
 }
 
 /** A source column: one distinct provider/source/device that reported for the day. */
-interface SourceColumn {
+export interface SourceColumn {
   key: string;
   source: SourceMetadata | null;
   provider: string;
@@ -59,6 +59,79 @@ const sourceKey = (source: SourceMetadata | null | undefined) =>
   `${source?.provider ?? 'unknown'}|${source?.source ?? ''}|${source?.device ?? ''}|${
     source?.user_connection_id ?? ''
   }`;
+
+// The table's columns join a sleep summary to a recovery row, and only one of them
+// can name its data source: a sleep summary is an aggregate grouped on provider,
+// writer, model and device, while a recovery row is one score from one source. So
+// the columns key on what both carry. `device_id` is among it, which is what still
+// separates two same-model units on two accounts - once each is filed under its
+// own device.
+const columnKey = (source: SourceMetadata | null | undefined) =>
+  `${source?.provider ?? 'unknown'}|${source?.source ?? ''}|${source?.device ?? ''}|${
+    source?.device_id ?? ''
+  }`;
+
+/**
+ * One column per source that reported sleep or recovery on `dayKey`.
+ *
+ * Exported for its tests: which rows share a column, and when a column may name
+ * its data source, is the part of this view that is easy to get wrong silently.
+ */
+export function buildSourceColumns(
+  sleep: SleepSummary[],
+  recovery: RecoverySummary[],
+  dayKey: string
+): SourceColumn[] {
+  const byKey = new Map<string, SourceColumn>();
+
+  const upsert = (source: SourceMetadata | null | undefined) => {
+    const key = columnKey(source);
+    let col = byKey.get(key);
+    if (!col) {
+      col = {
+        key,
+        source: source ?? null,
+        provider: source?.provider ?? 'unknown',
+      };
+      byKey.set(key, col);
+      return col;
+    }
+    // The header names a data source - its account, a link to a device - only
+    // when every row in the column agrees on one. A sleep summary names none and
+    // may pool two accounts' model-less sources, so a column holding one cannot
+    // honestly borrow the id of the recovery row beside it.
+    if (
+      (source?.data_source_id ?? null) !== (col.source?.data_source_id ?? null)
+    ) {
+      col.source = col.source && {
+        ...col.source,
+        data_source_id: null,
+        user_connection_id: null,
+      };
+    }
+    return col;
+  };
+
+  for (const s of sleep) {
+    if (format(parseApiDate(s.date), 'yyyy-MM-dd') !== dayKey) continue;
+    const col = upsert(s.source);
+    // Keep the longest session when a source reports several (naps + main sleep).
+    if (
+      !col.sleep ||
+      (s.duration_minutes ?? 0) > (col.sleep.duration_minutes ?? 0)
+    ) {
+      col.sleep = s;
+    }
+  }
+  for (const r of recovery) {
+    if (format(parseApiDate(r.date), 'yyyy-MM-dd') !== dayKey) continue;
+    upsert(r.source).recovery = r;
+  }
+
+  return [...byKey.values()].sort((a, b) =>
+    a.provider.localeCompare(b.provider)
+  );
+}
 
 const num = (v: number | null | undefined): number | null =>
   v === null || v === undefined ? null : v;
@@ -218,46 +291,19 @@ export function CompareSection({ userId }: CompareSectionProps) {
   const { data: connections } = useUserConnections(userId);
   const accountMap = useMemo(() => buildAccountMap(connections), [connections]);
 
-  const columns = useMemo<SourceColumn[]>(() => {
-    const byKey = new Map<string, SourceColumn>();
+  const columns = useMemo(
+    () =>
+      buildSourceColumns(
+        sleepData?.data ?? [],
+        recoveryData?.data ?? [],
+        dayKey
+      ),
+    [sleepData, recoveryData, dayKey]
+  );
 
-    const upsert = (source: SourceMetadata | null | undefined) => {
-      const key = sourceKey(source);
-      let col = byKey.get(key);
-      if (!col) {
-        col = {
-          key,
-          source: source ?? null,
-          provider: source?.provider ?? 'unknown',
-        };
-        byKey.set(key, col);
-      }
-      return col;
-    };
-
-    for (const s of sleepData?.data ?? []) {
-      if (format(parseApiDate(s.date), 'yyyy-MM-dd') !== dayKey) continue;
-      const col = upsert(s.source);
-      // Keep the longest session when a source reports several (naps + main sleep).
-      if (
-        !col.sleep ||
-        (s.duration_minutes ?? 0) > (col.sleep.duration_minutes ?? 0)
-      ) {
-        col.sleep = s;
-      }
-    }
-    for (const r of recoveryData?.data ?? []) {
-      if (format(parseApiDate(r.date), 'yyyy-MM-dd') !== dayKey) continue;
-      upsert(r.source).recovery = r;
-    }
-
-    return [...byKey.values()].sort((a, b) =>
-      a.provider.localeCompare(b.provider)
-    );
-  }, [sleepData, recoveryData, dayKey]);
-
-  // One hypnogram row per source that staged this night. Keyed the same way as
-  // the table columns so a row and a column are the same device.
+  // One hypnogram row per source that staged this night. Sessions name their data
+  // source, so these rows key on it and keep two accounts apart even where the
+  // table, joined through the sleep summary, cannot.
   const hypnogramSeries = useMemo<HypnogramSeries[]>(() => {
     const byKey = new Map<string, SleepSession>();
     for (const s of sessionData?.data ?? []) {
@@ -388,6 +434,8 @@ export function CompareSection({ userId }: CompareSectionProps) {
                           <DataSourceInfo
                             source={col.source}
                             accounts={accountMap}
+                            userId={userId}
+                            className="flex-wrap justify-end gap-y-1"
                           />
                         </div>
                       </th>

@@ -74,6 +74,10 @@ function useDeviceMutation<TArgs, TResult>(
       queryClient.invalidateQueries({
         queryKey: queryKeys.priorities.dataSources(userId),
       });
+      // Every sleep session, workout and score names its device from the registry,
+      // and those rows are where a source is now linked from - without this the row
+      // someone just mapped would keep saying "Device info not available".
+      queryClient.invalidateQueries({ queryKey: queryKeys.health.all });
       toast.success(successMessage(args, result));
     },
     onError: (error: Error) => toast.error(error.message),

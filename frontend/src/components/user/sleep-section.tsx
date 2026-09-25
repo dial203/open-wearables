@@ -233,7 +233,7 @@ function SleepSessionRow({
       {/* Main row - always visible */}
       <button
         onClick={() => hasDetails && setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-3 flex flex-col gap-1.5 text-left"
+        className="w-full px-4 pt-3 pb-1.5 flex flex-col text-left"
         disabled={!hasDetails}
       >
         <div className="w-full flex items-center">
@@ -341,9 +341,13 @@ function SleepSessionRow({
             </div>
           )}
         </div>
-
-        <DataSourceInfo source={session.source} />
       </button>
+
+      {/* Outside the toggle: it holds its own control for linking the source to a
+          device, and a button cannot sit inside another. */}
+      <div className="px-4 pb-3">
+        <DataSourceInfo source={session.source} userId={userId} />
+      </div>
 
       {/* Expanded details */}
       {isExpanded && (
@@ -422,7 +426,11 @@ function SleepSessionRow({
                     key={`${r.source?.provider ?? 'unknown'}-${r.source?.device ?? ''}-${i}`}
                     className="flex items-center justify-between gap-3 py-2 px-3 rounded-lg bg-card/40 border border-border/40"
                   >
-                    <DataSourceInfo source={r.source} className="min-w-0" />
+                    <DataSourceInfo
+                      source={r.source}
+                      userId={userId}
+                      className="min-w-0"
+                    />
                     <div className="flex items-center gap-6 flex-shrink-0">
                       <div className="flex items-center gap-2">
                         <HeartPulse className="h-4 w-4 text-rose-400" />

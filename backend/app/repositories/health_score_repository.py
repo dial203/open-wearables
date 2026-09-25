@@ -132,8 +132,9 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
         """Get recovery health scores for a date range with cursor-based pagination.
 
         Returns list of dicts with keys: recovery_date, provider, source, device_model,
-        device_type, device_id, record_id, recorded_at, recovery_score, resting_heart_rate,
-        hrv_rmssd_milli, spo2_percentage.
+        device_type, device_id, data_source_id, user_connection_id, original_source_name,
+        record_id, recorded_at, recovery_score, resting_heart_rate, hrv_rmssd_milli,
+        spo2_percentage.
         Fetches limit+1 rows so callers can detect has_more without a separate COUNT query.
         Ordering matches get_sleep_summaries: ASC by default, DESC when paginating backward.
         """
@@ -187,6 +188,12 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
                     "device_model": data_source.device_model if data_source else None,
                     "device_type": data_source.device_type if data_source else None,
                     "device_id": data_source.device_id if data_source else None,
+                    # One score is one data source, so unlike the grouped daily
+                    # aggregates these rows can name theirs - which is what lets a
+                    # viewer attribute an unidentified source straight from the row.
+                    "data_source_id": data_source.id if data_source else None,
+                    "user_connection_id": data_source.user_connection_id if data_source else None,
+                    "original_source_name": data_source.original_source_name if data_source else None,
                     "record_id": row.id,
                     "recorded_at": row.recorded_at,
                     "recovery_score": int(row.value) if row.value is not None else None,

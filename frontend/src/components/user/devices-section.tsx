@@ -36,15 +36,15 @@ import { LoadingSpinner } from '@/components/common/loading-spinner';
 import { ErrorState } from '@/components/common/error-state';
 import {
   DeviceTypeIcon,
+  DeviceTypeSelect,
   deviceTypeInfo,
+  registryDeviceName,
 } from '@/components/common/device-type';
-import { deviceDisplayName } from '@/lib/utils/device';
 import {
   useDevices,
   useCreateDevice,
   useUpdateDevice,
   useRetireDevice,
-  useLinkDataSource,
   useUnlinkDataSource,
   useSplitDevice,
   useMergeDevices,
@@ -60,6 +60,7 @@ import type {
   SourceActivity,
 } from '@/lib/api/services/device.service';
 import { SourceActivityPanel } from '@/components/user/source-activity';
+import { LinkDataSourceDialog } from '@/components/user/link-data-source-dialog';
 import {
   useSetRelayVisibility,
   useUserDataSources,
@@ -70,39 +71,10 @@ import { useUserConnections } from '@/hooks/api/use-health';
 import { AccountChip } from '@/components/common/account-chip';
 import { buildAccountMap, type AccountDescriptor } from '@/lib/utils/account';
 
-const DEVICE_TYPES = [
-  'chest_strap',
-  'eeg',
-  'headband',
-  'watch',
-  'band',
-  'ring',
-  'phone',
-  'scale',
-  'other',
-  'unknown',
-] as const;
-
 // A stable empty array, so the `?? []` fallback below does not hand useMemo a new
 // identity on every render and re-run the map build for nothing.
 const NO_DEVICES: Device[] = [];
 const NO_SOURCES: DataSource[] = [];
-
-/**
- * What to call a device on screen.
- *
- * The server derives the same name into `display_name`; the local rule (lib/utils/device)
- * is the fallback for a response served before that field existed.
- */
-function deviceName(device: Device): string {
-  return (
-    device.display_name ||
-    deviceDisplayName(
-      { ...device, device_type: String(device.device_type) },
-      deviceTypeInfo(device.device_type).label
-    )
-  );
-}
 
 function formatWhen(value: string | null): string {
   if (!value) return '—';
@@ -269,7 +241,6 @@ export function DevicesSection({ userId }: { userId: string }) {
       <LinkDataSourceDialog
         userId={userId}
         source={linking}
-        devices={devices}
         onClose={() => setLinking(null)}
       />
       <EditDeviceDialog
@@ -447,233 +418,6 @@ function UnattributedSources({
   );
 }
 
-/**
- * Attribute one data source to a device - an existing one, or one created here.
- *
- * Creating it here rather than sending someone to "Add device" first is the point: the
- * source you are looking at is the evidence for what the device is, and the case where
- * no device exists yet is the common one, not the exception. A ring arriving only as
- * `com.gdjztech.ringconn` has nothing to link to until someone makes it.
- */
-const NEW_DEVICE = '__new__';
-
-function LinkDataSourceDialog({
-  userId,
-  source,
-  devices,
-  onClose,
-}: {
-  userId: string;
-  source: DataSource | null;
-  devices: Device[];
-  onClose: () => void;
-}) {
-  const link = useLinkDataSource(userId);
-  const create = useCreateDevice(userId);
-  const [deviceId, setDeviceId] = useState('');
-  const [reason, setReason] = useState('');
-  const [draft, setDraft] = useState({
-    device_type: 'unknown',
-    label: '',
-    brand: '',
-    model_raw: '',
-    wear_location: '',
-  });
-
-  const creating = deviceId === NEW_DEVICE;
-
-  // Seeded from what the provider actually said, never from a guess: the canonical
-  // brand it resolved and the model string it sent. Both stay editable, and an empty
-  // seed is left empty rather than filled with the bundle id, which names an app.
-  const startNewDevice = () => {
-    setDeviceId(NEW_DEVICE);
-    setDraft({
-      device_type: source?.device_type ?? 'unknown',
-      label: '',
-      brand: source?.original_source_name ?? '',
-      model_raw: source?.device_model ?? '',
-      wear_location: '',
-    });
-  };
-
-  const close = () => {
-    setDeviceId('');
-    setReason('');
-    setDraft({
-      device_type: 'unknown',
-      label: '',
-      brand: '',
-      model_raw: '',
-      wear_location: '',
-    });
-    onClose();
-  };
-
-  const submit = async () => {
-    if (!source) return;
-    const why = reason || null;
-    if (!creating) {
-      if (!deviceId) return;
-      link.mutate(
-        { deviceId, dataSourceId: source.id, reason: why },
-        { onSuccess: close }
-      );
-      return;
-    }
-    // Create then link. Sequential because the device id does not exist until the
-    // first call returns; if the link fails the device is still there to link by hand,
-    // which is recoverable, where inventing an id would not be.
-    const device = await create.mutateAsync({
-      device_type: draft.device_type,
-      label: draft.label.trim() || null,
-      brand: draft.brand.trim() || null,
-      model_raw: draft.model_raw.trim() || null,
-      wear_location: draft.wear_location.trim() || null,
-      reason: why,
-    });
-    await link.mutateAsync({
-      deviceId: device.id,
-      dataSourceId: source.id,
-      reason: why,
-    });
-    close();
-  };
-
-  const pending = link.isPending || create.isPending;
-  const canSubmit = creating ? draft.device_type !== '' : !!deviceId;
-
-  return (
-    <Dialog open={!!source} onOpenChange={(open) => !open && close()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Link a data source</DialogTitle>
-          <DialogDescription>
-            Attribution groups data sources; it never combines them. The samples
-            are untouched, and a direct read and an aggregator relay of the same
-            unit stay separate so you can still compare them.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-            {source?.provider}
-            {source?.source ? ` · ${source.source}` : ''}
-            {source?.device_model ? ` · ${source.device_model}` : ''}
-          </div>
-          <div>
-            <Label htmlFor="link-device">Device</Label>
-            <select
-              id="link-device"
-              value={deviceId}
-              onChange={(e) =>
-                e.target.value === NEW_DEVICE
-                  ? startNewDevice()
-                  : setDeviceId(e.target.value)
-              }
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
-            >
-              <option value="">Select a device…</option>
-              <option value={NEW_DEVICE}>+ Create a new device…</option>
-              {devices.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {deviceName(d)} ({d.data_sources.length} source
-                  {d.data_sources.length === 1 ? '' : 's'})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {creating && (
-            <div className="space-y-3 rounded-md border border-border/60 bg-muted/20 p-3">
-              <p className="text-xs text-muted-foreground">
-                Seeded from what the provider reported. Everything here is
-                editable, and a name you set is kept — detection never
-                overwrites one.
-              </p>
-              <div>
-                <Label htmlFor="link-new-type">Type</Label>
-                <DeviceTypeSelect
-                  value={draft.device_type}
-                  onChange={(v) => setDraft({ ...draft, device_type: v })}
-                />
-              </div>
-              <div>
-                <Label htmlFor="link-new-label">Name</Label>
-                <Input
-                  id="link-new-label"
-                  value={draft.label}
-                  onChange={(e) =>
-                    setDraft({ ...draft, label: e.target.value })
-                  }
-                  placeholder="Sub 04 ring"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label htmlFor="link-new-brand">Brand</Label>
-                  <Input
-                    id="link-new-brand"
-                    value={draft.brand}
-                    onChange={(e) =>
-                      setDraft({ ...draft, brand: e.target.value })
-                    }
-                    placeholder="RingConn"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="link-new-model">Model</Label>
-                  <Input
-                    id="link-new-model"
-                    value={draft.model_raw}
-                    onChange={(e) =>
-                      setDraft({ ...draft, model_raw: e.target.value })
-                    }
-                    placeholder="Gen 2"
-                  />
-                </div>
-              </div>
-              <div>
-                <Label htmlFor="link-new-wear">Wear location</Label>
-                <Input
-                  id="link-new-wear"
-                  value={draft.wear_location}
-                  onChange={(e) =>
-                    setDraft({ ...draft, wear_location: e.target.value })
-                  }
-                  placeholder="left index finger"
-                />
-              </div>
-            </div>
-          )}
-
-          <div>
-            <Label htmlFor="link-reason">Reason (recorded in history)</Label>
-            <Input
-              id="link-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Muse headband, relayed through this phone"
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={close}>
-            Cancel
-          </Button>
-          <Button disabled={pending || !canSubmit || !source} onClick={submit}>
-            {pending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : creating ? (
-              'Create & link'
-            ) : (
-              'Link'
-            )}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function DeviceCard({
   userId,
   device,
@@ -728,7 +472,7 @@ function DeviceCard({
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{deviceName(device)}</span>
+            <span className="font-medium">{registryDeviceName(device)}</span>
             <Badge variant="outline">
               {deviceTypeInfo(device.device_type).label}
             </Badge>
@@ -984,11 +728,11 @@ function ProposalQueue({
             >
               <div className="min-w-0 flex-1 text-sm">
                 <span className="font-medium">
-                  {a ? deviceName(a) : 'Unknown device'}
+                  {a ? registryDeviceName(a) : 'Unknown device'}
                 </span>
                 <span className="mx-2 text-muted-foreground">↔</span>
                 <span className="font-medium">
-                  {b ? deviceName(b) : 'Unknown device'}
+                  {b ? registryDeviceName(b) : 'Unknown device'}
                 </span>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   score {Number(proposal.score).toFixed(0)}
@@ -1026,28 +770,6 @@ function ProposalQueue({
         })}
       </ul>
     </Card>
-  );
-}
-
-function DeviceTypeSelect({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring"
-    >
-      {DEVICE_TYPES.map((type) => (
-        <option key={type} value={type}>
-          {deviceTypeInfo(type).label}
-        </option>
-      ))}
-    </select>
   );
 }
 
@@ -1504,7 +1226,7 @@ function MergeDeviceDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            Merge into {device ? deviceName(device) : ''}
+            Merge into {device ? registryDeviceName(device) : ''}
           </DialogTitle>
           <DialogDescription>
             The other device is removed and its data sources move here. They are
@@ -1525,7 +1247,7 @@ function MergeDeviceDialog({
               <option value="">Select a device…</option>
               {others.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {deviceName(d)} ({d.data_sources.length} source
+                  {registryDeviceName(d)} ({d.data_sources.length} source
                   {d.data_sources.length === 1 ? '' : 's'})
                 </option>
               ))}
@@ -1585,7 +1307,7 @@ function HistorySheet({
         <SheetHeader>
           <SheetTitle>
             {target && target !== 'all'
-              ? `History — ${deviceName(target)}`
+              ? `History — ${registryDeviceName(target)}`
               : 'Device history'}
           </SheetTitle>
           <SheetDescription>
