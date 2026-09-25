@@ -25,7 +25,14 @@ from app.schemas.model_crud.activities import (
 )
 from app.schemas.model_crud.activities.sleep import SleepStage
 from app.services.event_record_service import event_record_service
-from tests.factories import DataSourceFactory, EventRecordFactory, SleepDetailsFactory, UserFactory
+from app.utils.connection_context import active_connection
+from tests.factories import (
+    DataSourceFactory,
+    EventRecordFactory,
+    SleepDetailsFactory,
+    UserConnectionFactory,
+    UserFactory,
+)
 
 
 class TestEventRecordServiceCreateDetail:
@@ -836,6 +843,169 @@ class TestCreateOrMergeSleep:
         assert result.data_source_id is not None
         mock_sleep.assert_called_once()
         assert mock_sleep.call_args.kwargs["device_type"] == "ring"
+
+
+class TestCreateOrMergeSleepAcrossAccounts:
+    """Merging joins fragments of one account's night, never two accounts' nights.
+
+    Two units of one brand worn the same night, each on its own account, is the
+    validation setup the fork exists for. Both nights share provider and source, so
+    before the lookup was scoped the second was merged into the first at write time:
+    the first account's record deleted, its stages concatenated with the other's.
+    """
+
+    THRESHOLD = 30
+
+    def _dt(self, hour: int, minute: int = 0, day: int = 25) -> datetime:
+        return datetime(2025, 12, day, hour, minute, tzinfo=timezone.utc)
+
+    def _garmin_night(
+        self, user_id: UUID, start: datetime, end: datetime, **extra: object
+    ) -> tuple[EventRecordCreate, EventRecordDetailCreate]:
+        # Shaped like Garmin's _build_sleep_record: no model, no data source, provider
+        # left to be inferred from the source - the account comes from the bound scope.
+        record_id = uuid4()
+        record = EventRecordCreate(
+            id=record_id,
+            category="sleep",
+            type="sleep_session",
+            source_name="Garmin",
+            device_model=None,
+            source="garmin",
+            user_id=user_id,
+            external_id=f"garmin-{record_id}",
+            start_datetime=start,
+            end_datetime=end,
+            duration_seconds=int((end - start).total_seconds()),
+            **extra,
+        )
+        detail = EventRecordDetailCreate(
+            record_id=record_id,
+            sleep_total_duration_minutes=400,
+            sleep_time_in_bed_minutes=int((end - start).total_seconds()) // 60,
+        )
+        return record, detail
+
+    def _nights(self, db: Session, user_id: UUID) -> list[tuple[EventRecord, DataSource]]:
+        return (
+            db.query(EventRecord, DataSource)
+            .join(DataSource, EventRecord.data_source_id == DataSource.id)
+            .filter(DataSource.user_id == user_id, EventRecord.category == "sleep")
+            .order_by(EventRecord.start_datetime)
+            .all()
+        )
+
+    def test_two_accounts_on_one_night_stay_two_nights(self, db: Session) -> None:
+        user = UserFactory()
+        left = UserConnectionFactory(user=user, provider="garmin")
+        right = UserConnectionFactory(user=user, provider="garmin")
+        start, end = self._dt(23), self._dt(6, day=26)
+        start_b, end_b = self._dt(23, 5), self._dt(6, 5, day=26)
+
+        with active_connection(left.id):
+            event_record_service.create_or_merge_sleep(
+                db, user.id, *self._garmin_night(user.id, start, end), self.THRESHOLD
+            )
+        with active_connection(right.id):
+            event_record_service.create_or_merge_sleep(
+                db, user.id, *self._garmin_night(user.id, start_b, end_b), self.THRESHOLD
+            )
+
+        nights = self._nights(db, user.id)
+        assert [ds.user_connection_id for _, ds in nights] == [left.id, right.id]
+        assert [(r.start_datetime, r.end_datetime) for r, _ in nights] == [(start, end), (start_b, end_b)]
+        assert [r.duration_seconds for r, _ in nights] == [7 * 3600, 7 * 3600]
+
+    def test_a_record_naming_its_data_source_is_scoped_to_that_account(self, db: Session) -> None:
+        user = UserFactory()
+        left = UserConnectionFactory(user=user, provider="garmin")
+        right = UserConnectionFactory(user=user, provider="garmin")
+        ds_left = DataSourceFactory(
+            user=user, provider=ProviderName.GARMIN, source="garmin", device_model=None, user_connection_id=left.id
+        )
+        ds_right = DataSourceFactory(
+            user=user, provider=ProviderName.GARMIN, source="garmin", device_model=None, user_connection_id=right.id
+        )
+        existing = EventRecordFactory(
+            mapping=ds_left,
+            category="sleep",
+            type_="sleep_session",
+            start_datetime=self._dt(23),
+            end_datetime=self._dt(6, day=26),
+            duration_seconds=7 * 3600,
+        )
+        SleepDetailsFactory(event_record=existing)
+
+        record, detail = self._garmin_night(
+            user.id, self._dt(23, 5), self._dt(6, 5, day=26), data_source_id=ds_right.id
+        )
+        result = event_record_service.create_or_merge_sleep(db, user.id, record, detail, self.THRESHOLD)
+
+        assert result.id == record.id
+        assert result.data_source_id == ds_right.id
+        assert event_record_service.get(db, existing.id) is not None
+
+    def test_fragments_of_one_accounts_night_still_merge(self, db: Session) -> None:
+        # The second account is what switches the scoping on; the merge on the first
+        # must survive it.
+        user = UserFactory()
+        left = UserConnectionFactory(user=user, provider="garmin")
+        right = UserConnectionFactory(user=user, provider="garmin")
+        with active_connection(right.id):
+            event_record_service.create_or_merge_sleep(
+                db, user.id, *self._garmin_night(user.id, self._dt(23), self._dt(6, day=26)), self.THRESHOLD
+            )
+
+        with active_connection(left.id):
+            event_record_service.create_or_merge_sleep(
+                db, user.id, *self._garmin_night(user.id, self._dt(23), self._dt(2, day=26)), self.THRESHOLD
+            )
+            merged = event_record_service.create_or_merge_sleep(
+                db, user.id, *self._garmin_night(user.id, self._dt(2, 20, day=26), self._dt(6, day=26)), self.THRESHOLD
+            )
+
+        nights = self._nights(db, user.id)
+        assert len(nights) == 2
+        left_nights = [r for r, ds in nights if ds.user_connection_id == left.id]
+        assert [r.id for r in left_nights] == [merged.id]
+        assert (merged.start_datetime, merged.end_datetime) == (self._dt(23), self._dt(6, day=26))
+
+    def test_an_import_cannot_join_either_of_two_accounts(self, db: Session) -> None:
+        user = UserFactory()
+        left = UserConnectionFactory(user=user, provider="garmin")
+        right = UserConnectionFactory(user=user, provider="garmin")
+        with active_connection(left.id):
+            event_record_service.create_or_merge_sleep(
+                db, user.id, *self._garmin_night(user.id, self._dt(23), self._dt(6, day=26)), self.THRESHOLD
+            )
+        with active_connection(right.id):
+            event_record_service.create_or_merge_sleep(
+                db, user.id, *self._garmin_night(user.id, self._dt(23, 5), self._dt(6, 5, day=26)), self.THRESHOLD
+            )
+
+        # No scope bound: a one-time import, which cannot say whose night it is.
+        event_record_service.create_or_merge_sleep(
+            db, user.id, *self._garmin_night(user.id, self._dt(23, 2), self._dt(6, 2, day=26)), self.THRESHOLD
+        )
+
+        nights = self._nights(db, user.id)
+        assert sorted(str(ds.user_connection_id) for _, ds in nights) == sorted([str(left.id), str(right.id), "None"])
+
+    def test_an_import_still_joins_the_only_account(self, db: Session) -> None:
+        # What the Apple export relies on: the same night, synced by the app and then
+        # imported from the export, is one night.
+        user = UserFactory()
+        only = UserConnectionFactory(user=user, provider="garmin")
+        with active_connection(only.id):
+            event_record_service.create_or_merge_sleep(
+                db, user.id, *self._garmin_night(user.id, self._dt(23), self._dt(6, day=26)), self.THRESHOLD
+            )
+
+        event_record_service.create_or_merge_sleep(
+            db, user.id, *self._garmin_night(user.id, self._dt(23, 5), self._dt(6, 5, day=26)), self.THRESHOLD
+        )
+
+        assert len(self._nights(db, user.id)) == 1
 
 
 class TestRecomputeSleepScores:

@@ -234,6 +234,21 @@ That asymmetry is deliberate. A wrong split is visible in the data-source list
 and can be corrected; a wrong merge pools two units' samples into one stream and
 cannot be undone, and may not be noticed until it is in an analysis.
 
+### Sleep fragments merge within one account
+
+Most providers' sleep is saved through a merge that joins adjacent fragments of
+one night (a night split by a wake, fragments a provider files separately) into
+one record. Once a user holds two accounts with a provider, a fragment only joins
+nights from its own account, so two units worn the same night stay two nights. A
+one-time import joins an account's night only when the user holds a single
+account with that provider, which is what lets an Apple Health export reconcile
+with the same nights synced by the app.
+
+Before this rule, the second account's night was merged into the first and the
+first account's record was deleted. How to find and recover nights affected
+that way is in the "Sleep merging never joins two accounts' nights" entry of
+[`docs/fork/DECISIONS.md`](https://github.com/dial203/open-wearables/blob/main/docs/fork/DECISIONS.md).
+
 ## What this does not cover yet
 
 **SDK providers still hold one account per user.** Apple Health and the other

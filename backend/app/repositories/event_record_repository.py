@@ -37,6 +37,7 @@ from app.schemas.model_crud.activities import (
     EventRecordQueryParams,
     EventRecordUpdate,
 )
+from app.utils.connection_context import get_active_connection_id
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import decode_cursor
 
@@ -113,6 +114,18 @@ class EventRecordRepository(
         ):
             creation_data.pop(redundant_key, None)
         return data_source_id, self.model(**creation_data)
+
+    def account_for(self, db_session: DbSession, creator: EventRecordCreate) -> UUID | None:
+        """The account ``_build_creation`` will file *creator* under, without creating anything.
+
+        A record naming its data source belongs to that source's account; otherwise it
+        takes the one it carries, else the one the unit of work bound, which is where
+        ``ensure_data_source`` looks too. None is a one-time import.
+        """
+        if creator.data_source_id:
+            data_source = db_session.get(DataSource, creator.data_source_id)
+            return data_source.user_connection_id if data_source is not None else None
+        return creator.user_connection_id or get_active_connection_id()
 
     def _fetch_existing(self, db_session: DbSession, data_source_id: UUID, creation: EventRecord) -> EventRecord | None:
         return (
@@ -1119,6 +1132,8 @@ class EventRecordRepository(
         threshold_minutes: int,
         source: str | None = None,
         provider: str | None = None,
+        *,
+        user_connection_id: UUID | None,
     ) -> EventRecord | None:
         """Return the most-recent sleep session adjacent to [start_time, end_time].
 
@@ -1131,19 +1146,27 @@ class EventRecordRepository(
         DataSource has the same provider, preventing cross-provider merges
         (e.g. Oura sessions being merged with Garmin sessions).
         When *source* is provided an additional filter on DataSource.source is applied.
+
+        *user_connection_id* is the account the new session arrives through, None for
+        a one-time import. Required, because None is a real answer here rather than
+        "unknown": see ``_account_scope``.
         """
         threshold = timedelta(minutes=threshold_minutes)
+        scope = [DataSource.user_id == user_id]
+        if provider is not None:
+            scope.append(DataSource.provider == provider)
+        if source is not None:
+            scope.append(DataSource.source == source)
         filters = [
-            DataSource.user_id == user_id,
+            *scope,
             self.model.category == "sleep",
             self.model.type == "sleep_session",
             self.model.start_datetime <= end_time + threshold,
             self.model.end_datetime >= start_time - threshold,
         ]
-        if provider is not None:
-            filters.append(DataSource.provider == provider)
-        if source is not None:
-            filters.append(DataSource.source == source)
+        account_filter = self._account_scope(db_session, scope, user_connection_id)
+        if account_filter is not None:
+            filters.append(account_filter)
         return (
             db_session.query(self.model)
             .join(DataSource, self.model.data_source_id == DataSource.id)
@@ -1153,6 +1176,42 @@ class EventRecordRepository(
             .with_for_update()
             .first()
         )
+
+    def _account_scope(
+        self,
+        db_session: DbSession,
+        scope: list,
+        user_connection_id: UUID | None,
+    ) -> ColumnElement[bool] | None:
+        """Which accounts' nights a session arriving through *user_connection_id* may join.
+
+        Merging is for fragments of one night from one device. A participant wearing two
+        units of one brand, each on its own account, produces two overlapping nights
+        with the same provider and source, and before this they were merged into one -
+        the original deleted, the stages concatenated, the times in bed added.
+
+        With at most one account in play there is nobody else's night to join, so the
+        lookup is left exactly as it was. That keeps the reconciliation the Apple export
+        relies on: an imported night carries no account, and it is meant to merge with
+        the same night synced by the app. With two or more, a session joins only nights
+        from its own account, and an import - which cannot say whose it is - joins only
+        other imports. Over-splitting is visible and reversible; a wrong merge is not.
+
+        The accounts are read from the data sources in *scope* rather than from the
+        user's connections, because that is where the nights live: Polar's v4 account,
+        for one, files its data under the ``polar`` provider.
+        """
+        accounts = {
+            row[0]
+            for row in db_session.query(DataSource.user_connection_id)
+            .filter(*scope, DataSource.user_connection_id.is_not(None))
+            .distinct()
+        }
+        if user_connection_id is not None:
+            accounts.add(user_connection_id)
+        if len(accounts) <= 1:
+            return None
+        return DataSource.user_connection_id.is_not_distinct_from(user_connection_id)
 
     def get_sleep_records_with_details(
         self,

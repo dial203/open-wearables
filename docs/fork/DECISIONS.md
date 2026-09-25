@@ -456,3 +456,97 @@ Template:
   and React fell back to rendering the page on the client. `redirectPath` is resolved
   against the origin inside `connect()`, where the hook already resolved its own
   default, so a caller can name the return page without touching `window` itself.
+
+
+## Sleep merging never joins two accounts' nights
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours; re-apply `_account_scope` in
+  `EventRecordRepository.find_adjacent_sleep_record` and the `user_connection_id`
+  argument at both call sites (`EventRecordService._create_or_merge_sleep_inner`,
+  `app/services/sdk/sleep_service.py`) on top of upstream's version
+- **Why**: `create_or_merge_sleep` joins adjacent fragments of one night into one
+  record, and found the fragment to join by provider and source alone. Two units of
+  one brand worn the same night, each on its own account - the setup this fork adds
+  several accounts for - share both, so the second night was merged into the first at
+  write time. The merged record is rebuilt from the second-arriving record (its
+  account, its `external_id`, the widened window, concatenated stages) and the first
+  account's record is **deleted**. Every path that saves sleep through it was exposed:
+  WHOOP, Oura, Polar, Suunto, Ultrahuman, Withings, Google Health, Garmin's
+  `save_sleep_data`, and the Apple SDK. Garmin's webhook batch path bulk-inserts and
+  never merged.
+
+  The lookup now takes the account the new session arrives through, resolved the way
+  `_build_creation` files it (the record's data source, else its
+  `user_connection_id`, else the connection the unit of work bound). When the
+  user's data sources in that provider/source scope carry at most one account, the
+  lookup is unchanged. With two or more, a session joins only its own account's
+  nights, and a connection-less import joins only other imports. Accounts are read
+  from the data sources rather than `user_connection`, because Polar's v4 account
+  files its data under `polar`.
+
+  NULL is deliberately *not* its own scope when there is one account. The Apple export
+  importer relies on an imported night (no account) merging with the same night synced
+  by the app (the SDK account) - see `XMLService._wrap_sleep_data`. With a single
+  account there is no one else's night to join, so that reconciliation is kept; with
+  two, an import cannot say whose night it is and is left apart. Over-split, never
+  over-merge.
+
+  **Nights merged before this cannot be split from what is stored**, because the
+  losing account's record was deleted. To find likely victims, run this read-only
+  query. A row is a night one account holds while a sibling account of the same user
+  and provider holds none on that date - the shape a merge leaves. It is a candidate,
+  not proof: the sibling may just not have been worn.
+
+  ```sql
+  -- Sleep nights that may have absorbed a sibling account's night (read-only).
+  -- A candidate is a night one account holds while another account of the same user
+  -- and provider holds no night on the same local date - the shape a cross-account
+  -- merge leaves behind. It is a candidate, not proof: the sibling may simply not
+  -- have been worn. Confirm against the provider before acting on it.
+  WITH nights AS (
+      SELECT ds.user_id,
+             ds.provider,
+             ds.user_connection_id,
+             er.id AS record_id,
+             er.start_datetime,
+             er.end_datetime,
+             (er.end_datetime + COALESCE(er.zone_offset, '+00:00')::interval)::date AS night
+      FROM event_record er
+      JOIN data_source ds ON ds.id = er.data_source_id
+      WHERE er.category = 'sleep'
+        AND ds.user_connection_id IS NOT NULL
+  )
+  SELECT n.user_id,
+         n.provider,
+         n.night,
+         n.user_connection_id AS holds_the_night,
+         n.record_id,
+         n.start_datetime,
+         n.end_datetime,
+         sib.id               AS sibling_without_a_night,
+         sib.account_email    AS sibling_email
+  FROM nights n
+  JOIN user_connection sib
+    ON sib.user_id = n.user_id
+   AND sib.provider = n.provider
+   AND sib.id <> n.user_connection_id
+  WHERE NOT EXISTS (
+      SELECT 1 FROM nights o
+      WHERE o.user_connection_id = sib.id
+        AND o.night = n.night
+  )
+  ORDER BY n.user_id, n.provider, n.night;
+  ```
+
+  To recover a flagged night, re-fetch both accounts from the provider with the fix
+  deployed. First confirm the provider can still return the night:
+  `POST /api/v1/providers/{provider}/users/{user_id}/sync/historical` takes
+  `connection_id` and `days` (90 by default, up to 365; Garmin is capped at 30), and
+  providers' own history limits apply. Then delete the merged record and run the
+  historical sync for each of the two accounts over that range; both nights come back
+  as separate records. Deleting first is what makes this independent of whether the
+  provider sends a stable `external_id` for sleep. For a night older than the
+  provider will return, leave the record and exclude it from analysis - deleting it
+  would lose the half that survived.
