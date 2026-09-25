@@ -65,7 +65,7 @@ class DataSourceResponse(BaseModel):
     account_type: str | None = Field(
         None,
         description=(
-            "What the connected account is for: personal, validation, reliability, "
+            "What the connected account is for: personal, validation, reference, reliability, "
             "monitoring, testing, other. Null when nobody has classified it."
         ),
         example="validation",

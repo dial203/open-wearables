@@ -34,6 +34,24 @@ class TestClassifyingAnAccount:
         assert response.status_code == 200
         assert response.json()["account_type"] == "validation"
 
+    def test_the_gold_standard_rig_can_be_classified_as_the_reference(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        """A consumer scores every validation arm against this account, so it has a word of its own."""
+        connection = UserConnectionFactory(user=user, provider="polar", provider_user_id="p-1")
+        db.commit()
+
+        response = client.patch(
+            f"/api/v1/users/{user.id}/connections/accounts/{connection.id}",
+            json={"account_type": AccountType.REFERENCE.value},
+            headers=api_key_header,
+        )
+        assert response.status_code == 200
+        assert response.json()["account_type"] == "reference"
+
+        listed = client.get(f"/api/v1/users/{user.id}/connections", headers=api_key_header).json()
+        assert [c["account_type"] for c in listed] == ["reference"]
+
     def test_an_unclassified_account_reports_as_null_rather_than_guessing(
         self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
     ) -> None:

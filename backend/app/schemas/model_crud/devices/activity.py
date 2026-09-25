@@ -53,7 +53,7 @@ class SourceActivityResponse(BaseModel):
     account_email: str | None = Field(None, examples=["p01.left@lab.example.edu"])
     account_type: str | None = Field(
         None,
-        description="personal, validation, reliability, monitoring, testing, other. Null when unclassified.",
+        description="personal, validation, reference, reliability, monitoring, testing, other. Null when unclassified.",
         examples=["validation"],
     )
 

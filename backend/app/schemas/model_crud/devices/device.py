@@ -60,7 +60,7 @@ class DeviceDataSourceResponse(BaseModel):
     account_type: str | None = Field(
         None,
         description=(
-            "What that account is for: personal, validation, reliability, monitoring, "
+            "What that account is for: personal, validation, reference, reliability, monitoring, "
             "testing, other. Null when nobody has classified it."
         ),
         examples=["validation"],

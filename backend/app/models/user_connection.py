@@ -68,7 +68,7 @@ class UserConnection(BaseDbModel):
     provider_user_id: Mapped[str | None]
     provider_username: Mapped[str | None]
 
-    # What this account is for: personal, validation, reliability, monitoring,
+    # What this account is for: personal, validation, reference, reliability, monitoring,
     # testing, other (app/schemas/enums/account_type.py). The e-mail below says
     # *which* account this is; this says why it exists, which is what a study
     # filters on - the validation arm separated from the participant's own

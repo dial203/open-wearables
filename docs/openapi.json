@@ -3566,10 +3566,10 @@
                   "type": "null"
                 }
               ],
-              "description": "What this account is for: personal, validation, reliability, monitoring, testing, other",
+              "description": "What this account is for: personal, validation, reference, reliability, monitoring, testing, other",
               "title": "Account Type"
             },
-            "description": "What this account is for: personal, validation, reliability, monitoring, testing, other"
+            "description": "What this account is for: personal, validation, reference, reliability, monitoring, testing, other"
           },
           {
             "name": "account_label",
@@ -12091,6 +12091,7 @@
         "enum": [
           "personal",
           "validation",
+          "reference",
           "reliability",
           "monitoring",
           "testing",
@@ -13386,7 +13387,7 @@
               }
             ],
             "title": "Account Type",
-            "description": "What the connected account is for: personal, validation, reliability, monitoring, testing, other. Null when nobody has classified it.",
+            "description": "What the connected account is for: personal, validation, reference, reliability, monitoring, testing, other. Null when nobody has classified it.",
             "example": "validation"
           },
           "account_label": {
@@ -13831,7 +13832,7 @@
               }
             ],
             "title": "Account Type",
-            "description": "What that account is for: personal, validation, reliability, monitoring, testing, other. Null when nobody has classified it.",
+            "description": "What that account is for: personal, validation, reference, reliability, monitoring, testing, other. Null when nobody has classified it.",
             "examples": [
               "validation"
             ]
@@ -18767,7 +18768,7 @@
               }
             ],
             "title": "Account Type",
-            "description": "personal, validation, reliability, monitoring, testing, other. Null when unclassified.",
+            "description": "personal, validation, reference, reliability, monitoring, testing, other. Null when unclassified.",
             "examples": [
               "validation"
             ]
@@ -20356,7 +20357,7 @@
                 "type": "null"
               }
             ],
-            "description": "What this account is for: personal, validation, reliability, monitoring, testing, other"
+            "description": "What this account is for: personal, validation, reference, reliability, monitoring, testing, other"
           },
           "account_label": {
             "anyOf": [
