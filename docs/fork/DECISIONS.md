@@ -444,3 +444,15 @@ Template:
   (provider, writer, model, `device_id`) instead, and a column names a data source only
   when every row in it agrees on one - a sleep summary can pool two accounts'
   model-less sources, so its column cannot borrow the id of the recovery row beside it.
+
+## `useOAuthConnect` takes a `redirectPath`
+
+- **Area**: frontend
+- **Status**: active; upstreamable
+- **On conflict**: keep ours; the option is additive, and `redirectUri` still wins
+- **Why**: The fork's "Add account" dialog sends the operator back to the user's page,
+  and built that URL from `window.location.origin` while rendering. The user page is
+  server-rendered first, where there is no `window`, so every `/users/{id}` load threw
+  and React fell back to rendering the page on the client. `redirectPath` is resolved
+  against the origin inside `connect()`, where the hook already resolved its own
+  default, so a caller can name the return page without touching `window` itself.
