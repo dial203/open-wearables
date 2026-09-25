@@ -292,6 +292,27 @@ and the swap becomes invisible in analysis.
 `device_label` is populated only when the caller already joined the device. This runs
 per sample on the timeseries paths, so a lazy load would turn one response into a
 query per row.
+The event endpoints (`/events/sleep`, `/events/workouts`, menstrual cycles) and the
+recovery summaries do join it, so their rows carry the name. Recovery and sleep
+summaries also carry `data_source_id` and `user_connection_id`: a recovery row is one
+score from one source, and a sleep summary is one data source's night. Activity
+summaries carry `user_connection_id`, so two accounts of one brand are two rows, but
+no `data_source_id`. Body summaries carry neither.
+
+### Linking from the dashboard
+
+Any row in the dashboard that names its data source - a sleep session, a workout, a
+recovery row on an expanded night, a cycle entry, a Compare column fed by one source -
+shows the login e-mail of the account it came through and a **Map device** control
+when the source has no device (a small link icon once it has one). Both open the same
+dialog as **Unattributed sources** on the Devices tab: pick an existing device, or
+create one seeded from what the provider reported.
+
+The link is made on the **data source**, not the record the dialog was opened from.
+Every record the source has delivered, and every one it delivers from then on, is
+filed under the device. For a source that reports no model string, that is every
+record the account sends without one - so link it only when a single device is behind
+all of them. Garmin sends no model with sleep, which makes this the common case.
 
 ## API
 

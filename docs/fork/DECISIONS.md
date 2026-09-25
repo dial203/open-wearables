@@ -412,3 +412,182 @@ Template:
   account's `rr_interval` series is a participant's cardiac reference, so it has
   to be a value a consumer can filter on rather than an account label. Stored as a
   plain string like the rest of the set: no migration.
+
+## Sources are linked to devices from the rows that show their data
+
+- **Area**: backend, frontend, docs
+- **Status**: active
+- **On conflict**: keep ours; in `event_record_repository.get_records_with_filters`
+  re-add `selectinload(DataSource.device)` on top of upstream's query, and keep the
+  three identity keys in `health_score_repository.get_recovery_summaries`
+- **Why**: A source with no device reads "Device info not available" wherever its data
+  is shown, and the only way to attribute it was the Devices tab - where it is one of a
+  list of bare provider/model strings, away from the night or workout that makes it
+  recognisable. `DataSourceInfo` now takes the user id and, on any row that names its
+  data source, shows the login e-mail of the account it came through and a "Map device"
+  control that opens the Devices tab's own link dialog (moved to
+  `components/user/link-data-source-dialog.tsx`, not copied). Daily aggregates (sleep,
+  activity and body summaries) group several sources into one row and carry no
+  `data_source_id`, so they stay read-only: linking from one would have to guess which
+  source was meant.
+
+  Two backend changes make that work. The event read path (sleep sessions, workouts,
+  cycles) never loaded `DataSource.device`, so `SourceMetadata` sent the device id with
+  no name and a source linked by hand still read "Device info not available" -
+  `get_records_with_filters` now eager-loads it, one `IN` query per page. And recovery
+  summaries, which are one score from one source, now carry `data_source_id`,
+  `user_connection_id` and `original_source_name` like the event rows already did.
+
+  That last change would have split the Compare tab: its columns joined a sleep summary
+  to a recovery row by `data_source_id`, falling back to a composite, and only the
+  recovery row can now name its source. The columns key on what both summaries carry
+  (provider, writer, model, `device_id`) instead, and a column names a data source only
+  when every row in it agrees on one - a sleep summary can pool two accounts'
+  model-less sources, so its column cannot borrow the id of the recovery row beside it.
+
+## `useOAuthConnect` takes a `redirectPath`
+
+- **Area**: frontend
+- **Status**: active; upstreamable
+- **On conflict**: keep ours; the option is additive, and `redirectUri` still wins
+- **Why**: The fork's "Add account" dialog sends the operator back to the user's page,
+  and built that URL from `window.location.origin` while rendering. The user page is
+  server-rendered first, where there is no `window`, so every `/users/{id}` load threw
+  and React fell back to rendering the page on the client. `redirectPath` is resolved
+  against the origin inside `connect()`, where the hook already resolved its own
+  default, so a caller can name the return page without touching `window` itself.
+
+
+## Sleep merging never joins two accounts' nights
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours; re-apply `_account_scope` in
+  `EventRecordRepository.find_adjacent_sleep_record` and the `user_connection_id`
+  argument at both call sites (`EventRecordService._create_or_merge_sleep_inner`,
+  `app/services/sdk/sleep_service.py`) on top of upstream's version
+- **Why**: `create_or_merge_sleep` joins adjacent fragments of one night into one
+  record, and found the fragment to join by provider and source alone. Two units of
+  one brand worn the same night, each on its own account - the setup this fork adds
+  several accounts for - share both, so the second night was merged into the first at
+  write time. The merged record is rebuilt from the second-arriving record (its
+  account, its `external_id`, the widened window, concatenated stages) and the first
+  account's record is **deleted**. Every path that saves sleep through it was exposed:
+  WHOOP, Oura, Polar, Suunto, Ultrahuman, Withings, Google Health, Garmin's
+  `save_sleep_data`, and the Apple SDK. Garmin's webhook batch path bulk-inserts and
+  never merged.
+
+  The lookup now takes the account the new session arrives through, resolved the way
+  `_build_creation` files it (the record's data source, else its
+  `user_connection_id`, else the connection the unit of work bound). When the
+  user's data sources in that provider/source scope carry at most one account, the
+  lookup is unchanged. With two or more, a session joins only its own account's
+  nights, and a connection-less import joins only other imports. Accounts are read
+  from the data sources rather than `user_connection`, because Polar's v4 account
+  files its data under `polar`.
+
+  NULL is deliberately *not* its own scope when there is one account. The Apple export
+  importer relies on an imported night (no account) merging with the same night synced
+  by the app (the SDK account) - see `XMLService._wrap_sleep_data`. With a single
+  account there is no one else's night to join, so that reconciliation is kept; with
+  two, an import cannot say whose night it is and is left apart. Over-split, never
+  over-merge.
+
+  **Nights merged before this cannot be split from what is stored**, because the
+  losing account's record was deleted. To find likely victims, run this read-only
+  query. A row is a night one account holds while a sibling account of the same user
+  and provider holds none on that date - the shape a merge leaves. It is a candidate,
+  not proof: the sibling may just not have been worn.
+
+  ```sql
+  -- Sleep nights that may have absorbed a sibling account's night (read-only).
+  -- A candidate is a night one account holds while another account of the same user
+  -- and provider holds no night on the same local date - the shape a cross-account
+  -- merge leaves behind. It is a candidate, not proof: the sibling may simply not
+  -- have been worn. Confirm against the provider before acting on it.
+  WITH nights AS (
+      SELECT ds.user_id,
+             ds.provider,
+             ds.user_connection_id,
+             er.id AS record_id,
+             er.start_datetime,
+             er.end_datetime,
+             (er.end_datetime + COALESCE(er.zone_offset, '+00:00')::interval)::date AS night
+      FROM event_record er
+      JOIN data_source ds ON ds.id = er.data_source_id
+      WHERE er.category = 'sleep'
+        AND ds.user_connection_id IS NOT NULL
+  )
+  SELECT n.user_id,
+         n.provider,
+         n.night,
+         n.user_connection_id AS holds_the_night,
+         n.record_id,
+         n.start_datetime,
+         n.end_datetime,
+         sib.id               AS sibling_without_a_night,
+         sib.account_email    AS sibling_email
+  FROM nights n
+  JOIN user_connection sib
+    ON sib.user_id = n.user_id
+   AND sib.provider = n.provider
+   AND sib.id <> n.user_connection_id
+  WHERE NOT EXISTS (
+      SELECT 1 FROM nights o
+      WHERE o.user_connection_id = sib.id
+        AND o.night = n.night
+  )
+  ORDER BY n.user_id, n.provider, n.night;
+  ```
+
+  To recover a flagged night, re-fetch both accounts from the provider with the fix
+  deployed. First confirm the provider can still return the night:
+  `POST /api/v1/providers/{provider}/users/{user_id}/sync/historical` takes
+  `connection_id` and `days` (90 by default, up to 365; Garmin is capped at 30), and
+  providers' own history limits apply. Then delete the merged record and run the
+  historical sync for each of the two accounts over that range; both nights come back
+  as separate records. Deleting first is what makes this independent of whether the
+  provider sends a stable `external_id` for sleep. For a night older than the
+  provider will return, leave the record and exclude it from analysis - deleting it
+  would lose the half that survived.
+
+
+## Daily summaries are per account, not pooled across accounts
+
+- **Area**: backend, frontend
+- **Status**: active; supersedes the sleep-summary half of "Sources are linked to
+  devices from the rows that show their data" (sleep summaries now carry both ids, so
+  a Compare column holding one can name its source)
+- **On conflict**: keep ours; re-add `DataSource.user_connection_id` to the group-by of
+  every daily aggregate upstream touches, and keep the account in the activity
+  cursor
+- **Why**: The daily sleep and activity aggregates grouped on provider, source and
+  model - the whole of `data_source` identity before this fork added the account to
+  it. Garmin sends no model with sleep, so two Garmin accounts on one participant fell
+  into one group, and every daily figure pooled both:
+  - sleep durations and stage minutes were added (a 400- and a 380-minute night read
+    as one 780-minute night, on the priority-filtered path too);
+  - each night's vitals averaged both accounts' heart rate, because the laterals that
+    attach them matched on the same three columns;
+  - each row carried both accounts' sessions;
+  - steps and energy were summed;
+  - active and intensity minutes were counted from per-minute buckets holding both
+    units' steps or heart rate;
+  - the live/archive merge treated one account's archived day as already covered by
+    the other's live day and dropped it.
+
+  `get_sleep_summaries` now groups on the account and the data source id (one group
+  is one data source), scopes its vitals and sessions to that id, and returns both
+  ids on `SourceMetadata`. The five activity queries (live aggregate, archive, active
+  minutes, intensity minutes, workout aggregates) group on the account, and the
+  service joins them and merges the archive on (date, source, model, account). The
+  activity cursor gains the account as a fourth field; three-field cursors issued
+  before this still decode. The rows are now ordered by the full cursor key rather
+  than by date alone - the cursor compares on that key, so a date-only order could
+  skip or repeat a row at a page boundary on any day with several sources. For the
+  same reason the cursor now stores a missing source as empty, as the sort does,
+  rather than as `unknown`, which sorted after `apple` and skipped it.
+
+  `_filter_by_priority` needed nothing: it keeps the first of each day's sorted
+  candidates, so finer groups add candidates without adding winners. The Compare tab
+  keys its columns on the account as well.

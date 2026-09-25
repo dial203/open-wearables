@@ -251,10 +251,24 @@ class EventRecordService(
         threshold_minutes: int,
         source: str | None = None,
         provider: str | None = None,
+        *,
+        user_connection_id: UUID | None,
     ) -> EventRecord | None:
-        """Find an existing sleep session adjacent to [start_time, end_time]."""
+        """Find an existing sleep session adjacent to [start_time, end_time].
+
+        *user_connection_id* is the account the new session arrives through (None for
+        a one-time import); with several accounts in play only that account's nights
+        are candidates.
+        """
         return self.crud.find_adjacent_sleep_record(
-            db_session, user_id, start_time, end_time, threshold_minutes, source=source, provider=provider
+            db_session,
+            user_id,
+            start_time,
+            end_time,
+            threshold_minutes,
+            source=source,
+            provider=provider,
+            user_connection_id=user_connection_id,
         )
 
     def create_or_merge_sleep(
@@ -344,6 +358,7 @@ class EventRecordService(
             threshold_minutes,
             source=record.source,
             provider=record.provider,
+            user_connection_id=self.crud.account_for(db_session, record),
         )
 
         if adjacent is not None:

@@ -7,6 +7,13 @@ export interface UseOAuthConnectOptions {
   userId: string;
   /** OAuth callback URI (where user returns after provider OAuth) */
   redirectUri?: string;
+  /**
+   * A path on this app to return to instead, e.g. `/users/{id}`. Resolved against
+   * the current origin only when the flow starts, so a caller can pass it while
+   * rendering - `window` does not exist during the server render. Ignored when
+   * `redirectUri` is set.
+   */
+  redirectPath?: string;
   /** Developer's app redirect URL (passed through to success page) */
   redirectUrl?: string;
   onSuccess?: (providerId: string) => void;
@@ -53,7 +60,8 @@ export interface UseOAuthConnectReturn {
 export function useOAuthConnect(
   options: UseOAuthConnectOptions
 ): UseOAuthConnectReturn {
-  const { userId, redirectUri, redirectUrl, onSuccess, onError } = options;
+  const { userId, redirectUri, redirectPath, redirectUrl, onSuccess, onError } =
+    options;
 
   const [connectionState, setConnectionState] =
     useState<OAuthConnectionState>('idle');
@@ -76,7 +84,9 @@ export function useOAuthConnect(
 
         const finalRedirectUri =
           redirectUri ||
-          `${window.location.origin}/users/${userId}/pair/success?${successParams}`;
+          (redirectPath
+            ? `${window.location.origin}${redirectPath}`
+            : `${window.location.origin}/users/${userId}/pair/success?${successParams}`);
 
         const params = new URLSearchParams({
           user_id: userId,
@@ -124,7 +134,7 @@ export function useOAuthConnect(
         onError?.(errorMessage);
       }
     },
-    [userId, redirectUri, redirectUrl, onSuccess, onError]
+    [userId, redirectUri, redirectPath, redirectUrl, onSuccess, onError]
   );
 
   const reset = useCallback(() => {

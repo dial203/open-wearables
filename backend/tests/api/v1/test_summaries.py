@@ -19,6 +19,7 @@ from tests.factories import (
     PersonalRecordFactory,
     SeriesTypeDefinitionFactory,
     SleepDetailsFactory,
+    UserConnectionFactory,
     UserFactory,
     WorkoutDetailsFactory,
 )
@@ -456,6 +457,211 @@ class TestSleepSummaryDeviceAttribution:
         assert names == {"Muse", "Oura"}
         # And they are genuinely two units, not one row seen twice.
         assert len({row["source"]["device_id"] for row in rows}) == 2
+
+
+class TestSleepSummaryPerAccount:
+    """Two accounts with one provider are two rows, never one pooled row.
+
+    Garmin sends no model with sleep, so two Garmin accounts on one participant report
+    the same provider, source and (empty) model. Grouped on those alone, their nights
+    summed into one row per day and each row's vitals averaged both accounts' samples.
+    """
+
+    WINDOW = {"start_date": "2025-12-25T00:00:00Z", "end_date": "2025-12-27T00:00:00Z"}
+
+    def _account_night(self, db: Session, user: object, sleep_minutes: int, heart_rate: int) -> tuple:
+        from app.repositories.data_source_repository import DataSourceRepository
+
+        connection = UserConnectionFactory(user=user, provider="garmin")
+        data_source = DataSourceRepository().ensure_data_source(
+            db,
+            user_id=user.id,
+            provider=ProviderName.GARMIN,
+            device_model=None,
+            source="garmin",
+            user_connection_id=connection.id,
+        )
+        db.commit()
+        start = datetime(2025, 12, 25, 23, 0, 0, tzinfo=timezone.utc)
+        record = EventRecordFactory(
+            mapping=data_source,
+            category="sleep",
+            start_datetime=start,
+            end_datetime=start + timedelta(hours=7),
+            duration_seconds=7 * 3600,
+        )
+        SleepDetailsFactory(event_record=record, sleep_total_duration_minutes=sleep_minutes)
+        hr_type = SeriesTypeDefinitionFactory.get_or_create_heart_rate()
+        for minutes in (30, 120, 300):
+            DataPointSeriesFactory(
+                mapping=data_source,
+                series_type=hr_type,
+                value=Decimal(heart_rate),
+                recorded_at=start + timedelta(minutes=minutes),
+            )
+        return connection, data_source
+
+    def _rows(self, client: TestClient, user: object, every_source: bool) -> list[dict]:
+        params = dict(self.WINDOW)
+        params["filter_by_priority"] = "false" if every_source else "true"
+        response = client.get(
+            f"/api/v1/users/{user.id}/summaries/sleep",
+            headers=api_key_headers(ApiKeyFactory().plain_key),
+            params=params,
+        )
+        assert response.status_code == 200
+        return response.json()["data"]
+
+    def test_two_accounts_are_two_rows(self, client: TestClient, db: Session) -> None:
+        user = UserFactory()
+        left, left_source = self._account_night(db, user, sleep_minutes=400, heart_rate=50)
+        right, right_source = self._account_night(db, user, sleep_minutes=380, heart_rate=70)
+
+        rows = sorted(self._rows(client, user, every_source=True), key=lambda r: r["duration_minutes"])
+
+        assert [r["duration_minutes"] for r in rows] == [380, 400]
+        assert [r["avg_heart_rate_bpm"] for r in rows] == [70, 50]
+        assert [r["source"]["user_connection_id"] for r in rows] == [str(right.id), str(left.id)]
+        assert [r["source"]["data_source_id"] for r in rows] == [str(right_source.id), str(left_source.id)]
+        # Each row carries only its own account's session.
+        assert [len(r["sessions"]) for r in rows] == [1, 1]
+
+    def test_the_priority_filter_still_keeps_one_night(self, client: TestClient, db: Session) -> None:
+        user = UserFactory()
+        self._account_night(db, user, sleep_minutes=400, heart_rate=50)
+        self._account_night(db, user, sleep_minutes=380, heart_rate=70)
+
+        rows = self._rows(client, user, every_source=False)
+
+        assert len(rows) == 1
+        assert rows[0]["duration_minutes"] in (380, 400)
+
+
+class TestActivitySummaryPerAccount:
+    """A day of activity is one row per account, not one row pooling both.
+
+    Two Garmins on two accounts report the same provider, source and model. Grouped on
+    those alone, their steps summed into one row, and the per-minute buckets behind the
+    active and intensity minutes added one unit's steps to the other's.
+    """
+
+    WINDOW = {"start_date": "2025-12-25T00:00:00Z", "end_date": "2025-12-27T00:00:00Z"}
+    MORNING = datetime(2025, 12, 26, 8, 0, 0, tzinfo=timezone.utc)
+
+    def _account(self, db: Session, user: object) -> tuple:
+        from app.repositories.data_source_repository import DataSourceRepository
+
+        connection = UserConnectionFactory(user=user, provider="garmin")
+        data_source = DataSourceRepository().ensure_data_source(
+            db,
+            user_id=user.id,
+            provider=ProviderName.GARMIN,
+            device_model=None,
+            source="garmin",
+            user_connection_id=connection.id,
+        )
+        db.commit()
+        return connection, data_source
+
+    def _steps(self, data_source: object, value: int, at: datetime) -> None:
+        DataPointSeriesFactory(
+            mapping=data_source,
+            series_type=SeriesTypeDefinitionFactory.get_or_create_steps(),
+            value=Decimal(value),
+            recorded_at=at,
+        )
+
+    def _get(self, client: TestClient, user: object, **params: str) -> dict:
+        response = client.get(
+            f"/api/v1/users/{user.id}/summaries/activity",
+            headers=api_key_headers(ApiKeyFactory().plain_key),
+            params={**self.WINDOW, "filter_by_priority": "false", **params},
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    def test_two_accounts_are_two_rows(self, client: TestClient, db: Session) -> None:
+        user = UserFactory()
+        left, left_source = self._account(db, user)
+        right, right_source = self._account(db, user)
+        self._steps(left_source, 1000, self.MORNING)
+        self._steps(right_source, 3000, self.MORNING)
+
+        rows = sorted(self._get(client, user)["data"], key=lambda r: r["steps"])
+
+        assert [r["steps"] for r in rows] == [1000, 3000]
+        assert [r["source"]["user_connection_id"] for r in rows] == [str(left.id), str(right.id)]
+
+    def test_active_minutes_are_counted_per_account(self, client: TestClient, db: Session) -> None:
+        # 20 steps in the same minute from each unit: below the 30-step threshold for
+        # either, above it only if the two are bucketed together.
+        user = UserFactory()
+        _, left_source = self._account(db, user)
+        _, right_source = self._account(db, user)
+        self._steps(left_source, 20, self.MORNING + timedelta(seconds=10))
+        self._steps(right_source, 20, self.MORNING + timedelta(seconds=40))
+
+        rows = self._get(client, user)["data"]
+
+        assert len(rows) == 2
+        assert [r["active_minutes"] for r in rows] == [0, 0]
+
+    def test_an_archived_day_is_not_mistaken_for_the_other_accounts_live_day(
+        self, client: TestClient, db: Session
+    ) -> None:
+        # The live and archived halves are merged on a key; without the account in it
+        # the right account's archived day matched the left's live day and was dropped.
+        user = UserFactory()
+        left, left_source = self._account(db, user)
+        right, right_source = self._account(db, user)
+        self._steps(left_source, 1000, self.MORNING)
+        if not db.query(ArchivalSetting).filter(ArchivalSetting.id == 1).first():
+            db.add(ArchivalSetting(id=1, archive_after_days=30, delete_after_days=None))
+        db.add(
+            DataPointSeriesArchive(
+                id=uuid4(),
+                data_source_id=right_source.id,
+                series_type_definition_id=SeriesTypeDefinitionFactory.get_or_create_steps().id,
+                bucket_start_at=datetime(2025, 12, 26, 0, 0, 0, tzinfo=timezone.utc),
+                aggregation_type=AggregationMethod.SUM,
+                value=Decimal("3000"),
+                sample_count=1,
+            )
+        )
+        db.commit()
+
+        rows = sorted(self._get(client, user)["data"], key=lambda r: r["steps"])
+
+        assert [r["steps"] for r in rows] == [1000, 3000]
+        assert [r["source"]["user_connection_id"] for r in rows] == [str(left.id), str(right.id)]
+
+    def test_pagination_walks_a_day_that_has_a_source_less_row(self, client: TestClient, db: Session) -> None:
+        # The cursor used to store a missing source as "unknown" while comparing rows
+        # on "", so a page ending on the source-less row skipped any source sorting
+        # between the two - "apple" among them.
+        user = UserFactory()
+        self._steps(DataSourceFactory(user=user, source=None, device_model=None), 500, self.MORNING)
+        self._steps(DataSourceFactory(user=user, source="apple", device_model=None), 700, self.MORNING)
+
+        first = self._get(client, user, limit="1")
+        second = self._get(client, user, limit="1", cursor=first["pagination"]["next_cursor"])
+
+        assert sorted([first["data"][0]["steps"], second["data"][0]["steps"]]) == [500, 700]
+
+    def test_pagination_walks_both_accounts(self, client: TestClient, db: Session) -> None:
+        user = UserFactory()
+        left, left_source = self._account(db, user)
+        right, right_source = self._account(db, user)
+        self._steps(left_source, 1000, self.MORNING)
+        self._steps(right_source, 3000, self.MORNING)
+
+        first = self._get(client, user, limit="1")
+        assert first["pagination"]["has_more"] is True
+        second = self._get(client, user, limit="1", cursor=first["pagination"]["next_cursor"])
+
+        seen = [first["data"][0]["source"]["user_connection_id"], second["data"][0]["source"]["user_connection_id"]]
+        assert sorted(seen) == sorted([str(left.id), str(right.id)])
+        assert second["pagination"]["has_more"] is False
 
 
 class TestActivitySummaryEndpoint:
@@ -1565,6 +1771,40 @@ class TestRecoverySummaryEndpoint:
         assert item["date"] == "2025-12-26"
         assert item["recovery_score"] == 78
         assert item["source"]["provider"] == "whoop"
+
+    def test_source_names_its_data_source_and_account(self, client: TestClient, db: Session) -> None:
+        """Each row carries the ids a viewer needs to attribute or audit its source.
+
+        A score belongs to exactly one data source, so the row can say which - and
+        which connected account it came through - without a second request.
+        """
+        user = UserFactory()
+        connection = UserConnectionFactory(user=user, provider="polar")
+        source = DataSourceFactory(
+            user=user,
+            provider=ProviderName.POLAR,
+            source="polar",
+            device_model=None,
+            user_connection_id=connection.id,
+            original_source_name="Polar",
+        )
+        HealthScoreFactory(
+            data_source=source,
+            category=HealthScoreCategory.RECOVERY,
+            value=Decimal("70"),
+            provider=ProviderName.POLAR,
+            recorded_at=datetime(2025, 12, 26, 0, 0, 0, tzinfo=timezone.utc),
+        )
+        api_key = ApiKeyFactory()
+
+        response = client.get(self._url(user.id), headers=api_key_headers(api_key.plain_key), params=self.BASE_PARAMS)
+
+        assert response.status_code == 200
+        item = response.json()["data"][0]["source"]
+        assert item["data_source_id"] == str(source.id)
+        assert item["user_connection_id"] == str(connection.id)
+        assert item["original_source_name"] == "Polar"
+        assert item["device_id"] is None
 
     def test_returns_component_metrics(self, client: TestClient, db: Session) -> None:
         """RHR, HRV and SpO2 are populated from HealthScore components."""

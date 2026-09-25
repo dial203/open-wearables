@@ -45,8 +45,10 @@ export function AddProviderAccountDialog({
   const { connect, connectionState } = useOAuthConnect({
     userId,
     // Back to this user's page, so an operator linking three accounts in a row
-    // is not bounced to the participant-facing pairing screen each time.
-    redirectUri: `${window.location.origin}/users/${userId}`,
+    // is not bounced to the participant-facing pairing screen each time. A path,
+    // not a URL: this renders on the server too, where there is no window to read
+    // the origin from.
+    redirectPath: `/users/${userId}`,
   });
 
   const accountCounts = useMemo(() => {

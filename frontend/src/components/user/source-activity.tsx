@@ -53,10 +53,13 @@ function relativeDay(iso: string): string {
 export function SourceActivityPanel({
   activity,
   windowDays,
+  showAccount = true,
   className = '',
 }: {
   activity: SourceActivity | undefined;
   windowDays: number;
+  /** Off where the surrounding view already names the account. */
+  showAccount?: boolean;
   className?: string;
 }) {
   const summary = useMemo(() => {
@@ -73,9 +76,11 @@ export function SourceActivityPanel({
 
   if (!activity) return null;
 
-  const hasAccount = Boolean(
-    activity.account_label || activity.account_email || activity.account_type
-  );
+  const hasAccount =
+    showAccount &&
+    Boolean(
+      activity.account_label || activity.account_email || activity.account_type
+    );
   const quiet = activity.last_seen_at === null;
 
   return (

@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from typing import TypedDict
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -33,6 +34,9 @@ class ActivityAggregateResult(TypedDict):
     provider: str | None
     source: str | None
     device_model: str | None
+    # The account the data came through. Part of the data source's identity, so two
+    # accounts with one provider are two rows rather than one row summing both.
+    user_connection_id: UUID | None
     device_type: str | None
     steps_sum: int
     active_energy_sum: float
@@ -51,6 +55,7 @@ class ActiveMinutesResult(TypedDict):
     activity_date: date
     source: str | None
     device_model: str | None
+    user_connection_id: UUID | None
     active_minutes: int
     tracked_minutes: int
     sedentary_minutes: int
@@ -62,6 +67,7 @@ class IntensityMinutesResult(TypedDict):
     activity_date: date
     source: str | None
     device_model: str | None
+    user_connection_id: UUID | None
     light_minutes: int
     moderate_minutes: int
     vigorous_minutes: int

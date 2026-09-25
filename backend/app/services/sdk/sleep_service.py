@@ -30,6 +30,7 @@ from app.schemas.providers.mobile_sdk import (
 )
 from app.services.event_record_service import event_record_service
 from app.services.sdk.device_resolution import extract_device_info
+from app.utils.connection_context import get_active_connection_id
 from app.utils.structured_logging import log_structured
 
 logger = getLogger(__name__)
@@ -552,6 +553,9 @@ def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None
         settings.sleep_end_gap_minutes,
         source=source_for_lookup,
         provider=state.provider,
+        # The upload task binds the account the batch arrived through; the record
+        # written below resolves its data source from the same binding.
+        user_connection_id=get_active_connection_id(),
     )
 
     if adjacent is not None:

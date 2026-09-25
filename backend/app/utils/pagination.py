@@ -237,47 +237,57 @@ def decode_date_cursor(cursor: str) -> tuple[date, str]:
 
 
 def encode_activity_cursor(
-    activity_date: date, provider_name: str, device_id: str | None, direction: str = "next"
+    activity_date: date,
+    provider_name: str,
+    device_id: str | None,
+    direction: str = "next",
+    account_id: str | None = None,
 ) -> str:
     """Encode a compound cursor for activity summaries.
 
-    Activity summaries are keyed by (date, provider, device), so the cursor
-    must include all three components to avoid skipping records when multiple
-    providers/devices exist for the same date.
+    Activity summaries are keyed by (date, provider, device, account), so the cursor
+    must include all four components to avoid skipping records when multiple
+    providers/devices exist for the same date - or two accounts report the same
+    provider and device.
 
     Args:
         activity_date: The date of the activity
         provider_name: Provider name (e.g., 'garmin', 'apple')
         device_id: Device ID (may be None)
         direction: Either 'next' or 'prev' for pagination direction
+        account_id: The connected account the row came through (may be None)
 
     Returns:
         Base64 encoded cursor, prefixed with 'prev_' if direction is 'prev'
     """
-    device_str = device_id or ""
-    return _encode_cursor_fields([activity_date.isoformat(), provider_name, device_str], direction)
+    return _encode_cursor_fields(
+        [activity_date.isoformat(), provider_name, device_id or "", account_id or ""], direction
+    )
 
 
-def decode_activity_cursor(cursor: str) -> tuple[date, str, str | None, str]:
+def decode_activity_cursor(cursor: str) -> tuple[date, str, str | None, str | None, str]:
     """Decode a compound activity cursor.
 
     Args:
         cursor: The cursor string to decode
 
     Returns:
-        Tuple of (date, provider_name, device_id, direction)
+        Tuple of (date, provider_name, device_id, account_id, direction). A cursor
+        issued before the account was part of the key decodes with account_id None,
+        so a client holding one mid-pagination is not broken by the upgrade.
 
     Raises:
         InvalidCursorError: If cursor format is invalid
     """
     fields, direction = _decode_cursor_fields(cursor)
-    if len(fields) != 3:
+    if len(fields) not in (3, 4):
         raise InvalidCursorError(cursor=cursor)
 
     try:
         cursor_date = date.fromisoformat(fields[0])
         provider_name = fields[1]
         device_id = fields[2] if fields[2] else None
-        return cursor_date, provider_name, device_id, direction
+        account_id = fields[3] if len(fields) == 4 and fields[3] else None
+        return cursor_date, provider_name, device_id, account_id, direction
     except ValueError:
         raise InvalidCursorError(cursor=cursor)
