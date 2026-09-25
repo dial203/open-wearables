@@ -114,7 +114,9 @@ class UserConnectionAccountUpdate(BaseModel):
 
     account_type: AccountType | None = Field(
         None,
-        description="What this account is for: personal, validation, reliability, monitoring, testing, other",
+        description=(
+            "What this account is for: personal, validation, reference, reliability, monitoring, testing, other"
+        ),
     )
     account_label: str | None = Field(None, max_length=100, description="Operator-facing name for this account")
     account_email: EmailStr | None = Field(None, description="Login e-mail of the provider account")

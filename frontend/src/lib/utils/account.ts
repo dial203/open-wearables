@@ -71,6 +71,7 @@ export function buildAccountMap(
 export const ACCOUNT_TYPE_CLASSES: Record<string, string> = {
   personal: 'bg-sky-500/15 text-sky-400 border-sky-500/25',
   validation: 'bg-violet-500/15 text-violet-300 border-violet-500/25',
+  reference: 'bg-rose-500/15 text-rose-300 border-rose-500/25',
   reliability: 'bg-amber-500/15 text-amber-300 border-amber-500/25',
   monitoring: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25',
   testing: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/25',

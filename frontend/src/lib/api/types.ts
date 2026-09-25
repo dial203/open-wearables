@@ -315,6 +315,7 @@ export type WearableProvider =
 export type AccountType =
   | 'personal'
   | 'validation'
+  | 'reference'
   | 'reliability'
   | 'monitoring'
   | 'testing'
@@ -335,6 +336,12 @@ export const ACCOUNT_TYPES: {
     value: 'validation',
     label: 'Validation',
     description: 'Criterion or device-comparison study',
+  },
+  {
+    value: 'reference',
+    label: 'Gold standard',
+    description:
+      'The reference instrument other devices are scored against, e.g. an H10 chest-strap rig',
   },
   {
     value: 'reliability',

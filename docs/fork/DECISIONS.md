@@ -396,3 +396,19 @@ Template:
   session's `in_bed` window can put onset at the session start, depending on
   interval order. Changing it would
   change every sleep score; it is left as upstream wrote it.
+
+## A "Gold standard" account classification (`reference`)
+
+- **Area**: backend, frontend, docs
+- **Status**: active
+- **On conflict**: keep ours; `AccountType` is fork-only, so an upstream change
+  can only collide with the description strings, which are regenerated into
+  `docs/openapi.json`
+- **Why**: A validation study connects the criterion rig (a Polar account holding
+  an H10 chest strap) beside the devices it scores, often under the same user.
+  `validation` names the arm under test, so the rig had no word of its own and was
+  classified `validation` or `other` - the opposite side of the comparison, or
+  nothing. The Sleep Validation Hub reads this classification to decide which
+  account's `rr_interval` series is a participant's cardiac reference, so it has
+  to be a value a consumer can filter on rather than an account label. Stored as a
+  plain string like the rest of the set: no migration.

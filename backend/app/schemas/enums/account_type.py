@@ -21,6 +21,12 @@ class AccountType(StrEnum):
     # Criterion or device-comparison work: this unit is being measured against
     # another, and the two arms must never pool.
     VALIDATION = "validation"
+    # The criterion instrument itself - the account whose recordings are the
+    # reference every validation arm is scored against (a Polar account holding
+    # an H10 chest-strap rig, say). Kept apart from VALIDATION because the two
+    # are opposite sides of one comparison: a consumer that pooled them would
+    # score the reference against itself. Shown as "Gold standard".
+    REFERENCE = "reference"
     # Test-retest or inter-device consistency, where the same brand is worn
     # twice over and agreement between the two is the measurement.
     RELIABILITY = "reliability"
@@ -40,6 +46,7 @@ class AccountType(StrEnum):
 ACCOUNT_TYPE_ORDER: tuple[AccountType, ...] = (
     AccountType.PERSONAL,
     AccountType.VALIDATION,
+    AccountType.REFERENCE,
     AccountType.RELIABILITY,
     AccountType.MONITORING,
     AccountType.TESTING,
@@ -51,6 +58,7 @@ ACCOUNT_TYPE_ORDER: tuple[AccountType, ...] = (
 ACCOUNT_TYPE_DESCRIPTIONS: dict[AccountType, str] = {
     AccountType.PERSONAL: "The participant's own everyday account",
     AccountType.VALIDATION: "Criterion or device-comparison study",
+    AccountType.REFERENCE: "Gold standard: the reference instrument other devices are scored against",
     AccountType.RELIABILITY: "Test-retest or inter-device consistency",
     AccountType.MONITORING: "Ongoing athlete or tactical readiness monitoring",
     AccountType.TESTING: "Device or integration checkout, not participant data",

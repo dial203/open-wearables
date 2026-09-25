@@ -66,7 +66,11 @@ def authorize_provider(
     ] = False,
     account_type: Annotated[
         AccountType | None,
-        Query(description="What this account is for: personal, validation, reliability, monitoring, testing, other"),
+        Query(
+            description=(
+                "What this account is for: personal, validation, reference, reliability, monitoring, testing, other"
+            )
+        ),
     ] = None,
     account_label: Annotated[
         str | None,
