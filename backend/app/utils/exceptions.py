@@ -33,6 +33,19 @@ class ResourceAlreadyExistsError(Exception):
         super().__init__(detail)
 
 
+class DeviceTimelineConflictError(Exception):
+    """A change that would contradict an account's dated device history.
+
+    Raised for an undated device_label edit on an account that has a timeline: the
+    label there is the timeline's current period, and overwriting it directly would
+    leave the two disagreeing about what is worn now.
+    """
+
+    def __init__(self, detail: str):
+        self.detail = detail
+        super().__init__(detail)
+
+
 class InvalidCursorError(Exception):
     def __init__(self, cursor: str):
         self.detail = f"Invalid cursor format: '{cursor}'. Expected 'timestamp|id'."
@@ -64,6 +77,11 @@ def _(exc: ResourceNotFoundError, _: str) -> HTTPException:
 
 @handle_exception.register
 def _(exc: ResourceAlreadyExistsError, _: str) -> HTTPException:
+    return HTTPException(status_code=409, detail=exc.detail)
+
+
+@handle_exception.register
+def _(exc: DeviceTimelineConflictError, _: str) -> HTTPException:
     return HTTPException(status_code=409, detail=exc.detail)
 
 

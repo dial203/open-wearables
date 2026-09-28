@@ -5,6 +5,7 @@ import {
   type SummaryParams,
 } from '@/lib/api/services/health.service';
 import type {
+  DevicePeriodInput,
   TimeSeriesParams,
   SleepSessionsParams,
   BodySummaryParams,
@@ -104,6 +105,74 @@ export function useUpdateConnectionAccount(
     onError: (error: unknown) => {
       const message =
         error instanceof Error ? error.message : 'Failed to update account';
+      toast.error(message);
+    },
+  });
+}
+
+/**
+ * The account's dated device history.
+ * Uses GET /api/v1/users/{user_id}/connections/accounts/{connection_id}/device-timeline
+ */
+export function useDeviceTimeline(
+  userId: string,
+  connectionId: string,
+  enabled = true
+) {
+  return useQuery({
+    queryKey: queryKeys.connections.deviceTimeline(userId, connectionId),
+    queryFn: () => healthService.getDeviceTimeline(userId, connectionId),
+    enabled,
+  });
+}
+
+/**
+ * Replace the account's dated device history. Moves no stored data - that is
+ * useRefileDeviceTimeline, asked for separately.
+ */
+export function useReplaceDeviceTimeline(userId: string, connectionId: string) {
+  return useMutation({
+    mutationFn: (periods: DevicePeriodInput[]) =>
+      healthService.replaceDeviceTimeline(userId, connectionId, periods),
+    onSuccess: () => {
+      // The account's device_label follows the current period.
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.connections.all(userId),
+      });
+      toast.success('Device history saved');
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to save device history';
+      toast.error(message);
+    },
+  });
+}
+
+/**
+ * Preview (dry_run) or apply a re-file of stored records by the history.
+ * No success toast: the dialog shows the result, and a preview is not an action.
+ */
+export function useRefileDeviceTimeline(userId: string, connectionId: string) {
+  return useMutation({
+    mutationFn: (body: {
+      dry_run: boolean;
+      include_data_source_ids: string[];
+    }) => healthService.refileDeviceTimeline(userId, connectionId, body),
+    onSuccess: (result) => {
+      if (result.dry_run) return;
+      // Records changed data source: every view that groups by source is stale.
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.connections.all(userId),
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.health.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.devices.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.priorities.all });
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Re-file failed';
       toast.error(message);
     },
   });

@@ -591,3 +591,37 @@ Template:
   `_filter_by_priority` needed nothing: it keeps the first of each day's sorted
   candidates, so finer groups add candidates without adding winners. The Compare tab
   keys its columns on the account as well.
+
+## An account's device can change over time: dated device history
+
+- **Area**: backend, frontend
+- **Status**: active
+- **On conflict**: keep ours. Upstream's `ensure_data_source` and the two bulk writers
+  (`EventRecordRepository.bulk_create`, `DataPointSeriesRepository.bulk_create`) are
+  where it hooks in: re-apply the record-time argument (`recorded_at`) and the shared
+  `DataSourceRepository.resolve_bulk_data_sources` on top of whatever upstream changes
+  there, and keep `data_source.device_model_origin` on every insert.
+- **Why**: `user_connection.device_label` names the device behind an account and never
+  when. For a provider that reports no device (Garmin wellness, Whoop), a wearer who
+  switches model had every later record filed under the old one, with nothing on the
+  row to reveal it. `user_connection_device_period` states the periods; ingest takes the
+  label covering each record's *own* time (sleep start, sample time), never ingest time,
+  so late syncs and backfills land on the device worn then. A stretch no period covers
+  resolves to no label rather than the nearest period. A model the payload carried
+  still wins.
+
+  The two bulk writers each carried a copy of the same data-source grouping; they now
+  share `resolve_bulk_data_sources`, which returns one id per creator. That also closes
+  a latent pooling bug: the old per-identity map was keyed on (user, model, source)
+  without the account, so a batch holding two accounts' identical identities filed the
+  first account's rows under the second's source.
+
+  `data_source.device_model_origin` (`provider` | `label`) records who named a source's
+  device, so a re-file by date can move rows only off label-derived sources. It is not
+  backfilled: a model equal to the label could still be the provider's own report, and
+  a guessed origin would let a re-file move stamped data. Re-file is a separate,
+  dry-run-by-default endpoint, scoped to one account, that reports conflicts and
+  archived days straddling a switch instead of forcing them. An undated `device_label`
+  edit on an account with a history is refused (409) rather than silently turned into a
+  new period with a switch date nobody gave. See `docs/dev-guides/device-registry.mdx`.
+

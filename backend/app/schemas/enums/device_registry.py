@@ -114,6 +114,24 @@ class DeviceHistoryAction(StrEnum):
     LINK_PROPOSED = "link_proposed"
     LINK_ACCEPTED = "link_accepted"
     LINK_REJECTED = "link_rejected"
+    # Rows moved between an account's data sources to match its dated device history.
+    REFILED = "refiled"
+
+
+class DeviceModelOrigin(StrEnum):
+    """Who put a data source's ``device_model`` there.
+
+    The provider (it named the hardware on the payload) or a person (the account's
+    device label or its dated device history filled a model the provider left out).
+    The difference decides whether the source may be re-filed by date: a label is a
+    statement a later statement can correct, a provider's model is a capture no
+    timeline may overrule. NULL on the column means the source predates this being
+    recorded, which is neither - a re-file leaves such a source alone unless a person
+    names it.
+    """
+
+    PROVIDER = "provider"
+    LABEL = "label"
 
 
 class LinkProposalStatus(StrEnum):

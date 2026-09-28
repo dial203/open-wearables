@@ -1,6 +1,9 @@
 import { apiClient } from '../client';
 import { API_ENDPOINTS } from '../config';
 import type {
+  DeviceRefileResult,
+  DeviceTimeline,
+  DevicePeriodInput,
   UserConnection,
   EventRecordResponse,
   HealthDataParams,
@@ -178,6 +181,43 @@ export const healthService = {
     return apiClient.patch<UserConnection>(
       API_ENDPOINTS.userConnectionAccount(userId, connectionId),
       patch
+    );
+  },
+
+  /** The account's dated device history (empty periods: none stated). */
+  async getDeviceTimeline(
+    userId: string,
+    connectionId: string
+  ): Promise<DeviceTimeline> {
+    return apiClient.get<DeviceTimeline>(
+      API_ENDPOINTS.userConnectionDeviceTimeline(userId, connectionId)
+    );
+  },
+
+  /** Replace the account's dated device history; an empty list removes it. */
+  async replaceDeviceTimeline(
+    userId: string,
+    connectionId: string,
+    periods: DevicePeriodInput[]
+  ): Promise<DeviceTimeline> {
+    return apiClient.put<DeviceTimeline>(
+      API_ENDPOINTS.userConnectionDeviceTimeline(userId, connectionId),
+      { periods }
+    );
+  },
+
+  /**
+   * Move stored records onto the device the history names for their time.
+   * A dry run (the default) reports and changes nothing.
+   */
+  async refileDeviceTimeline(
+    userId: string,
+    connectionId: string,
+    body: { dry_run: boolean; include_data_source_ids: string[] }
+  ): Promise<DeviceRefileResult> {
+    return apiClient.post<DeviceRefileResult>(
+      API_ENDPOINTS.userConnectionDeviceTimelineRefile(userId, connectionId),
+      body
     );
   },
 

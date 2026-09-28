@@ -19,6 +19,8 @@ class DataSourceBase(BaseModel):
 
 class DataSourceCreate(DataSourceBase):
     id: UUID
+    # Written once, when the row is created - see DataSource.device_model_origin.
+    device_model_origin: str | None = None
 
 
 class DataSourceUpdate(BaseModel):

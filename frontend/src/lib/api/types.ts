@@ -373,6 +373,68 @@ export function accountTypeLabel(
   return ACCOUNT_TYPES.find((t) => t.value === type)?.label ?? 'Unclassified';
 }
 
+/** One stretch of an account's dated device history. */
+export interface DevicePeriod {
+  id: string;
+  device_label: string;
+  /** Null: from the start of the account's data. */
+  effective_from: string | null;
+  /** Exclusive end - the next period's start; null for the current one. */
+  effective_to: string | null;
+  created_at: string;
+}
+
+export interface DeviceTimeline {
+  connection_id: string;
+  provider: string;
+  /** The current period's label, kept equal to the account's device_label. */
+  device_label: string | null;
+  periods: DevicePeriod[];
+}
+
+export interface DevicePeriodInput {
+  device_label: string;
+  effective_from: string | null;
+}
+
+export interface RefileCounts {
+  event_records: number;
+  samples: number;
+  archive_days: number;
+  health_scores: number;
+}
+
+export interface RefileSource {
+  data_source_id: string;
+  device_model: string | null;
+  device_model_origin: 'provider' | 'label' | null;
+  source: string | null;
+  eligible: boolean;
+  reason: string;
+}
+
+export interface RefileMove {
+  from_data_source_id: string;
+  from_device_model: string | null;
+  to_device_model: string;
+  to_data_source_id: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  moved: RefileCounts;
+  conflicts: RefileCounts;
+  archive_days_straddling: number;
+}
+
+export interface DeviceRefileResult {
+  connection_id: string;
+  dry_run: boolean;
+  sources: RefileSource[];
+  moves: RefileMove[];
+  uncovered: RefileCounts;
+  total_moved: RefileCounts;
+  total_conflicts: RefileCounts;
+}
+
 export interface UserConnection {
   user_id: string;
   provider: string;

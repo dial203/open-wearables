@@ -276,6 +276,48 @@ replaced. Nothing in the provider data distinguishes them, so **retire the old d
 with an effective date**. Without it, pre- and post-swap samples pool into one device
 and the swap becomes invisible in analysis.
 
+### An account that changed device: the dated device history
+
+Retiring a device covers a unit replaced by an identical one. It does not cover an
+account whose provider reports no device and whose wearer changed model - a Garmin
+account moved from a fēnix 8 to a Venu X1, say. Garmin names no device on sleep or on
+any wellness summary, so every one of those records takes the account's
+`device_label`, and a label says *what* and never *when*: every night after the switch
+lands on the old model's source, indistinguishable from the old model's nights.
+
+An account can carry a **dated device history** instead - periods, each naming a label
+from its `effective_from` until the next one's (`user_connection_device_period`).
+**Connections → ⋮ → Device history** in the dashboard, or the API below.
+
+- **Resolved by the record's own time.** A sleep takes the label in effect when it
+  *started*, a sample the one at its `recorded_at`, however late it synced. Each label
+  gets its own data source, so the Devices tab links each period's data to its unit and
+  downstream consumers see two sources rather than one.
+- **Only where the provider named nothing.** A model the payload carried always wins,
+  exactly as it does over the undated label.
+- **An unstated stretch stays unattributed.** Before the first dated period, unless a
+  period runs "from the start" (`effective_from` null), records land on a model-less
+  source rather than the nearest period.
+- **The account's `device_label` becomes the current period's**, and while a history
+  exists an undated label edit is refused with 409 - it would disagree with the history
+  about what is worn now.
+
+Stating a history moves nothing already stored. **Re-file** does, as a separate step
+that defaults to a dry run:
+
+- it moves rows only off a source whose `device_model_origin` is `label` (or that has
+  no model). A provider-stamped source is never moved; a source written before origin
+  was recorded (`device_model_origin` null) is listed and left alone unless the request
+  names it in `include_data_source_ids`;
+- a row whose destination already holds one at the same instant is a conflict and stays;
+- an archived day a switch falls inside cannot be split and stays whole;
+- only that account's sources are read or written, and each move is recorded in
+  `device_history` as `refiled`.
+
+`data_source.device_model_origin` (`provider` | `label` | null) is what makes that
+distinction possible; it is written when a source is created and never backfilled,
+because a model equal to today's label could still have been the provider's report.
+
 ## Consuming attribution downstream
 
 `SourceMetadata` on every sample and record carries:
@@ -333,6 +375,14 @@ All under `/api/v1/users/{user_id}`, developer-authenticated.
 | `GET` | `/device-link-proposals` | Pending cross-route suggestions |
 | `POST` | `/device-link-proposals/refresh` | Re-score |
 | `POST` | `/device-link-proposals/{id}/decide` | Accept (merges) or reject (permanent) |
+
+Per account, under `/connections/accounts/{connection_id}`:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/device-timeline` | The account's dated device history |
+| `PUT` | `/device-timeline` | Replace it (an empty list removes it) |
+| `POST` | `/device-timeline/refile` | Preview (`dry_run`, the default) or apply a re-file |
 
 Every mutation records the developer and an optional reason in `device_history`.
 History is scoped to the user, not the device, so entries for a device that was

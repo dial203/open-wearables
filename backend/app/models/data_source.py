@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Index, String, text
+from sqlalchemy import CheckConstraint, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import BaseDbModel
@@ -13,6 +13,7 @@ from app.mappings import (
     ManyToOne,
     OneToMany,
     PrimaryKey,
+    str_16,
     str_32,
     str_50,
     str_100,
@@ -51,6 +52,10 @@ class DataSource(BaseDbModel):
             unique=True,
         ),
         Index("ix_data_source_user_connection", "user_connection_id"),
+        CheckConstraint(
+            "device_model_origin IS NULL OR (device_model IS NOT NULL AND device_model_origin IN ('provider', 'label'))",
+            name="ck_data_source_device_model_origin",
+        ),
     )
 
     id: Mapped[PrimaryKey[UUID]]
@@ -58,6 +63,12 @@ class DataSource(BaseDbModel):
     provider: Mapped[ProviderName]
     user_connection_id: Mapped[FKUserConnection]
     device_model: Mapped[str_100 | None]
+    # Who put device_model there: "provider" (named on the payload) or "label" (the
+    # account's device label or dated device history filled a gap the provider left).
+    # NULL means unrecorded - the source predates the column - or there is no model.
+    # A re-file by date only ever moves rows off a "label" source (or a model-less
+    # one); a provider's model is a capture no timeline overrules. See DeviceModelOrigin.
+    device_model_origin: Mapped[str_16 | None]
     software_version: Mapped[str_50 | None]
     # Apple HealthKit tags on-device data with source bundle ids like
     # "com.apple.health.<UUID>" (53 chars), so 50 is too short and aborts SDK

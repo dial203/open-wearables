@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Timer,
   Trash2,
+  CalendarClock,
   TriangleAlert,
   Unlink,
   UserRound,
@@ -76,7 +77,9 @@ import {
   formatRunDuration,
   formatRelative,
 } from '@/lib/utils/sync-format';
+import { DeviceTimelineDialog } from '@/components/user/device-timeline-dialog';
 import {
+  useDeviceTimeline,
   useDisconnectConnectionAccount,
   usePurgeConnectionAccountData,
   useUpdateConnectionAccount,
@@ -278,6 +281,7 @@ function ConnectionCardComponent({
   const [showDeleteDataDialog, setShowDeleteDataDialog] = useState(false);
   const [showLastSyncs, setShowLastSyncs] = useState(false);
   const [showAccountDialog, setShowAccountDialog] = useState(false);
+  const [showTimelineDialog, setShowTimelineDialog] = useState(false);
   const [deviceInput, setDeviceInput] = useState(connection.device_label ?? '');
   const [labelInput, setLabelInput] = useState(connection.account_label ?? '');
   const [emailInput, setEmailInput] = useState(connection.account_email ?? '');
@@ -318,6 +322,15 @@ function ConnectionCardComponent({
 
   const { mutate: updateAccount, isPending: isSavingAccount } =
     useUpdateConnectionAccount(connection.user_id, connection.id);
+
+  // Only fetched while the edit dialog is open: with a dated history, the device
+  // label is the history's current period and can only change there.
+  const { data: accountTimeline } = useDeviceTimeline(
+    connection.user_id,
+    connection.id,
+    showAccountDialog
+  );
+  const deviceIsDated = (accountTimeline?.periods.length ?? 0) > 0;
 
   const { mutate: disconnectProvider, isPending: isDisconnecting } =
     useDisconnectConnectionAccount(
@@ -597,6 +610,13 @@ function ConnectionCardComponent({
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit account
                 </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onClick={() => setShowTimelineDialog(true)}
+                >
+                  <CalendarClock className="mr-2 h-4 w-4" />
+                  Device history
+                </DropdownMenuItem>
                 {connection.status !== 'revoked' && (
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive cursor-pointer"
@@ -721,13 +741,19 @@ function ConnectionCardComponent({
                     </label>
                     <Input
                       id={`device-label-${connection.id}`}
-                      value={deviceInput}
+                      value={
+                        deviceIsDated
+                          ? (connection.device_label ?? '')
+                          : deviceInput
+                      }
                       onChange={(e) => setDeviceInput(e.target.value)}
                       placeholder="e.g. Whoop 5.0"
+                      disabled={deviceIsDated}
                     />
                     <p className="text-[11px] text-muted-foreground">
-                      For providers that report no device. Applies to this
-                      account&apos;s existing and future data.
+                      {deviceIsDated
+                        ? 'This account has a dated device history, so its device is set there (⋮ → Device history).'
+                        : "For providers that report no device. Applies to this account's existing and future data. If the device changed partway, use Device history instead."}
                     </p>
                   </div>
                 </div>
@@ -746,7 +772,11 @@ function ConnectionCardComponent({
                           account_type: typeInput || null,
                           account_label: labelInput.trim() || null,
                           account_email: emailInput.trim() || null,
-                          device_label: deviceInput.trim() || null,
+                          // Omitted when dated: the history owns it, and the API
+                          // refuses an undated change.
+                          ...(deviceIsDated
+                            ? {}
+                            : { device_label: deviceInput.trim() || null }),
                         },
                         { onSuccess: () => setShowAccountDialog(false) }
                       )
@@ -757,6 +787,15 @@ function ConnectionCardComponent({
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+            <DeviceTimelineDialog
+              userId={connection.user_id}
+              connectionId={connection.id}
+              providerName={providerName}
+              accountName={accountName}
+              currentLabel={connection.device_label}
+              open={showTimelineDialog}
+              onOpenChange={setShowTimelineDialog}
+            />
             <AlertDialog
               open={showDeleteDataDialog}
               onOpenChange={setShowDeleteDataDialog}

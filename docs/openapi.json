@@ -919,6 +919,249 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/connections/accounts/{connection_id}/device-timeline": {
+      "get": {
+        "tags": [
+          "External: Connections"
+        ],
+        "summary": "Get Device Timeline Endpoint",
+        "description": "The account's dated device history: which device was worn from when.\n\nAn empty ``periods`` list means the account has none, and its undated\n``device_label`` applies to everything.",
+        "operationId": "get_device_timeline_endpoint_api_v1_users__user_id__connections_accounts__connection_id__device_timeline_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceTimelineRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "External: Connections"
+        ],
+        "summary": "Replace Device Timeline Endpoint",
+        "description": "State which device this account was worn with, and from when.\n\nReplaces the whole history. Each period runs from its ``effective_from`` until the\nnext one's; one period may have a null start, meaning from the account's first\ndata. From then on, a record whose provider named no device takes the label stated\nfor the record's own time - a night synced late still lands on the device worn that\nnight. A device the provider did name always wins.\n\nThe account's ``device_label`` becomes the latest period's, and while a history\nexists it can only change here. Data already stored is not moved: preview and apply\nthat with ``POST .../device-timeline/refile``. An empty list removes the history.",
+        "operationId": "replace_device_timeline_endpoint_api_v1_users__user_id__connections_accounts__connection_id__device_timeline_put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceTimelineUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceTimelineRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/connections/accounts/{connection_id}/device-timeline/refile": {
+      "post": {
+        "tags": [
+          "External: Connections"
+        ],
+        "summary": "Refile Device Timeline Endpoint",
+        "description": "Move this account's stored records onto the device its history names for their time.\n\n``dry_run`` defaults to true: the response says what would move and changes\nnothing. Only rows on a source whose device name came from a label (or that has\nnone) move; a model the provider stamped never does. A row whose destination\nalready holds one at the same instant, and an archived day a switch falls inside,\nare reported and left where they are. Other accounts are never touched.",
+        "operationId": "refile_device_timeline_endpoint_api_v1_users__user_id__connections_accounts__connection_id__device_timeline_refile_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRefileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRefileResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/connections/accounts/{connection_id}/data": {
       "delete": {
         "tags": [
@@ -14169,6 +14412,155 @@
         "title": "DeviceMergeRequest",
         "description": "Fold another device into this one.\n\nIrreversible: the absorbed row is deleted. Everything needed to rebuild it by\nhand is written to history first. The data sources are re-pointed, never\ncombined - direct and relayed data differ in freshness and rounding, so the\ncomparison survives the merge."
       },
+      "DevicePeriodInput": {
+        "properties": {
+          "device_label": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Device Label",
+            "description": "The device worn in this stretch, e.g. \"Venu X1\""
+          },
+          "effective_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective From",
+            "description": "When this device started, with its UTC offset. Null means from the start of the account's data; at most one period may say so. Each period runs until the next one's start."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "device_label"
+        ],
+        "title": "DevicePeriodInput"
+      },
+      "DevicePeriodRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "device_label": {
+            "type": "string",
+            "title": "Device Label"
+          },
+          "effective_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective From"
+          },
+          "effective_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective To"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "device_label",
+          "effective_from",
+          "created_at"
+        ],
+        "title": "DevicePeriodRead"
+      },
+      "DeviceRefileRequest": {
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "description": "Report what would move without moving anything",
+            "default": true
+          },
+          "include_data_source_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "title": "Include Data Source Ids",
+            "description": "Sources whose device name matches a timeline label but whose origin OW did not record (they predate it). Name one only if the provider never reports a device on this account: a model the provider stamped must not be re-filed by a stated timeline."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "DeviceRefileRequest"
+      },
+      "DeviceRefileResult": {
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Connection Id"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/RefileSource"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "moves": {
+            "items": {
+              "$ref": "#/components/schemas/RefileMove"
+            },
+            "type": "array",
+            "title": "Moves"
+          },
+          "uncovered": {
+            "$ref": "#/components/schemas/RefileCounts"
+          },
+          "total_moved": {
+            "$ref": "#/components/schemas/RefileCounts"
+          },
+          "total_conflicts": {
+            "$ref": "#/components/schemas/RefileCounts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection_id",
+          "dry_run",
+          "sources",
+          "moves",
+          "uncovered",
+          "total_moved",
+          "total_conflicts"
+        ],
+        "title": "DeviceRefileResult"
+      },
       "DeviceResponse": {
         "properties": {
           "id": {
@@ -14573,6 +14965,61 @@
           "timestamp"
         ],
         "title": "DeviceStateEvent"
+      },
+      "DeviceTimelineRead": {
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Connection Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "device_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Label"
+          },
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/DevicePeriodRead"
+            },
+            "type": "array",
+            "title": "Periods"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection_id",
+          "provider",
+          "device_label",
+          "periods"
+        ],
+        "title": "DeviceTimelineRead"
+      },
+      "DeviceTimelineUpdate": {
+        "properties": {
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/DevicePeriodInput"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Periods"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "DeviceTimelineUpdate",
+        "description": "The account's whole timeline. Replaces what is there; an empty list removes it."
       },
       "DeviceType": {
         "type": "string",
@@ -17320,6 +17767,177 @@
           "source"
         ],
         "title": "RecoverySummary"
+      },
+      "RefileCounts": {
+        "properties": {
+          "event_records": {
+            "type": "integer",
+            "title": "Event Records",
+            "default": 0
+          },
+          "samples": {
+            "type": "integer",
+            "title": "Samples",
+            "default": 0
+          },
+          "archive_days": {
+            "type": "integer",
+            "title": "Archive Days",
+            "default": 0
+          },
+          "health_scores": {
+            "type": "integer",
+            "title": "Health Scores",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "RefileCounts"
+      },
+      "RefileMove": {
+        "properties": {
+          "from_data_source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "From Data Source Id"
+          },
+          "from_device_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Device Model"
+          },
+          "to_device_model": {
+            "type": "string",
+            "title": "To Device Model"
+          },
+          "to_data_source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Data Source Id"
+          },
+          "period_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Start"
+          },
+          "period_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period End"
+          },
+          "moved": {
+            "$ref": "#/components/schemas/RefileCounts"
+          },
+          "conflicts": {
+            "$ref": "#/components/schemas/RefileCounts"
+          },
+          "archive_days_straddling": {
+            "type": "integer",
+            "title": "Archive Days Straddling",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "from_data_source_id",
+          "from_device_model",
+          "to_device_model",
+          "to_data_source_id",
+          "period_start",
+          "period_end",
+          "moved",
+          "conflicts"
+        ],
+        "title": "RefileMove",
+        "description": "Rows on one source that the timeline assigns to another label, for one period."
+      },
+      "RefileSource": {
+        "properties": {
+          "data_source_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Data Source Id"
+          },
+          "device_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Model"
+          },
+          "device_model_origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Model Origin"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "eligible": {
+            "type": "boolean",
+            "title": "Eligible"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_source_id",
+          "device_model",
+          "device_model_origin",
+          "source",
+          "eligible",
+          "reason"
+        ],
+        "title": "RefileSource",
+        "description": "One of the account's data sources, and whether a re-file may move rows off it."
       },
       "RefreshTokenRequest": {
         "properties": {
