@@ -76,9 +76,9 @@ class DeviceRefileRequest(BaseModel):
         default_factory=list,
         max_length=200,
         description=(
-            "Sources whose device name matches a timeline label but whose origin OW did not record (they "
-            "predate it). Name one only if the provider never reports a device on this account: a model the "
-            "provider stamped must not be re-filed by a stated timeline."
+            "Sources whose device-name origin OW did not record (they predate it). Name one only if its "
+            "device name is a label someone typed, not one the provider sent (Garmin names the watch on "
+            "activities, never on sleep): a model the provider stamped must not be re-filed by a stated timeline."
         ),
     )
 

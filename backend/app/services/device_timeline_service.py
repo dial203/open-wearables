@@ -280,8 +280,8 @@ class DeviceTimelineService:
             return verdict(True, "Origin unrecorded; included by request")
         return verdict(
             False,
-            "Origin unrecorded (written before OW tracked it). Include it only if the provider never "
-            "reports a device on this account",
+            "Origin unrecorded (written before OW tracked it). Include it only if its device name is a "
+            "label someone typed, not one the provider sent",
         )
 
     def _target(self, db_session: DbSession, source: DataSource, label: str, dry_run: bool) -> DataSource | None:

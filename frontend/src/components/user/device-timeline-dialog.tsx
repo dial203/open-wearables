@@ -473,8 +473,10 @@ function RefilePreview({
         <div className="space-y-1">
           <p className="text-muted-foreground">
             These were stored before OW recorded whether a device name came from
-            a label or from the provider. Tick one only if the provider never
-            reports a device on this account.
+            a label or from the provider. Tick one only if that name is a label
+            someone typed, not one the provider sent — Garmin, for instance,
+            names the watch on activities but never on sleep, so its activity
+            sources must stay unticked.
           </p>
           {unknownOrigin.map((s) => (
             <label key={s.data_source_id} className="flex items-center gap-1.5">
