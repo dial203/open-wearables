@@ -1,6 +1,8 @@
+import contextlib
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from logging import getLogger
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, TypeVar, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import CursorResult, and_, asc, delete, func
@@ -11,7 +13,13 @@ from app.database import DbSession
 from app.models import DataSource, HealthScore, ProviderPriority, UserConnection
 from app.repositories.provider_priority_repository import ProviderPriorityRepository
 from app.repositories.repositories import CrudRepository
-from app.schemas.enums import DeviceType, ProviderName, infer_device_type_from_model, infer_device_type_from_source_name
+from app.schemas.enums import (
+    DeviceModelOrigin,
+    DeviceType,
+    ProviderName,
+    infer_device_type_from_model,
+    infer_device_type_from_source_name,
+)
 from app.schemas.model_crud.data_priority import DataSourceCreate, DataSourceUpdate
 from app.utils.connection_context import get_active_connection_id
 from app.utils.device_registry import (
@@ -20,11 +28,27 @@ from app.utils.device_registry import (
     looks_like_writer_id,
     resolve_brand_signal,
 )
+from app.utils.device_timeline import load_timeline
 
 if TYPE_CHECKING:
     from app.services.devices.identity import IdentityClaim
 
 log = getLogger(__name__)
+
+DataSourceIdentity = tuple[UUID, str | None, str | None]
+
+
+class BulkSourceCreator(Protocol):
+    """What the bulk writers' creators share: enough to name their data source."""
+
+    user_id: UUID
+    provider: str | None
+    user_connection_id: UUID | None
+    device_model: str | None
+    source: str | None
+
+
+_Creator = TypeVar("_Creator", bound=BulkSourceCreator)
 
 
 class DataSourceRepository(
@@ -109,6 +133,7 @@ class DataSourceRepository(
         user_id: UUID,
         provider: ProviderName,
         user_connection_id: UUID | None = None,
+        at: datetime | None = None,
     ) -> str | None:
         """The manually-set or auto-derived device label behind a connection.
 
@@ -116,7 +141,14 @@ class DataSourceRepository(
         connection when the caller knows which account it is ingesting for -
         without that, a user with two Whoops would stamp both units with
         whichever label happened to come back first.
+
+        An account with a dated device history answers from it, for ``at``: the
+        label stated for that instant, None for an instant no period covers, and the
+        current period when ``at`` is None (app/utils/device_timeline.py).
         """
+        timeline = load_timeline(db_session, user_connection_id)
+        if timeline is not None:
+            return timeline.label_at(at)
         query = db_session.query(UserConnection.device_label).filter(
             UserConnection.user_id == user_id,
             UserConnection.provider == provider.value,
@@ -182,7 +214,7 @@ class DataSourceRepository(
         if user_connection_id is not None:
             query = query.filter(self.model.user_connection_id == user_connection_id)
         return query.update(
-            {self.model.device_model: device_label},
+            {self.model.device_model: device_label, self.model.device_model_origin: DeviceModelOrigin.LABEL.value},
             synchronize_session=False,
         )
 
@@ -243,7 +275,15 @@ class DataSourceRepository(
         source: str | None = None,
         original_source_name: str | None = None,
         identity_claims: "list[IdentityClaim] | None" = None,
+        recorded_at: datetime | None = None,
     ) -> DataSource:
+        """The data source for one record, created if missing.
+
+        ``recorded_at`` is when the record itself happened. It only matters when the
+        provider named no device and the account has a dated device history: the
+        label is then the one stated for that instant, not for today, so a late sync
+        of an old night files under the device worn that night.
+        """
         # Fall back to the account the current unit of work declared. Most
         # provider paths never learned to pass a connection id - they were
         # written when (user, provider) named exactly one - so without this the
@@ -256,8 +296,13 @@ class DataSourceRepository(
         # Fill device_model from the connection's device_label when the provider
         # didn't report a device (e.g. Whoop, which exposes none; Oura, auto-filled
         # from ring_configuration). Manual entry / auto-detection both land here.
+        device_model_origin = DeviceModelOrigin.PROVIDER if device_model is not None else None
         if device_model is None:
-            device_model = self._connection_device_label(db_session, user_id, provider, user_connection_id)
+            device_model = self._connection_device_label(
+                db_session, user_id, provider, user_connection_id, at=recorded_at
+            )
+            if device_model is not None:
+                device_model_origin = DeviceModelOrigin.LABEL
 
         # A sensor the account declared. It never replaces device_model - the
         # provider's report is kept verbatim, and the registry is where recorder and
@@ -320,11 +365,66 @@ class DataSourceRepository(
             source=source,
             device_type=device_type.value,
             original_source_name=original_source_name,
+            device_model_origin=device_model_origin.value if device_model_origin else None,
         )
         result = self.create(db_session, create_payload)
         assert result is not None
         self._attribute_device(db_session, result, identity_claims)
         return result
+
+    def find_label_source(self, db_session: DbSession, template: DataSource, label: str) -> DataSource | None:
+        """The source on ``template``'s account and writer whose device is ``label``, if any."""
+        return (
+            db_session.query(self.model)
+            .filter(
+                self._build_identity_filter(
+                    template.user_id,
+                    ProviderName(template.provider),
+                    label,
+                    template.source,
+                    template.user_connection_id,
+                )
+            )
+            .one_or_none()
+        )
+
+    def ensure_label_source(self, db_session: DbSession, template: DataSource, label: str) -> DataSource:
+        """The label-derived sibling of ``template`` on its account, created if missing.
+
+        For a re-file by dated device history: same user, provider, account and writer
+        as the source rows are leaving, with ``label`` as the device. Flushed, never
+        committed - a re-file is one transaction, and a destination committed on its
+        own would survive a re-file that failed after creating it.
+
+        The firmware version is not carried over: it described the device the rows
+        are leaving.
+        """
+        existing = self.find_label_source(db_session, template, label)
+        if existing is not None:
+            return existing
+        provider = ProviderName(template.provider)
+        ProviderPriorityRepository(ProviderPriority).ensure_provider_exists(db_session, provider)
+        declared_sensor = self._connection_sensor_label(
+            db_session, template.user_id, provider, template.user_connection_id
+        )
+        original_source_name = self._resolve_original_source_name(
+            provider, label, template.source, template.original_source_name
+        )
+        created = self.model(
+            id=uuid4(),
+            user_id=template.user_id,
+            provider=provider,
+            user_connection_id=template.user_connection_id,
+            device_model=label,
+            source=template.source,
+            device_type=self._infer_device_type(label, original_source_name, template.source, declared_sensor).value,
+            original_source_name=original_source_name,
+            device_model_origin=DeviceModelOrigin.LABEL.value,
+        )
+        db_session.add(created)
+        db_session.flush()
+        self._attribute_device(db_session, created)
+        return created
 
     def _provider_connections(
         self, db_session: DbSession, user_id: UUID, provider: ProviderName
@@ -503,7 +603,18 @@ class DataSourceRepository(
         provider: ProviderName,
         user_connection_id: UUID | None,
         identities: set[tuple[UUID, str | None, str | None]],
+        label_identities: frozenset[tuple[UUID, str | None, str | None]] = frozenset(),
+        labels_resolved: bool = False,
     ) -> dict[tuple[UUID, str | None, str | None], UUID]:
+        """Data source ids for a batch of identities on one account, creating the missing.
+
+        ``labels_resolved`` says the caller already applied the account's dated device
+        history per record (resolve_bulk_data_sources), so a device_model still None
+        here is a stretch no period covers and must stay None - falling back to the
+        undated label would file it under today's device. ``label_identities`` are the
+        identities whose device_model came from that history rather than the payload,
+        so what is created from them is recorded as label-derived.
+        """
         if not identities:
             return {}
 
@@ -532,7 +643,7 @@ class DataSourceRepository(
             return sensor_cache[user_id]
 
         def _stored_device_model(user_id: UUID, device_model: str | None) -> str | None:
-            if device_model is not None:
+            if device_model is not None or labels_resolved:
                 return device_model
             if user_id not in label_cache:
                 label_cache[user_id] = self._connection_device_label(db_session, user_id, provider, user_connection_id)
@@ -565,6 +676,27 @@ class DataSourceRepository(
         }
 
         missing = [stored for requested, stored in stored_by_requested.items() if requested not in result]
+
+        # Who named each stored model, for what gets created below. A model the payload
+        # carried is the provider's even if a label names the same string elsewhere in
+        # the batch - the two share a row, and a capture must never become movable.
+        provider_stored = {
+            stored
+            for requested, stored in stored_by_requested.items()
+            if requested[1] is not None and requested not in label_identities
+        }
+        label_stored = {
+            stored
+            for requested, stored in stored_by_requested.items()
+            if stored[1] is not None and (requested[1] is None or requested in label_identities)
+        }
+
+        def _origin(stored: tuple[UUID, str | None, str | None]) -> str | None:
+            if stored in provider_stored:
+                return DeviceModelOrigin.PROVIDER.value
+            if stored in label_stored:
+                return DeviceModelOrigin.LABEL.value
+            return None
 
         # Adopt connection-less rows the same way ensure_data_source does, and
         # under the same condition: only when a single account was alive when the
@@ -632,6 +764,7 @@ class DataSourceRepository(
                         "source": source,
                         "device_type": device_type.value,
                         "original_source_name": original_source_name,
+                        "device_model_origin": _origin((user_id, device_model, source)),
                     }
                 )
             stmt = insert(self.model).values(values).on_conflict_do_nothing()
@@ -661,6 +794,66 @@ class DataSourceRepository(
                 }
             )
 
+        return result
+
+    def resolve_bulk_data_sources(
+        self,
+        db_session: DbSession,
+        creators: Sequence[_Creator],
+        recorded_at: Callable[[_Creator], datetime | None],
+    ) -> list[UUID | None]:
+        """The data source id for each creator, in order; None where none resolved.
+
+        The one resolver both bulk writers (events, time series) use, so the two
+        cannot drift apart - a single device split across two sources is what the
+        drift looked like.
+
+        Grouped by provider and account, as each writer did before. For an account
+        with a dated device history, a creator whose payload named no device takes
+        the label stated for ``recorded_at(creator)``, so one batch spanning a switch
+        lands on two sources. The result is per creator rather than per identity:
+        two accounts in one batch can share an identical (user, model, source), and
+        a map keyed on that alone would file the first account's rows under the
+        second.
+        """
+        result: list[UUID | None] = [None] * len(creators)
+        groups: dict[tuple[ProviderName, UUID | None], list[int]] = {}
+        for i, creator in enumerate(creators):
+            provider = self.infer_provider_from_source(creator.source)
+            if creator.provider:
+                with contextlib.suppress(ValueError):
+                    provider = ProviderName(creator.provider)
+            groups.setdefault((provider, creator.user_connection_id), []).append(i)
+
+        for (provider, user_connection_id), indexes in groups.items():
+            # The account batch_ensure_data_sources will write under, found the same way.
+            account_id = user_connection_id if user_connection_id is not None else get_active_connection_id()
+            timeline = load_timeline(db_session, account_id)
+
+            keys: dict[int, DataSourceIdentity] = {}
+            label_identities: set[DataSourceIdentity] = set()
+            provider_identities: set[DataSourceIdentity] = set()
+            for i in indexes:
+                creator = creators[i]
+                model = creator.device_model
+                if model is None and timeline is not None:
+                    model = timeline.label_at(recorded_at(creator))
+                    if model is not None:
+                        label_identities.add((creator.user_id, model, creator.source))
+                elif model is not None:
+                    provider_identities.add((creator.user_id, model, creator.source))
+                keys[i] = (creator.user_id, model, creator.source)
+
+            ids = self.batch_ensure_data_sources(
+                db_session,
+                provider,
+                user_connection_id,
+                set(keys.values()),
+                label_identities=frozenset(label_identities - provider_identities),
+                labels_resolved=timeline is not None,
+            )
+            for i, key in keys.items():
+                result[i] = ids.get(key)
         return result
 
     def observed_devices_by_connection(

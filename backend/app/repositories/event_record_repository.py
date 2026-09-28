@@ -47,7 +47,6 @@ if TYPE_CHECKING:
     from app.services.sources.relay_dedup import RelayDedupPlan
 
 # Identity tuple: (user_id, device_model, source)
-DataSourceIdentity = tuple[UUID, str | None, str | None]
 
 
 def _relay_conditions(relay_plan: "RelayDedupPlan | None") -> list[ColumnElement[bool]]:
@@ -97,6 +96,7 @@ class EventRecordRepository(
                 software_version=creator.software_version,
                 original_source_name=creator.source,
                 identity_claims=creator.identity_claims,
+                recorded_at=creator.start_datetime,
             )
             data_source_id = data_source.id
 
@@ -229,38 +229,12 @@ class EventRecordRepository(
         if not creators:
             return []
 
-        # Group by provider for batch processing
-        by_provider: dict[ProviderName, list[EventRecordCreate]] = {}
-        for c in creators:
-            provider = self.data_source_repo.infer_provider_from_source(c.source)
-            if c.provider:
-                with contextlib.suppress(ValueError):
-                    provider = ProviderName(c.provider)
-            by_provider.setdefault(provider, []).append(c)
-
-        identity_to_source_id: dict[DataSourceIdentity, UUID] = {}
-
-        for provider, provider_creators in by_provider.items():
-            # Sub-group by connection: the batch resolver writes one connection
-            # id onto everything it creates, so a batch mixing two of a user's
-            # accounts with the same provider would file the second account's
-            # rows under the first. Taking creators[0]'s id, as this did, was
-            # safe only while (user, provider) named a single account.
-            by_connection: dict[UUID | None, set[DataSourceIdentity]] = {}
-            for c in provider_creators:
-                by_connection.setdefault(c.user_connection_id, set()).add((c.user_id, c.device_model, c.source))
-
-            for user_connection_id, unique_identities in by_connection.items():
-                batch_result = self.data_source_repo.batch_ensure_data_sources(
-                    db_session, provider, user_connection_id, unique_identities
-                )
-                identity_to_source_id.update(batch_result)
+        # Every record's data source in one pass, by the record's own start where the
+        # account has a dated device history.
+        source_ids = self.data_source_repo.resolve_bulk_data_sources(db_session, creators, lambda c: c.start_datetime)
 
         values_list = []
-        for creator in creators:
-            identity: DataSourceIdentity = (creator.user_id, creator.device_model, creator.source)
-            source_id = identity_to_source_id.get(identity)
-
+        for creator, source_id in zip(creators, source_ids, strict=True):
             if not source_id:
                 continue
 
