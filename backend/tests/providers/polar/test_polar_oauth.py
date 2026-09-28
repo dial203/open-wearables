@@ -227,6 +227,43 @@ class TestPolarOAuthUserInfo:
         assert user_info["user_id"] == "12345"
         assert user_info["username"] is None
         mock_post.assert_called_once()
+        assert mock_post.call_args[1]["json"]["member-id"] == f"{user.id}-12345"
+
+    @patch("httpx.post")
+    def test_two_accounts_on_one_user_get_distinct_member_ids(self, mock_post: MagicMock, db: Session) -> None:
+        """A second Polar account on the same user must not reuse the first one's member-id.
+
+        Polar answers a reused member-id with 409 and leaves the account unregistered,
+        after which AccessLink refuses every read on it.
+        """
+        from app.models import User
+        from app.repositories.user_connection_repository import UserConnectionRepository
+        from app.repositories.user_repository import UserRepository
+
+        user = UserFactory()
+        oauth = PolarOAuth(
+            user_repo=UserRepository(User),
+            connection_repo=UserConnectionRepository(),
+            provider_name="polar",
+            api_base_url="https://www.polaraccesslink.com",
+        )
+        mock_post.return_value = MagicMock(status_code=200)
+
+        for polar_id in (111, 222):
+            oauth._get_provider_user_info(
+                OAuthTokenResponse(
+                    access_token=f"token_{polar_id}",
+                    refresh_token="r",
+                    expires_in=3600,
+                    token_type="Bearer",
+                    x_user_id=polar_id,
+                ),
+                str(user.id),
+            )
+
+        member_ids = [c[1]["json"]["member-id"] for c in mock_post.call_args_list]
+        assert len(member_ids) == 2
+        assert len(set(member_ids)) == 2
 
     def test_get_provider_user_info_without_x_user_id(self, db: Session) -> None:
         """Test extracting user info when x_user_id is None."""
@@ -323,6 +360,22 @@ class TestPolarUserRegistration:
         # Act & Assert - should not raise exception
         oauth._register_user("test_access_token", str(user.id))
         # User might already be registered, so we handle errors gracefully
+
+    @pytest.mark.parametrize("status_code", [409, 403, 500])
+    @patch("httpx.post")
+    def test_register_user_does_not_raise_on_refusal(self, mock_post: MagicMock, status_code: int) -> None:
+        """A refused registration is logged, never raised: the connection is still saved."""
+        oauth = PolarOAuth(
+            user_repo=MagicMock(),
+            connection_repo=MagicMock(),
+            provider_name="polar",
+            api_base_url="https://www.polaraccesslink.com",
+        )
+        mock_post.return_value = MagicMock(status_code=status_code, text="refused")
+
+        oauth._register_user("test_access_token", "member")
+
+        mock_post.assert_called_once()
 
 
 class TestPolarUserDeregistration:
