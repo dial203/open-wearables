@@ -625,3 +625,33 @@ Template:
   edit on an account with a history is refused (409) rather than silently turned into a
   new period with a switch date nobody gave. See `docs/dev-guides/device-registry.mdx`.
 
+
+## Polar registers each account under its own member-id
+
+- **Area**: backend
+- **Status**: active; upstreamable only together with several accounts per user,
+  since upstream's one-account-per-user makes the user id unique already
+- **On conflict**: keep ours; re-apply `PolarOAuth._member_id` and the status handling
+  in `PolarOAuth._register_user` on top of upstream's `polar/oauth.py`
+- **Why**: AccessLink v3 serves data only for users registered with the client through
+  `POST /v3/users`, and that registration takes a partner-chosen `member-id`. Upstream
+  sends the OW user id. Once a user can hold several Polar accounts, the second
+  account's registration reuses the first one's member-id, and Polar refuses it with
+  409 ("User already registered to partner or duplicated member-id"). The response was
+  never read, so the connection was saved as if nothing had happened. Every AccessLink
+  read on that account then answered 403, which `Polar247Data.load_and_save_all` turns
+  into a zero count per data type: the account synced nothing (sleep, activity,
+  continuous HR, Nightly Recharge, exercises) with nothing on screen to say why. No
+  webhooks arrive for an unregistered user either.
+
+  The member-id is now `<user id>-<Polar user id>`, unique per account. Existing
+  registrations are unaffected: a reconnect of an account that is already registered
+  gets 409 "already registered", which is logged at info and is harmless. The
+  registration outcome is logged either way; a refusal other than 409 is logged as an
+  error naming the status, and 403 there means the account holder has not accepted
+  Polar's mandatory consents (fixed at account.polar.com).
+
+  **An account connected before this fix stays unregistered until it is re-authorised.**
+  Reconnect that specific account (`connection_id=<uuid>` on the authorize route, or
+  the account's reconnect action on the dashboard); the callback registers it. What
+  AccessLink then serves for nights before the registration is Polar's call, not ours.
