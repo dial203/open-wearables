@@ -591,3 +591,21 @@ Template:
   `_filter_by_priority` needed nothing: it keeps the first of each day's sorted
   candidates, so finer groups add candidates without adding winners. The Compare tab
   keys its columns on the account as well.
+
+## Apple RMSSD is imported, not dropped
+
+- **Area**: backend
+- **Status**: upstreamable
+- **On conflict**: reconcile (keep the mapping whichever side names the enum member)
+- **Why**: iOS/watchOS 27 added `HKQuantityTypeIdentifierHeartRateVariabilityRMSSD`,
+  the first HRV type besides SDNN that HealthKit has carried since iOS 11. Neither
+  upstream mapped it, so both the SDK sync and the Apple Health XML import discarded
+  every RMSSD sample, and the XML path did not even count them as skipped.
+
+  It maps to the existing `heart_rate_variability_rmssd` series, in ms like SDNN, and
+  never to the SDNN series: they are different statistics. The consequence to know:
+  the resilience score reads RMSSD only (its SDNN fallback is disabled pending
+  validation), so it starts computing for Apple users with iOS 27 data, where before
+  it returned nothing for them. Apple has not said which of its "Recovery HRV" and
+  "overall HRV" this type carries, so a comparison against another provider's RMSSD
+  should check the measurement window first.

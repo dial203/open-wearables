@@ -755,3 +755,31 @@ class TestSDKImportUnitConversion:
         assert len(samples) == 1
         assert samples[0].series_type == SeriesType.blood_glucose
         assert samples[0].value == Decimal("105")
+
+    @pytest.mark.parametrize(
+        ("metric_type", "series_type"),
+        [
+            ("HKQuantityTypeIdentifierHeartRateVariabilitySDNN", SeriesType.heart_rate_variability_sdnn),
+            ("HKQuantityTypeIdentifierHeartRateVariabilityRMSSD", SeriesType.heart_rate_variability_rmssd),
+        ],
+    )
+    def test_healthkit_hrv_kept_apart_and_not_scaled(
+        self,
+        import_service: ImportService,
+        metric_type: str,
+        series_type: SeriesType,
+    ) -> None:
+        """SDNN and RMSSD are different statistics - each lands in its own series, in ms.
+
+        RMSSD reaches HealthKit from iOS 27; before this mapping it was dropped unread.
+        """
+        user_id = str(uuid4())
+        request = self._build_request(
+            "apple",
+            [self._record(metric_type, 42.5, unit="ms")],
+        )
+        samples = import_service._build_statistic_bundles(request, user_id)
+
+        assert len(samples) == 1
+        assert samples[0].series_type == series_type
+        assert samples[0].value == Decimal("42.5")
