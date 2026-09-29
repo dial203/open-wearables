@@ -678,3 +678,23 @@ Template:
   formula". So Recovery HRV is the Apple value to compare with another provider's
   RMSSD. The Health app does not state the measurement window, and we store only a
   sample's start time, so check the window before pooling.
+
+## Apple HRV samples state their window (`interval_seconds`)
+
+- **Area**: backend
+- **Status**: upstreamable
+- **On conflict**: reconcile (keep `with_measurement_window` on both Apple import paths)
+- **Why**: HealthKit gives an HRV sample's window as its start and end, and a row keeps
+  only the start, so an Apple RMSSD or SDNN value could not be lined up with a
+  chest-strap recording over the same span. An Ultra 4 on watchOS 27 writes both
+  statistics over shared windows, mostly 300 s but also 60 s to 352 s, so assuming five
+  minutes is wrong for some of them.
+
+  Both the SDK sync and the XML import now put the window length in
+  `provider_metadata["interval_seconds"]`, the key the timeseries API already returns
+  for Oura's, Garmin's and Polar's HRV windows. A sample whose end is not after its start
+  states no window. The XML import also keeps an HRV record's `<MetadataEntry>` values
+  (Apple tags each with `HKAlgorithmVersion`), which the SDK path already stored; other
+  XML record types still store no metadata. The SDK side of the same feature is on the
+  `claude/awesome-galileo-5kj2l3` branch of the iOS SDK fork, which requests
+  `heartRateVariabilityRMSSD` on iOS 27.
