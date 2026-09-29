@@ -16,7 +16,8 @@ class SDKMetricType(StrEnum):
     APPLE_RESTING_HEART_RATE = "HKQuantityTypeIdentifierRestingHeartRate"
     ANDROID_RESTING_HEART_RATE = "RESTING_HEART_RATE"
     APPLE_HEART_RATE_VARIABILITY_SDNN = "HKQuantityTypeIdentifierHeartRateVariabilitySDNN"
-    # iOS/watchOS 27+. Before that HealthKit carried SDNN only.
+    # iOS/watchOS 27+; the Health app shows it as "Recovery HRV", and SDNN as
+    # "Heart Rate Variability". Before iOS 27 HealthKit carried SDNN only.
     APPLE_HEART_RATE_VARIABILITY_RMSSD = "HKQuantityTypeIdentifierHeartRateVariabilityRMSSD"
     ANDROID_HEART_RATE_VARIABILITY = "HEART_RATE_VARIABILITY"
     HEART_RATE_RECOVERY_ONE_MINUTE = "HKQuantityTypeIdentifierHeartRateRecoveryOneMinute"

@@ -606,6 +606,11 @@ Template:
   never to the SDNN series: they are different statistics. The consequence to know:
   the resilience score reads RMSSD only (its SDNN fallback is disabled pending
   validation), so it starts computing for Apple users with iOS 27 data, where before
-  it returned nothing for them. Apple has not said which of its "Recovery HRV" and
-  "overall HRV" this type carries, so a comparison against another provider's RMSSD
-  should check the measurement window first.
+  it returned nothing for them.
+
+  Which Apple reading lands where comes from the Health app's own descriptions (iOS 27,
+  Series 12 and Ultra 4), since the HealthKit docs say nothing: "Recovery HRV" is
+  computed "using the RMSSD formula" and "Heart Rate Variability" "using the SDNN
+  formula". So Recovery HRV is the Apple value to compare with another provider's
+  RMSSD. The Health app does not state the measurement window, and we store only a
+  sample's start time, so check the window before pooling.
