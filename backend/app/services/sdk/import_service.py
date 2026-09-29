@@ -47,6 +47,7 @@ from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
 from .device_resolution import extract_device_info
+from .measurement_window import with_measurement_window
 from .record_metadata import normalize_record_metadata
 from .sleep_service import handle_sleep_data
 
@@ -262,7 +263,9 @@ class ImportService:
                 value=value,
                 series_type=series_type,
                 is_daily_total=daily_total_flag(series_type, is_daily=False),
-                provider_metadata=normalize_record_metadata(rjson.metadata),
+                provider_metadata=with_measurement_window(
+                    normalize_record_metadata(rjson.metadata), series_type, rjson.startDate, rjson.endDate
+                ),
             )
 
             match series_type:

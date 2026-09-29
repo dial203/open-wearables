@@ -26,6 +26,8 @@ from app.schemas.providers.mobile_sdk import (
     SyncRequest,
     SyncRequestData,
 )
+from app.services.sdk.measurement_window import WINDOWED_SERIES, with_measurement_window
+from app.services.sdk.record_metadata import normalize_record_metadata
 from app.utils.structured_logging import log_structured
 
 
@@ -175,8 +177,14 @@ class XMLService:
         self,
         document: dict[str, Any],
         user_id: UUID,
+        metadata_entries: list[dict[str, str]] | None = None,
     ) -> HeartRateSampleCreate | StepSampleCreate | TimeSeriesSampleCreate | None:
         """Create a time series record from an XML document.
+
+        ``metadata_entries`` are the record's ``<MetadataEntry>`` attributes. They are kept
+        only on HRV records, with the window the value summarises: an Apple HRV value is
+        tied to its window and to the algorithm that produced it (``HKAlgorithmVersion``),
+        while on every other record type they are left out as before.
 
         Returns None if the record cannot be created (unsupported type, invalid value, etc.)
         """
@@ -220,6 +228,16 @@ class XMLService:
             value=value,
             series_type=series_type,
             is_daily_total=daily_total_flag(series_type, is_daily=False),
+            provider_metadata=(
+                with_measurement_window(
+                    normalize_record_metadata(metadata_entries),
+                    series_type,
+                    document["startDate"],
+                    document.get("endDate"),
+                )
+                if series_type in WINDOWED_SERIES
+                else None
+            ),
         )
 
         match series_type:
@@ -402,7 +420,9 @@ class XMLService:
                         elem.clear()
                         continue
 
-                    record_create = self._create_record(record, uuid_user)
+                    record_create = self._create_record(
+                        record, uuid_user, [entry.attrib for entry in elem.findall("MetadataEntry")]
+                    )
                     if record_create is not None:
                         time_series_records.append(record_create)
                         self.stats.records.mark_processed()
