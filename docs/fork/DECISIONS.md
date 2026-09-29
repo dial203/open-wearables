@@ -655,3 +655,26 @@ Template:
   Reconnect that specific account (`connection_id=<uuid>` on the authorize route, or
   the account's reconnect action on the dashboard); the callback registers it. What
   AccessLink then serves for nights before the registration is Polar's call, not ours.
+
+## Apple RMSSD is imported, not dropped
+
+- **Area**: backend
+- **Status**: upstreamable
+- **On conflict**: reconcile (keep the mapping whichever side names the enum member)
+- **Why**: iOS/watchOS 27 added `HKQuantityTypeIdentifierHeartRateVariabilityRMSSD`,
+  the first HRV type besides SDNN that HealthKit has carried since iOS 11. Neither
+  upstream mapped it, so both the SDK sync and the Apple Health XML import discarded
+  every RMSSD sample, and the XML path did not even count them as skipped.
+
+  It maps to the existing `heart_rate_variability_rmssd` series, in ms like SDNN, and
+  never to the SDNN series: they are different statistics. The consequence to know:
+  the resilience score reads RMSSD only (its SDNN fallback is disabled pending
+  validation), so it starts computing for Apple users with iOS 27 data, where before
+  it returned nothing for them.
+
+  Which Apple reading lands where comes from the Health app's own descriptions (iOS 27,
+  Series 12 and Ultra 4), since the HealthKit docs say nothing: "Recovery HRV" is
+  computed "using the RMSSD formula" and "Heart Rate Variability" "using the SDNN
+  formula". So Recovery HRV is the Apple value to compare with another provider's
+  RMSSD. The Health app does not state the measurement window, and we store only a
+  sample's start time, so check the window before pooling.
