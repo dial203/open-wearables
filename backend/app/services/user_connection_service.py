@@ -16,7 +16,13 @@ from app.schemas.responses.upload import ConnectionsCoverage, ProviderConnection
 from app.services.outgoing_webhooks.events import on_connection_created, on_connection_revoked
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.services import AppService
-from app.utils.exceptions import ResourceAlreadyExistsError, ResourceNotFoundError, handle_exceptions
+from app.utils.device_timeline import load_timeline
+from app.utils.exceptions import (
+    DeviceTimelineConflictError,
+    ResourceAlreadyExistsError,
+    ResourceNotFoundError,
+    handle_exceptions,
+)
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
@@ -56,6 +62,7 @@ class UserConnectionService(
         connection = self._resolve(db_session, user_id, provider.value, connection_id)
         if connection is None:
             return None
+        self._refuse_if_dated(db_session, connection)
         connection.device_label = device_label
         connection.updated_at = datetime.now(timezone.utc)
         db_session.add(connection)
@@ -63,6 +70,20 @@ class UserConnectionService(
         db_session.commit()
         db_session.refresh(connection)
         return connection
+
+    @staticmethod
+    def _refuse_if_dated(db_session: DbSession, connection: UserConnection) -> None:
+        """An undated label edit on an account with a dated device history is refused.
+
+        There the label is the timeline's current period. Overwriting it directly would
+        leave the two disagreeing about what is worn now, and silently turning the edit
+        into a new period would state a switch date nobody gave.
+        """
+        if load_timeline(db_session, connection.id) is not None:
+            raise DeviceTimelineConflictError(
+                "This account has a dated device history; change the device there "
+                f"(PUT /users/{connection.user_id}/connections/accounts/{connection.id}/device-timeline)",
+            )
 
     def _resolve(
         self,
@@ -126,6 +147,8 @@ class UserConnectionService(
         connection = self.crud.get_by_id_for_user(db_session, user_id, connection_id)
         if connection is None:
             return None
+        if "device_label" in fields_set and payload.device_label != connection.device_label:
+            self._refuse_if_dated(db_session, connection)
 
         if "account_email" in fields_set and payload.account_email is not None:
             clash = self.crud.get_by_account_email(db_session, user_id, connection.provider, str(payload.account_email))
@@ -150,8 +173,12 @@ class UserConnectionService(
         )
 
         # A device label is also stamped onto already-ingested, device-less data
-        # so history and future samples agree on what was worn.
-        if "device_label" in fields_set and payload.device_label:
+        # so history and future samples agree on what was worn. Not on an account
+        # with a dated device history: there a device-less source is a stretch no
+        # period covers, left unattributed on purpose, and today's label is exactly
+        # the guess the history exists to avoid. (Resending the current label is
+        # allowed there; it must stay a no-op.)
+        if "device_label" in fields_set and payload.device_label and load_timeline(db_session, connection.id) is None:
             self.data_source_crud.set_connection_device_label(
                 db_session,
                 user_id,

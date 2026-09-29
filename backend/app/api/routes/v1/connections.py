@@ -12,10 +12,15 @@ from app.repositories.provider_settings_repository import ProviderSettingsReposi
 from app.schemas.auth import ConnectionStatus, LiveSyncMode, SDKAuthContext
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.user_management import (
+    DeviceRefileRequest,
+    DeviceRefileResult,
+    DeviceTimelineRead,
+    DeviceTimelineUpdate,
     UserConnectionAccountUpdate,
     UserConnectionWithCapabilities,
 )
 from app.services import ApiKeyDep, user_connection_service
+from app.services.device_timeline_service import DeviceTimelineError, device_timeline_service
 from app.services.providers.base_strategy import BaseProviderStrategy
 from app.services.providers.factory import ProviderFactory
 from app.utils.auth import CombinedAuthDep
@@ -187,6 +192,68 @@ def update_connection_account_endpoint(
     if updated is None:
         raise HTTPException(status_code=404, detail="Connected account not found for this user")
     return _enriched_account(db, updated)
+
+
+@router.get("/users/{user_id}/connections/accounts/{connection_id}/device-timeline")
+def get_device_timeline_endpoint(
+    user_id: UUID,
+    connection_id: UUID,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> DeviceTimelineRead:
+    """The account's dated device history: which device was worn from when.
+
+    An empty ``periods`` list means the account has none, and its undated
+    ``device_label`` applies to everything.
+    """
+    return device_timeline_service.get_timeline(db, _account_or_404(db, user_id, connection_id))
+
+
+@router.put("/users/{user_id}/connections/accounts/{connection_id}/device-timeline")
+def replace_device_timeline_endpoint(
+    user_id: UUID,
+    connection_id: UUID,
+    body: DeviceTimelineUpdate,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> DeviceTimelineRead:
+    """State which device this account was worn with, and from when.
+
+    Replaces the whole history. Each period runs from its ``effective_from`` until the
+    next one's; one period may have a null start, meaning from the account's first
+    data. From then on, a record whose provider named no device takes the label stated
+    for the record's own time - a night synced late still lands on the device worn that
+    night. A device the provider did name always wins.
+
+    The account's ``device_label`` becomes the latest period's, and while a history
+    exists it can only change here. Data already stored is not moved: preview and apply
+    that with ``POST .../device-timeline/refile``. An empty list removes the history.
+    """
+    connection = _account_or_404(db, user_id, connection_id)
+    return device_timeline_service.replace_timeline(db, connection, body)
+
+
+@router.post("/users/{user_id}/connections/accounts/{connection_id}/device-timeline/refile")
+def refile_device_timeline_endpoint(
+    user_id: UUID,
+    connection_id: UUID,
+    body: DeviceRefileRequest,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> DeviceRefileResult:
+    """Move this account's stored records onto the device its history names for their time.
+
+    ``dry_run`` defaults to true: the response says what would move and changes
+    nothing. Only rows on a source whose device name came from a label (or that has
+    none) move; a model the provider stamped never does. A row whose destination
+    already holds one at the same instant, and an archived day a switch falls inside,
+    are reported and left where they are. Other accounts are never touched.
+    """
+    connection = _account_or_404(db, user_id, connection_id)
+    try:
+        return device_timeline_service.refile(db, connection, body, actor=f"principal:{_api_key}")
+    except DeviceTimelineError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.delete(

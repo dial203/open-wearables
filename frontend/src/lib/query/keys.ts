@@ -97,6 +97,12 @@ export const queryKeys = {
     all: (userId: string) => ['connections', userId] as const,
     status: (userId: string) =>
       [...queryKeys.connections.all(userId), 'status'] as const,
+    deviceTimeline: (userId: string, connectionId: string) =>
+      [
+        ...queryKeys.connections.all(userId),
+        'deviceTimeline',
+        connectionId,
+      ] as const,
   },
 
   garmin: {

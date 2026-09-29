@@ -95,7 +95,6 @@ def _relay_conditions(relay_plan: "RelayDedupPlan | None", model: type[DataPoint
 
 
 # Identity tuple: (user_id, device_model, source)
-DataSourceIdentity = tuple[UUID, str | None, str | None]
 
 
 class WriteCounts(int):
@@ -235,42 +234,12 @@ class DataPointSeriesRepository(
         if not creators:
             return WriteCounts(0, 0)
 
-        # 1. Resolve all data sources in batch
-        identity_to_source_id = self._resolve_data_sources(db_session, creators)
+        # 1. Resolve every sample's data source in batch - by the sample's own time,
+        # where the account has a dated device history.
+        source_ids = self.data_source_repo.resolve_bulk_data_sources(db_session, creators, lambda c: c.recorded_at)
 
         # 2. Build and execute data point batch insert
-        return self._insert_data_points(db_session, creators, identity_to_source_id)
-
-    def _resolve_data_sources(
-        self, db_session: DbSession, creators: list[TimeSeriesSampleCreate]
-    ) -> dict[DataSourceIdentity, UUID]:
-        by_provider: dict[ProviderName, list[TimeSeriesSampleCreate]] = {}
-        for c in creators:
-            provider = self.data_source_repo.infer_provider_from_source(c.source)
-            if c.provider:
-                with contextlib.suppress(ValueError):
-                    provider = ProviderName(c.provider)
-            by_provider.setdefault(provider, []).append(c)
-
-        identity_to_source_id: dict[DataSourceIdentity, UUID] = {}
-
-        for provider, provider_creators in by_provider.items():
-            # Sub-group by connection: the batch resolver writes one connection
-            # id onto everything it creates, so a batch mixing two of a user's
-            # accounts with the same provider would file the second account's
-            # rows under the first. Taking creators[0]'s id, as this did, was
-            # safe only while (user, provider) named a single account.
-            by_connection: dict[UUID | None, set[DataSourceIdentity]] = {}
-            for c in provider_creators:
-                by_connection.setdefault(c.user_connection_id, set()).add((c.user_id, c.device_model, c.source))
-
-            for user_connection_id, unique_identities in by_connection.items():
-                batch_result = self.data_source_repo.batch_ensure_data_sources(
-                    db_session, provider, user_connection_id, unique_identities
-                )
-                identity_to_source_id.update(batch_result)
-
-        return identity_to_source_id
+        return self._insert_data_points(db_session, creators, source_ids)
 
     class _StagingRow(NamedTuple):
         """One row as loaded into data_point_series_staging via COPY, in column order."""
@@ -296,7 +265,7 @@ class DataPointSeriesRepository(
         self,
         db_session: DbSession,
         creators: list[TimeSeriesSampleCreate],
-        source_map: dict[DataSourceIdentity, UUID],
+        source_ids: list[UUID | None],
     ) -> WriteCounts:
         """Batch insert data points via COPY into a staging table + one merge statement.
 
@@ -304,9 +273,7 @@ class DataPointSeriesRepository(
         derived from ``RETURNING (xmax = 0)`` on the merge statement.
         """
         rows: list[DataPointSeriesRepository._StagingRow] = []
-        for creator in creators:
-            identity: DataSourceIdentity = (creator.user_id, creator.device_model, creator.source)
-            source_id = source_map.get(identity)
+        for creator, source_id in zip(creators, source_ids, strict=True):
             if not source_id:
                 # Should not happen if resolve logic is correct, but safe skip.
                 continue
@@ -440,6 +407,7 @@ class DataPointSeriesRepository(
             device_model=creator.device_model,
             software_version=creator.software_version,
             source=creator.source,
+            recorded_at=creator.recorded_at,
         )
 
     def get_samples(

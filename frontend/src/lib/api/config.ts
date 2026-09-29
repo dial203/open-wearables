@@ -33,6 +33,10 @@ export const API_ENDPOINTS = {
     `/api/v1/users/${userId}/connections/accounts/${connectionId}`,
   userConnectionAccountData: (userId: string, connectionId: string) =>
     `/api/v1/users/${userId}/connections/accounts/${connectionId}/data`,
+  userConnectionDeviceTimeline: (userId: string, connectionId: string) =>
+    `/api/v1/users/${userId}/connections/accounts/${connectionId}/device-timeline`,
+  userConnectionDeviceTimelineRefile: (userId: string, connectionId: string) =>
+    `/api/v1/users/${userId}/connections/accounts/${connectionId}/device-timeline/refile`,
   providerSetting: (provider: string) => `/api/v1/oauth/providers/${provider}`,
   userWorkouts: (userId: string) => `/api/v1/users/${userId}/events/workouts`,
   userWorkoutDetail: (userId: string, workoutId: string) =>

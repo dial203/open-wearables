@@ -25,6 +25,7 @@ from .sync_run import SyncRun
 from .sync_run_data_type import SyncRunDataType
 from .user import User
 from .user_connection import UserConnection
+from .user_connection_device_period import UserConnectionDevicePeriod
 from .user_invitation_code import UserInvitationCode
 from .workout_details import WorkoutDetails
 
@@ -53,6 +54,7 @@ __all__ = [
     "RefreshToken",
     "User",
     "UserConnection",
+    "UserConnectionDevicePeriod",
     "UserInvitationCode",
     "EventRecord",
     "EventRecordDetail",
