@@ -6,12 +6,12 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-09-28 15:51 UTC |
-| Our ref | `HEAD` — 030d3eb (2026-09-28) feat: dated device history per account, applied by each record's own time |
-| Upstream `main` | 3e3f81c (2026-09-28) feat(backend): map resting heart rate for Ultrahuman and Withings (#1725) |
-| Last common commit | a076935 (2026-09-23) docs: add a shared mobile SDK integration guide and fix outdated SDK docs (#1700) |
-| Commits we are ahead | 197 |
-| Upstream commits not merged | 10 |
+| Generated | 2026-10-05 17:03 UTC |
+| Our ref | `HEAD` — 37756e18 (2026-10-05) Merge upstream the-momentum/open-wearables main (79 commits, 8b73188d) |
+| Upstream `main` | e69efd1d (2026-10-05) refactor(frontend): mobile-first new SvelteKit based admin portal #1530 |
+| Last common commit | e69efd1d (2026-10-05) refactor(frontend): mobile-first new SvelteKit based admin portal #1530 |
+| Commits we are ahead | 178 |
+| Upstream commits not merged | 0 |
 | Latest sync tag | _none yet_ |
 
 ## How to use this
@@ -28,17 +28,14 @@ git diff upstream-sync/<date>..HEAD
 git show upstream/main:<path>
 
 # which of our commits touched a file
-git log --oneline a0769356eb078864921fe47d5aee071a406f05ad..HEAD -- <path>
+git log --oneline e69efd1d0ddf7180d1ea950bb3980c2d240a8a1a..HEAD -- <path>
 ```
 
 Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md).
 
-> **10 upstream commits are not merged yet.** The table below compares against the
-> last common commit, so it does not include changes upstream has made since.
-
 ## Diverged files
 
-298 files: 144 fork-only, 154 modified.
+501 files: 358 fork-only, 143 modified.
 
 ### `backend`
 
@@ -47,18 +44,21 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/AGENTS.md` | modified | +41/-0 |
 | `backend/app/algorithms/sleep_onset.py` | fork-only | — |
 | `backend/app/api/routes/v1/__init__.py` | modified | +2/-0 |
-| `backend/app/api/routes/v1/config.py` | modified | +7/-1 |
+| `backend/app/api/routes/v1/config.py` | modified | +4/-0 |
 | `backend/app/api/routes/v1/connections.py` | modified | +291/-6 |
 | `backend/app/api/routes/v1/data_sources.py` | modified | +31/-2 |
 | `backend/app/api/routes/v1/devices.py` | fork-only | — |
-| `backend/app/api/routes/v1/events.py` | modified | +65/-1 |
+| `backend/app/api/routes/v1/events.py` | modified | +48/-1 |
 | `backend/app/api/routes/v1/import_xml.py` | modified | +54/-1 |
 | `backend/app/api/routes/v1/oauth.py` | modified | +86/-5 |
-| `backend/app/api/routes/v1/summaries.py` | modified | +74/-3 |
+| `backend/app/api/routes/v1/summaries.py` | modified | +83/-4 |
 | `backend/app/api/routes/v1/sync_data.py` | modified | +6/-1 |
 | `backend/app/api/routes/v1/timeseries.py` | modified | +28/-1 |
 | `backend/app/config.py` | modified | +38/-2 |
+| `backend/app/constants/devices_map/__init__.py` | modified | +6/-0 |
+| `backend/app/constants/devices_map/device_types.py` | modified | +86/-13 |
 | `backend/app/constants/series_types/polar.py` | modified | +5/-0 |
+| `backend/app/constants/series_types/sdk/metric_types.py` | modified | +4/-0 |
 | `backend/app/constants/series_types/sdk/sleep_types.py` | modified | +48/-3 |
 | `backend/app/integrations/celery/core.py` | modified | +1/-0 |
 | `backend/app/integrations/celery/tasks/finalize_stale_sleep_task.py` | modified | +14/-3 |
@@ -79,24 +79,23 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/models/user_connection_device_period.py` | fork-only | — |
 | `backend/app/models/workout_details.py` | modified | +6/-0 |
 | `backend/app/repositories/archival_repository.py` | modified | +21/-0 |
-| `backend/app/repositories/data_point_series_repository.py` | modified | +114/-43 |
-| `backend/app/repositories/data_source_repository.py` | modified | +792/-29 |
+| `backend/app/repositories/data_point_series_repository.py` | modified | +114/-48 |
+| `backend/app/repositories/data_source_repository.py` | modified | +874/-34 |
 | `backend/app/repositories/device_repository.py` | fork-only | — |
-| `backend/app/repositories/device_type_priority_repository.py` | modified | +10/-3 |
-| `backend/app/repositories/event_record_repository.py` | modified | +237/-80 |
+| `backend/app/repositories/event_record_repository.py` | modified | +256/-90 |
 | `backend/app/repositories/health_score_repository.py` | modified | +67/-19 |
 | `backend/app/repositories/source_activity_repository.py` | fork-only | — |
 | `backend/app/repositories/user_connection_repository.py` | modified | +233/-29 |
-| `backend/app/schemas/enums/__init__.py` | modified | +36/-0 |
+| `backend/app/schemas/enums/__init__.py` | modified | +32/-0 |
 | `backend/app/schemas/enums/account_type.py` | fork-only | — |
 | `backend/app/schemas/enums/aggregation_method.py` | modified | +2/-0 |
 | `backend/app/schemas/enums/device_registry.py` | fork-only | — |
-| `backend/app/schemas/enums/device_type.py` | modified | +159/-8 |
+| `backend/app/schemas/enums/device_type.py` | modified | +43/-20 |
 | `backend/app/schemas/enums/provider.py` | modified | +21/-2 |
 | `backend/app/schemas/enums/relay_visibility.py` | fork-only | — |
 | `backend/app/schemas/enums/series_types.py` | modified | +7/-0 |
 | `backend/app/schemas/model_crud/activities/data_point_series.py` | modified | +5/-1 |
-| `backend/app/schemas/model_crud/activities/event_record.py` | modified | +18/-1 |
+| `backend/app/schemas/model_crud/activities/event_record.py` | modified | +19/-1 |
 | `backend/app/schemas/model_crud/activities/source_filters.py` | modified | +10/-0 |
 | `backend/app/schemas/model_crud/credentials/oauth.py` | modified | +20/-1 |
 | `backend/app/schemas/model_crud/data_priority/__init__.py` | modified | +2/-0 |
@@ -122,11 +121,12 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/services/devices/detection.py` | fork-only | — |
 | `backend/app/services/devices/identity.py` | fork-only | — |
 | `backend/app/services/devices/sdk_identities.py` | fork-only | — |
-| `backend/app/services/event_record_service.py` | modified | +132/-17 |
+| `backend/app/services/event_record_service.py` | modified | +155/-22 |
 | `backend/app/services/polar_rr_import_service.py` | fork-only | — |
 | `backend/app/services/priority_service.py` | modified | +129/-6 |
 | `backend/app/services/providers/api_client.py` | modified | +17/-4 |
-| `backend/app/services/providers/apple/apple_xml/xml_service.py` | modified | +34/-17 |
+| `backend/app/services/providers/apple/apple_xml/xml_service.py` | modified | +55/-18 |
+| `backend/app/services/providers/apple/coverage.py` | modified | +1/-1 |
 | `backend/app/services/providers/base_strategy.py` | modified | +12/-1 |
 | `backend/app/services/providers/factory.py` | modified | +3/-0 |
 | `backend/app/services/providers/garmin/data_247.py` | modified | +50/-1 |
@@ -138,8 +138,9 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/services/providers/oura/data_247.py` | modified | +139/-2 |
 | `backend/app/services/providers/oura/oauth.py` | modified | +3/-1 |
 | `backend/app/services/providers/oura/webhook_handler.py` | modified | +6/-1 |
-| `backend/app/services/providers/polar/coverage.py` | modified | +2/-0 |
-| `backend/app/services/providers/polar/data_247.py` | modified | +127/-8 |
+| `backend/app/services/providers/polar/coverage.py` | modified | +4/-1 |
+| `backend/app/services/providers/polar/data_247.py` | modified | +166/-38 |
+| `backend/app/services/providers/polar/oauth.py` | modified | +52/-6 |
 | `backend/app/services/providers/polar/v4_data.py` | fork-only | — |
 | `backend/app/services/providers/polar/v4_oauth.py` | fork-only | — |
 | `backend/app/services/providers/polar/v4_strategy.py` | fork-only | — |
@@ -155,14 +156,15 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/services/providers/whoop/webhook_handler.py` | modified | +21/-15 |
 | `backend/app/services/providers/withings/webhook_handler.py` | modified | +10/-2 |
 | `backend/app/services/raw_payload_storage.py` | modified | +80/-13 |
-| `backend/app/services/sdk/device_resolution.py` | modified | +53/-0 |
-| `backend/app/services/sdk/import_service.py` | modified | +82/-3 |
+| `backend/app/services/sdk/device_resolution.py` | modified | +52/-5 |
+| `backend/app/services/sdk/import_service.py` | modified | +88/-6 |
+| `backend/app/services/sdk/measurement_window.py` | fork-only | — |
 | `backend/app/services/sdk/record_metadata.py` | fork-only | — |
-| `backend/app/services/sdk/sleep_service.py` | modified | +159/-59 |
+| `backend/app/services/sdk/sleep_service.py` | modified | +174/-71 |
 | `backend/app/services/source_activity_service.py` | fork-only | — |
 | `backend/app/services/sources/__init__.py` | fork-only | — |
 | `backend/app/services/sources/relay_dedup.py` | fork-only | — |
-| `backend/app/services/summaries_service.py` | modified | +314/-83 |
+| `backend/app/services/summaries_service.py` | modified | +357/-77 |
 | `backend/app/services/timeseries_service.py` | modified | +64/-11 |
 | `backend/app/services/user_connection_service.py` | modified | +257/-35 |
 | `backend/app/utils/connection_context.py` | fork-only | — |
@@ -191,7 +193,9 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/migrations/versions/2026_09_23_1500-c6d2a8f4e1b3_retime_polar_exercises.py` | fork-only | — |
 | `backend/migrations/versions/2026_09_23_1600-f3a9c1e7b2d4_retime_polar_ppi.py` | fork-only | — |
 | `backend/migrations/versions/2026_09_28_1200-a8c4e2f6d913_user_connection_device_period.py` | fork-only | — |
+| `backend/migrations/versions/2026_10_05_1647-2b390bf080cf_merge_upstream_telemetry_and_device_.py` | fork-only | — |
 | `backend/scripts/check_patch_targets.py` | fork-only | — |
+| `backend/scripts/data_migrations/backfill_device_types.py` | modified | +20/-2 |
 | `backend/scripts/data_migrations/reclassify_data_source_device_type.py` | fork-only | — |
 | `backend/scripts/data_migrations/scope_strava_model_claims_by_account.py` | fork-only | — |
 | `backend/scripts/data_migrations/split_host_relayed_devices.py` | fork-only | — |
@@ -210,8 +214,9 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/tests/api/v1/test_summary_priority_defaults.py` | fork-only | — |
 | `backend/tests/api/v1/test_summary_relay_dedup.py` | fork-only | — |
 | `backend/tests/api/v1/test_sync_data.py` | modified | +30/-2 |
+| `backend/tests/api/v1/test_timeseries_apple_hrv.py` | fork-only | — |
 | `backend/tests/api/v1/test_timeseries_oura_hrv.py` | fork-only | — |
-| `backend/tests/constants/__init__.py` | fork-only | — |
+| `backend/tests/constants/test_device_types.py` | modified | +3/-1 |
 | `backend/tests/constants/test_sleep_stage_mapping.py` | fork-only | — |
 | `backend/tests/devices/__init__.py` | fork-only | — |
 | `backend/tests/devices/test_detection.py` | fork-only | — |
@@ -221,8 +226,11 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/tests/devices/test_platform_reported_device_type.py` | fork-only | — |
 | `backend/tests/devices/test_registry_operations.py` | fork-only | — |
 | `backend/tests/factories.py` | modified | +10/-0 |
+| `backend/tests/integrations/test_sdk_import.py` | modified | +28/-0 |
 | `backend/tests/providers/garmin/test_garmin_247.py` | modified | +38/-0 |
 | `backend/tests/providers/oura/test_ring_configuration.py` | fork-only | — |
+| `backend/tests/providers/polar/test_polar_247.py` | modified | +37/-17 |
+| `backend/tests/providers/polar/test_polar_oauth.py` | modified | +53/-0 |
 | `backend/tests/providers/polar/test_polar_recharge_hrv.py` | fork-only | — |
 | `backend/tests/providers/polar/test_polar_rr_samples.py` | fork-only | — |
 | `backend/tests/providers/polar/test_polar_v4.py` | fork-only | — |
@@ -234,13 +242,16 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/tests/providers/test_oauth_account_resolution.py` | fork-only | — |
 | `backend/tests/repositories/test_batch_data_source_device_label.py` | fork-only | — |
 | `backend/tests/repositories/test_data_source_per_account.py` | fork-only | — |
-| `backend/tests/repositories/test_data_source_repository.py` | modified | +223/-1 |
+| `backend/tests/repositories/test_data_source_repository.py` | modified | +225/-1 |
+| `backend/tests/repositories/test_device_type_priority_repository.py` | modified | +4/-2 |
 | `backend/tests/repositories/test_health_score_repository.py` | modified | +32/-0 |
 | `backend/tests/repositories/test_multi_account_connections.py` | fork-only | — |
 | `backend/tests/repositories/test_provider_priority_repository.py` | modified | +4/-1 |
 | `backend/tests/schemas/test_device_type_inference.py` | fork-only | — |
 | `backend/tests/schemas/test_source_metadata.py` | fork-only | — |
+| `backend/tests/scripts/test_backfill_device_types.py` | modified | +23/-2 |
 | `backend/tests/scripts/test_split_host_relayed_devices.py` | fork-only | — |
+| `backend/tests/services/test_apple_xml_hrv.py` | fork-only | — |
 | `backend/tests/services/test_apple_xml_source_identity.py` | fork-only | — |
 | `backend/tests/services/test_event_record_service.py` | modified | +220/-1 |
 | `backend/tests/services/test_fit_file_storage.py` | fork-only | — |
@@ -268,8 +279,8 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `docs/dev-guides/integration-guide.mdx` | modified | +13/-0 |
 | `docs/dev-guides/multiple-provider-accounts.mdx` | fork-only | — |
 | `docs/docs.json` | modified | +8/-0 |
-| `docs/openapi.json` | modified | +9567/-5063 |
-| `docs/providers/coverage.mdx` | modified | +3/-2 |
+| `docs/openapi.json` | modified | +10328/-5788 |
+| `docs/providers/coverage.mdx` | modified | +180/-178 |
 | `docs/providers/google-api-integration.mdx` | modified | +3/-3 |
 | `docs/providers/polar-api-integration.mdx` | modified | +110/-1 |
 | `docs/providers/strava-api-integration.mdx` | modified | +127/-0 |
@@ -278,64 +289,256 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 
 | File | Status | +/- |
 |---|---|---|
-| `frontend/AGENTS.md` | modified | +1/-0 |
-| `frontend/Dockerfile` | modified | +18/-0 |
-| `frontend/fork-version.json` | fork-only | — |
-| `frontend/public/whoop-integration.html` | fork-only | — |
-| `frontend/public/whoop-screenshots/01-connect.png` | fork-only | — |
-| `frontend/public/whoop-screenshots/02-link-account.png` | fork-only | — |
-| `frontend/public/whoop-screenshots/03-authorize.png` | fork-only | — |
-| `frontend/public/whoop-screenshots/04-connected.png` | fork-only | — |
-| `frontend/public/whoop-screenshots/05-compare-sources.webp` | fork-only | — |
-| `frontend/public/whoop-screenshots/06-whoop-agreement.png` | fork-only | — |
-| `frontend/public/whoop-screenshots/07-device-landscape.png` | fork-only | — |
-| `frontend/public/whoop-screenshots/README.md` | fork-only | — |
-| `frontend/src/app-version.d.ts` | modified | +19/-0 |
-| `frontend/src/components/common/account-chip.tsx` | fork-only | — |
-| `frontend/src/components/common/data-source-info.test.tsx` | fork-only | — |
-| `frontend/src/components/common/data-source-info.tsx` | modified | +240/-3 |
-| `frontend/src/components/common/device-badge.tsx` | fork-only | — |
-| `frontend/src/components/common/device-type.tsx` | modified | +63/-0 |
-| `frontend/src/components/layout/simple-sidebar.tsx` | modified | +4/-5 |
-| `frontend/src/components/layout/version-footer.tsx` | fork-only | — |
-| `frontend/src/components/user/add-provider-account-dialog.test.tsx` | fork-only | — |
-| `frontend/src/components/user/add-provider-account-dialog.tsx` | fork-only | — |
-| `frontend/src/components/user/compare-section.test.ts` | fork-only | — |
-| `frontend/src/components/user/compare-section.tsx` | fork-only | — |
-| `frontend/src/components/user/connection-card.tsx` | modified | +314/-15 |
-| `frontend/src/components/user/device-timeline-dialog.tsx` | fork-only | — |
-| `frontend/src/components/user/devices-section.tsx` | fork-only | — |
-| `frontend/src/components/user/hypnogram.test.tsx` | fork-only | — |
-| `frontend/src/components/user/hypnogram.tsx` | fork-only | — |
-| `frontend/src/components/user/link-data-source-dialog.tsx` | fork-only | — |
-| `frontend/src/components/user/profile-section.tsx` | modified | +18/-7 |
-| `frontend/src/components/user/sleep-section.tsx` | modified | +104/-4 |
-| `frontend/src/components/user/source-activity.tsx` | fork-only | — |
-| `frontend/src/components/user/womens-health-section.tsx` | modified | +1/-1 |
-| `frontend/src/components/user/workout-section.tsx` | modified | +7/-3 |
-| `frontend/src/hooks/api/use-devices.ts` | fork-only | — |
-| `frontend/src/hooks/api/use-health.ts` | modified | +193/-0 |
-| `frontend/src/hooks/api/use-priorities.ts` | modified | +35/-0 |
-| `frontend/src/hooks/use-oauth-connect.test.ts` | fork-only | — |
-| `frontend/src/hooks/use-oauth-connect.ts` | modified | +54/-5 |
-| `frontend/src/lib/api/config.ts` | modified | +12/-0 |
-| `frontend/src/lib/api/services/config.service.ts` | modified | +7/-0 |
-| `frontend/src/lib/api/services/device.service.ts` | fork-only | — |
-| `frontend/src/lib/api/services/health.service.ts` | modified | +106/-1 |
-| `frontend/src/lib/api/services/priority.service.ts` | modified | +49/-1 |
-| `frontend/src/lib/api/types.ts` | modified | +197/-1 |
-| `frontend/src/lib/query/keys.ts` | modified | +21/-0 |
-| `frontend/src/lib/utils/account.ts` | fork-only | — |
-| `frontend/src/lib/utils/build-info.test.ts` | fork-only | — |
-| `frontend/src/lib/utils/build-info.ts` | fork-only | — |
-| `frontend/src/lib/utils/device.test.ts` | fork-only | — |
-| `frontend/src/lib/utils/device.ts` | fork-only | — |
-| `frontend/src/lib/utils/sleep.test.ts` | fork-only | — |
-| `frontend/src/lib/utils/sleep.ts` | modified | +55/-5 |
-| `frontend/src/routes/_authenticated/settings/-priorities-tab.tsx` | modified | +57/-0 |
-| `frontend/src/routes/_authenticated/users/$userId.tsx` | modified | +16/-0 |
-| `frontend/src/routes/users/$userId/pair.index.tsx` | modified | +163/-19 |
-| `frontend/vite.config.ts` | modified | +108/-0 |
+| `frontend/src/lib/providers/devices.ts` | modified | +5/-0 |
+| `frontend/src/lib/workouts/workouts.spec.ts` | modified | +1/-0 |
+### `frontend-react`
+
+| File | Status | +/- |
+|---|---|---|
+| `frontend-react/.cta.json` | fork-only | — |
+| `frontend-react/.dockerignore` | fork-only | — |
+| `frontend-react/.env.example` | fork-only | — |
+| `frontend-react/.gitignore` | fork-only | — |
+| `frontend-react/.nvmrc` | fork-only | — |
+| `frontend-react/.oxlintrc.json` | fork-only | — |
+| `frontend-react/.prettierignore` | fork-only | — |
+| `frontend-react/.vscode/settings.json` | fork-only | — |
+| `frontend-react/AGENTS.md` | fork-only | — |
+| `frontend-react/Dockerfile` | fork-only | — |
+| `frontend-react/Dockerfile.dev` | fork-only | — |
+| `frontend-react/README.md` | fork-only | — |
+| `frontend-react/components.json` | fork-only | — |
+| `frontend-react/fork-version.json` | fork-only | — |
+| `frontend-react/package.json` | fork-only | — |
+| `frontend-react/pnpm-lock.yaml` | fork-only | — |
+| `frontend-react/prettier.config.mjs` | fork-only | — |
+| `frontend-react/public/android-chrome-192x192.png` | fork-only | — |
+| `frontend-react/public/android-chrome-512x512.png` | fork-only | — |
+| `frontend-react/public/apple-touch-icon.png` | fork-only | — |
+| `frontend-react/public/favicon-dark-16x16.png` | fork-only | — |
+| `frontend-react/public/favicon-dark-32x32.png` | fork-only | — |
+| `frontend-react/public/favicon-light-16x16.png` | fork-only | — |
+| `frontend-react/public/favicon-light-32x32.png` | fork-only | — |
+| `frontend-react/public/favicon.ico` | fork-only | — |
+| `frontend-react/public/garmin.svg` | fork-only | — |
+| `frontend-react/public/manifest.json` | fork-only | — |
+| `frontend-react/public/polar.svg` | fork-only | — |
+| `frontend-react/public/robots.txt` | fork-only | — |
+| `frontend-react/public/suunto.svg` | fork-only | — |
+| `frontend-react/public/tanstack-circle-logo.png` | fork-only | — |
+| `frontend-react/public/tanstack-word-logo-white.svg` | fork-only | — |
+| `frontend-react/public/whoop-integration.html` | fork-only | — |
+| `frontend-react/public/whoop-screenshots/01-connect.png` | fork-only | — |
+| `frontend-react/public/whoop-screenshots/02-link-account.png` | fork-only | — |
+| `frontend-react/public/whoop-screenshots/03-authorize.png` | fork-only | — |
+| `frontend-react/public/whoop-screenshots/04-connected.png` | fork-only | — |
+| `frontend-react/public/whoop-screenshots/05-compare-sources.webp` | fork-only | — |
+| `frontend-react/public/whoop-screenshots/06-whoop-agreement.png` | fork-only | — |
+| `frontend-react/public/whoop-screenshots/07-device-landscape.png` | fork-only | — |
+| `frontend-react/public/whoop-screenshots/README.md` | fork-only | — |
+| `frontend-react/src/app-version.d.ts` | fork-only | — |
+| `frontend-react/src/components/common/account-chip.tsx` | fork-only | — |
+| `frontend-react/src/components/common/cursor-pagination.tsx` | fork-only | — |
+| `frontend-react/src/components/common/data-source-info.test.tsx` | fork-only | — |
+| `frontend-react/src/components/common/data-source-info.tsx` | fork-only | — |
+| `frontend-react/src/components/common/device-badge.tsx` | fork-only | — |
+| `frontend-react/src/components/common/device-type.tsx` | fork-only | — |
+| `frontend-react/src/components/common/error-state.tsx` | fork-only | — |
+| `frontend-react/src/components/common/event-delete-dialog.tsx` | fork-only | — |
+| `frontend-react/src/components/common/loading-spinner.tsx` | fork-only | — |
+| `frontend-react/src/components/common/metric-card.tsx` | fork-only | — |
+| `frontend-react/src/components/common/section-header.tsx` | fork-only | — |
+| `frontend-react/src/components/common/source-badge.tsx` | fork-only | — |
+| `frontend-react/src/components/layout/simple-sidebar.tsx` | fork-only | — |
+| `frontend-react/src/components/layout/version-footer.tsx` | fork-only | — |
+| `frontend-react/src/components/login/code-preview-card.tsx` | fork-only | — |
+| `frontend-react/src/components/pages/coverage/coverage-matrix.tsx` | fork-only | — |
+| `frontend-react/src/components/pages/coverage/provider-cards.tsx` | fork-only | — |
+| `frontend-react/src/components/pages/coverage/provider-detail.tsx` | fork-only | — |
+| `frontend-react/src/components/pages/dashboard/dashboard-error-state.tsx` | fork-only | — |
+| `frontend-react/src/components/pages/dashboard/dashboard-loading-state.tsx` | fork-only | — |
+| `frontend-react/src/components/pages/dashboard/data-metrics-section.tsx` | fork-only | — |
+| `frontend-react/src/components/pages/dashboard/data-summary-card.tsx` | fork-only | — |
+| `frontend-react/src/components/pages/dashboard/index.ts` | fork-only | — |
+| `frontend-react/src/components/pages/dashboard/recent-users-section.tsx` | fork-only | — |
+| `frontend-react/src/components/pages/dashboard/stats-card.tsx` | fork-only | — |
+| `frontend-react/src/components/pages/dashboard/stats-grid.tsx` | fork-only | — |
+| `frontend-react/src/components/settings/change-password/change-password-settings.tsx` | fork-only | — |
+| `frontend-react/src/components/settings/providers/provider-item.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/alert-dialog.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/badge.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/button.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/card.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/chart.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/date-filter.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/date-range-selector.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/dialog.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/dropdown-menu.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/early-access-banner.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/input.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/label.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/number-ticker.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/page-header.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/pagination.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/progress.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/separator.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/sheet.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/sidebar.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/skeleton.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/sonner.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/switch.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/table.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/tabs.tsx` | fork-only | — |
+| `frontend-react/src/components/ui/tooltip.tsx` | fork-only | — |
+| `frontend-react/src/components/user/activity-section.tsx` | fork-only | — |
+| `frontend-react/src/components/user/add-provider-account-dialog.test.tsx` | fork-only | — |
+| `frontend-react/src/components/user/add-provider-account-dialog.tsx` | fork-only | — |
+| `frontend-react/src/components/user/body-section.tsx` | fork-only | — |
+| `frontend-react/src/components/user/compare-section.test.ts` | fork-only | — |
+| `frontend-react/src/components/user/compare-section.tsx` | fork-only | — |
+| `frontend-react/src/components/user/connection-card.tsx` | fork-only | — |
+| `frontend-react/src/components/user/data-summary-section.tsx` | fork-only | — |
+| `frontend-react/src/components/user/device-timeline-dialog.tsx` | fork-only | — |
+| `frontend-react/src/components/user/devices-section.tsx` | fork-only | — |
+| `frontend-react/src/components/user/hypnogram.test.tsx` | fork-only | — |
+| `frontend-react/src/components/user/hypnogram.tsx` | fork-only | — |
+| `frontend-react/src/components/user/link-data-source-dialog.tsx` | fork-only | — |
+| `frontend-react/src/components/user/profile-section.tsx` | fork-only | — |
+| `frontend-react/src/components/user/recent-syncs-section.tsx` | fork-only | — |
+| `frontend-react/src/components/user/scores-section.tsx` | fork-only | — |
+| `frontend-react/src/components/user/sleep-section.tsx` | fork-only | — |
+| `frontend-react/src/components/user/source-activity.tsx` | fork-only | — |
+| `frontend-react/src/components/user/sync-status-banner.tsx` | fork-only | — |
+| `frontend-react/src/components/user/upload-progress-dialog.tsx` | fork-only | — |
+| `frontend-react/src/components/user/womens-health-section.tsx` | fork-only | — |
+| `frontend-react/src/components/user/workout-section.tsx` | fork-only | — |
+| `frontend-react/src/components/users/users-table.tsx` | fork-only | — |
+| `frontend-react/src/components/webhooks/webhook-attempts-table.tsx` | fork-only | — |
+| `frontend-react/src/components/webhooks/webhook-create-dialog.tsx` | fork-only | — |
+| `frontend-react/src/components/webhooks/webhook-delete-dialog.tsx` | fork-only | — |
+| `frontend-react/src/components/webhooks/webhook-form.tsx` | fork-only | — |
+| `frontend-react/src/components/webhooks/webhook-secret-reveal.tsx` | fork-only | — |
+| `frontend-react/src/components/webhooks/webhook-test-event-dialog.tsx` | fork-only | — |
+| `frontend-react/src/components/webhooks/webhooks-table.tsx` | fork-only | — |
+| `frontend-react/src/hooks/api/use-api-keys.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-applications.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-archival.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-automations.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-config.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-coverage.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-dashboard.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-developers.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-devices.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-health.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-invitations.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-oauth-providers.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-priorities.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-seed-data.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-sync-status.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-users.ts` | fork-only | — |
+| `frontend-react/src/hooks/api/use-webhooks.ts` | fork-only | — |
+| `frontend-react/src/hooks/use-auth.ts` | fork-only | — |
+| `frontend-react/src/hooks/use-cursor-pagination.ts` | fork-only | — |
+| `frontend-react/src/hooks/use-date-range.ts` | fork-only | — |
+| `frontend-react/src/hooks/use-mobile.ts` | fork-only | — |
+| `frontend-react/src/hooks/use-oauth-connect.test.ts` | fork-only | — |
+| `frontend-react/src/hooks/use-oauth-connect.ts` | fork-only | — |
+| `frontend-react/src/lib/api/client.ts` | fork-only | — |
+| `frontend-react/src/lib/api/config.ts` | fork-only | — |
+| `frontend-react/src/lib/api/index.ts` | fork-only | — |
+| `frontend-react/src/lib/api/runtime-config.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/api-keys.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/applications.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/archival.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/auth.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/automations.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/config.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/dashboard.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/developers.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/device.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/health.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/invitations.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/meta.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/oauth.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/priority.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/seed-data.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/sync-status.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/users.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/services/webhooks.service.ts` | fork-only | — |
+| `frontend-react/src/lib/api/types.ts` | fork-only | — |
+| `frontend-react/src/lib/auth/session.ts` | fork-only | — |
+| `frontend-react/src/lib/auth/types.ts` | fork-only | — |
+| `frontend-react/src/lib/constants/app.ts` | fork-only | — |
+| `frontend-react/src/lib/constants/routes.ts` | fork-only | — |
+| `frontend-react/src/lib/constants/upload.ts` | fork-only | — |
+| `frontend-react/src/lib/errors/api-error.ts` | fork-only | — |
+| `frontend-react/src/lib/errors/handler.ts` | fork-only | — |
+| `frontend-react/src/lib/query/client.ts` | fork-only | — |
+| `frontend-react/src/lib/query/keys.ts` | fork-only | — |
+| `frontend-react/src/lib/utils.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/account.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/activity.test.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/activity.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/body.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/build-info.test.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/build-info.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/chart-config.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/clipboard.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/device.test.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/device.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/format.test.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/format.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/multipart.test.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/multipart.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/sleep.test.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/sleep.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/sync-format.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/timeseries.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/url.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/workout-styles.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/workout.ts` | fork-only | — |
+| `frontend-react/src/lib/validation/auth.schemas.ts` | fork-only | — |
+| `frontend-react/src/lib/validation/webhooks.schemas.ts` | fork-only | — |
+| `frontend-react/src/logo.svg` | fork-only | — |
+| `frontend-react/src/logotype.svg` | fork-only | — |
+| `frontend-react/src/routeTree.gen.ts` | fork-only | — |
+| `frontend-react/src/router.tsx` | fork-only | — |
+| `frontend-react/src/routes/__root.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/coverage.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/dashboard.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/settings.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/settings/-api-keys-section.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/settings/-applications-section.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/settings/-change-password-tab.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/settings/-credentials-tab.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/settings/-data-lifecycle-tab.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/settings/-priorities-tab.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/settings/-providers-tab.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/settings/-seed-data-tab.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/settings/-team-tab.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/syncs.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/syncs/index.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/users.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/users/$userId.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/users/index.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/webhooks.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/webhooks/$endpointId.tsx` | fork-only | — |
+| `frontend-react/src/routes/_authenticated/webhooks/index.tsx` | fork-only | — |
+| `frontend-react/src/routes/accept-invite.tsx` | fork-only | — |
+| `frontend-react/src/routes/forgot-password.tsx` | fork-only | — |
+| `frontend-react/src/routes/index.tsx` | fork-only | — |
+| `frontend-react/src/routes/login.tsx` | fork-only | — |
+| `frontend-react/src/routes/register.tsx` | fork-only | — |
+| `frontend-react/src/routes/reset-password.tsx` | fork-only | — |
+| `frontend-react/src/routes/users/$userId/pair.error.tsx` | fork-only | — |
+| `frontend-react/src/routes/users/$userId/pair.index.tsx` | fork-only | — |
+| `frontend-react/src/routes/users/$userId/pair.success.tsx` | fork-only | — |
+| `frontend-react/src/routes/users/$userId/pair.tsx` | fork-only | — |
+| `frontend-react/src/routes/widget.connect.tsx` | fork-only | — |
+| `frontend-react/src/styles.css` | fork-only | — |
+| `frontend-react/tsconfig.json` | fork-only | — |
+| `frontend-react/vite.config.ts` | fork-only | — |
 ### `mcp`
 
 | File | Status | +/- |
@@ -359,6 +562,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 |---|---|---|
 | `.ai/skills/upstream-sync/SKILL.md` | fork-only | — |
 | `.github/workflows/build.yml` | fork-only | — |
+| `.github/workflows/ci.yml` | modified | +105/-0 |
 | `.github/workflows/pr-review.yml` | fork-only | — |
 | `.github/workflows/publish-images.yml` | modified | +22/-0 |
 | `.gitignore` | modified | +8/-1 |
