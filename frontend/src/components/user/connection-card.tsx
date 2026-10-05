@@ -417,9 +417,13 @@ function ConnectionCardComponent({
   return (
     <Card className={cn('relative', className)}>
       <CardHeader className="pb-4">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-14 w-14 rounded-full bg-white flex items-center justify-center overflow-hidden p-2">
+        {/* min-w-0 down the left column is what lets the device list truncate.
+            Without it the column sizes to the full list, and an account that
+            reports many devices pushes the status badge and the account menu
+            past the card's edge, where they cannot be clicked. */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="h-14 w-14 shrink-0 rounded-full bg-white flex items-center justify-center overflow-hidden p-2">
               {iconUrl && !imageError ? (
                 <img
                   src={iconUrl}
@@ -433,7 +437,7 @@ function ConnectionCardComponent({
                 </span>
               )}
             </div>
-            <div>
+            <div className="min-w-0 flex-1">
               <h3 className="font-semibold text-card-foreground text-lg flex items-center gap-2">
                 {providerName}
                 {hasSiblings && (
@@ -446,7 +450,9 @@ function ConnectionCardComponent({
                   participant this line is what says which one this card is. */}
               <p className="text-sm font-medium text-foreground/90 mt-0.5 flex items-center gap-1.5">
                 <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{accountName}</span>
+                <span className="truncate" title={accountName}>
+                  {accountName}
+                </span>
                 {/* What the account is for. Shown even when unclassified, so an
                     account nobody has classified is findable rather than silent. */}
                 <span
@@ -486,12 +492,14 @@ function ConnectionCardComponent({
               {observedDevices.length > 0 && (
                 <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
                   <Watch className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{observedDevices.join(', ')}</span>
+                  <span className="truncate" title={observedDevices.join(', ')}>
+                    {observedDevices.join(', ')}
+                  </span>
                   {connection.observed_devices &&
                     connection.observed_devices.length > 0 && (
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <span className="text-[10px] text-muted-foreground/70">
+                          <span className="shrink-0 text-[10px] text-muted-foreground/70">
                             auto
                           </span>
                         </TooltipTrigger>
@@ -588,7 +596,7 @@ function ConnectionCardComponent({
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {renderStatusBadge(connection.status)}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
