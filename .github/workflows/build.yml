@@ -22,10 +22,16 @@ jobs:
             context: ./backend
             dockerfile: ./backend/Dockerfile
             image: ghcr.io/dial203/open-wearables-platform
+          # The fork's React dashboard (served). Upstream's SvelteKit portal is
+          # built alongside it for previewing the port; see docs/fork/DECISIONS.md.
           - name: frontend
+            context: ./frontend-react
+            dockerfile: ./frontend-react/Dockerfile
+            image: ghcr.io/dial203/open-wearables-frontend
+          - name: portal
             context: ./frontend
             dockerfile: ./frontend/Dockerfile
-            image: ghcr.io/dial203/open-wearables-frontend
+            image: ghcr.io/dial203/open-wearables-portal
     steps:
       - uses: actions/checkout@v4
 
@@ -40,10 +46,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # The frontend footer shows which build is running. The build context is
-      # ./frontend with no .git, so git metadata has to come in as build args or
+      # ./frontend-react with no .git, so git metadata has to come in as build args or
       # the image falls back to the committed (and quickly stale) stamp file.
       # Only the fork's own commit is derived here; the fork version and the
-      # upstream sync point come from frontend/fork-version.json, which changes
+      # upstream sync point come from frontend-react/fork-version.json, which changes
       # only when someone bumps the version or merges upstream.
       - name: Derive fork version metadata
         id: fork
@@ -81,7 +87,7 @@ jobs:
           # No VITE_API_URL is baked in: the frontend resolves the backend URL
           # at runtime from the container's VITE_API_URL env var, so the same
           # image points at any backend without a rebuild.
-          # See frontend/src/lib/api/runtime-config.ts.
+          # See frontend-react/src/lib/api/runtime-config.ts.
           build-args: |
             GIT_SHA=${{ github.sha }}
             FORK_COMMIT=${{ steps.fork.outputs.commit }}

@@ -159,13 +159,16 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # The fork's React dashboard. Upstream replaced its React app with a SvelteKit
+  # portal (now in ./frontend); this one stays the served dashboard until the
+  # fork's screens are ported - see docs/fork/DECISIONS.md.
   frontend:
     build:
-      context: ./frontend
+      context: ./frontend-react
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:?Set VITE_API_URL in your environment}
-        # Optional: override the committed frontend/fork-version.json stamp.
+        # Optional: override the committed frontend-react/fork-version.json stamp.
         FORK_VERSION: ${FORK_VERSION:-}
         FORK_COMMIT: ${FORK_COMMIT:-}
         FORK_UPDATED_AT: ${FORK_UPDATED_AT:-}
@@ -178,6 +181,29 @@ services:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
       - app
+    restart: unless-stopped
+
+  # Upstream's SvelteKit portal, for previewing the port. Off unless asked for:
+  #   docker compose -f docker-compose.prod.yml --profile portal up -d portal
+  portal:
+    profiles: ["portal"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: portal__open-wearables
+    image: open-wearables-portal:latest
+    pull_policy: never
+    environment:
+      # VITE_API_URL is what a browser dials; API_URL is the server's own hop.
+      - VITE_API_URL=${VITE_API_URL:?Set VITE_API_URL in your environment}
+      - API_URL=http://app:8000
+      # Database 2 keeps portal sessions clear of the backend (0) and svix (1).
+      - REDIS_URL=redis://redis:6379/2
+    ports:
+      - "${PORTAL_PORT:-3001}:3000"
+    depends_on:
+      - app
+      - redis
     restart: unless-stopped
 
 volumes:

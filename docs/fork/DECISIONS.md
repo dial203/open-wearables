@@ -698,3 +698,107 @@ Template:
   XML record types still store no metadata. The SDK side of the same feature is on the
   `claude/awesome-galileo-5kj2l3` branch of the iOS SDK fork, which requests
   `heartRateVariabilityRMSSD` on iOS 27.
+
+## Dashboard: upstream's SvelteKit portal in `frontend/`, the fork's React app in `frontend-react/`
+
+- **Area**: frontend, tooling
+- **Status**: active, temporary until the port in [SVELTE_PORT.md](./SVELTE_PORT.md) is done
+- **On conflict**: take theirs in `frontend/`; keep ours in `frontend-react/`
+- **Why**: upstream replaced its React dashboard with a SvelteKit portal (`8ce9aa99`) and
+  deleted the React app. About 6,000 lines of the fork's screens (several accounts per
+  provider, devices, Compare and its hypnograms, source attribution, FIT download, the
+  relay notice, the version footer) exist only in React. Taking upstream outright would
+  have dropped them; keeping React in `frontend/` would have conflicted with every upstream
+  frontend commit from now on.
+
+  So `frontend/` is upstream's portal, which every future sync takes cleanly, and the
+  fork's React app moved unchanged to `frontend-react/`. That is what
+  `docker-compose.prod.yml` and `.github/workflows/build.yml` build and serve; the portal
+  is built beside it as `open-wearables-portal` and can be previewed with
+  `--profile portal`. CI runs both apps' checks. The fork's screens are ported to the
+  portal one at a time (SVELTE_PORT.md lists them in order), then the serve switch flips
+  and `frontend-react/` is deleted. Until then, a fork frontend change goes in
+  `frontend-react/` and, if it is already ported, in `frontend/` too.
+
+## Device types: one inference module, upstream's, with the fork's rules folded in
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: reconcile (keep the fork's priority numbers and the rules marked "fork" in
+  `app/constants/devices_map/device_types.py`; take any new upstream keyword)
+- **Why**: both sides built device-type inference independently - the fork in
+  `schemas/enums/device_type.py`, upstream in `constants/devices_map/` (#1721, #1729).
+  Upstream's is the better base (a keyword table, accent folding, Samsung model codes,
+  twelve new types), so it is the one module now, and the fork's callers import from it.
+  Kept from the fork:
+  - **Ranking.** EEG 0 and chest strap 1, ahead of the wrist and finger sensors, for the
+    reasons in `DEFAULT_DEVICE_TYPE_PRIORITY`. Upstream ranks chest straps 6 with `other`.
+    Upstream's new types take 9-20, each on its own number: existing numbers are never
+    renumbered because seeding is additive, and a tie has nothing to break it.
+  - **EEG and headband**, matched before "band" so a Muse is not a wrist band.
+    Health Connect's `head_mounted` stays `headband` (the fork's existing rows carry it);
+    a model naming an EEG product still promotes it to `eeg`.
+  - **Optical arm sensors stay `band`**, not upstream's `hr_sensor`, which ranks below
+    every wearable and would demote a Verity Sense below a ring.
+  - **"chest", TICKR, H7/H9/H10 anywhere in the string; COROS watches; LG `LM-` phones.**
+  - **The platform report wins unless inference adds modality** (`reconcile_device_type`),
+    now combined with upstream's rule that a vague report (phone, other) loses to a specific
+    inference.
+  - **iPads relay like iPhones.** Upstream split iPads into `tablet`; the relay test in
+    `services/devices/identity.py` now asks for any `HANDSET_DEVICE_TYPES`, so an iPad
+    running the Muse app is still recognised as the carrier.
+
+  Data sources follow upstream's re-resolution policy (`next_device_type`: cloud rows take
+  the newly inferred type on each sync, SDK rows only upgrade from unset) with two fork
+  rules: a row always stores a value, `unknown` included, and a sync that resolves nothing
+  never erases a known type. The inference it re-resolves with is the fork's, so a sensor
+  declared on the connection still decides the type.
+
+## The device-type backfill uses the fork's classifier
+
+- **Area**: backend (data migration)
+- **Status**: active until upstream removes the script (~2026-12-01)
+- **On conflict**: keep ours
+- **Why**: upstream's `backfill_device_types.py` runs at every startup and re-resolves every
+  cloud-provider data source with the bare classifier, which never sees
+  `user_connection.sensor_label`. Run as written it would reclassify each Strava source a
+  person marked as recorded with an ECG strap from `chest_strap` back to `watch`. It now
+  resolves through `DataSourceRepository._infer_device_type`, the same path live sync uses.
+
+## SDK device types are read only from routes that classify the hardware
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours (`extract_reported_device_type`, not upstream's `extract_device_type`)
+- **Why**: upstream (#1721) passes the SDK's `deviceType` into data-source creation on every
+  route. On the Apple route that value is the iOS SDK's own guess from the handset's
+  productType, so every relayed stream claims "phone" - the case the fork already fixed.
+  Upstream's plumbing is kept (records carry `device_type` through to the data source), fed
+  by the fork's route-filtered extractor.
+
+## Polar Nightly Recharge: RMSSD stays 5-minute windows; breathing rate sits at sleep start
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: reconcile (keep `normalize_nightly_recharge_hrv` as the only RMSSD writer)
+- **Why**: both sides added Nightly Recharge time series. The fork writes Polar's 5-minute
+  RMSSD windows at their true times, anchored on the night's sleep record. Upstream (#1722)
+  writes the night's four-hour HRV mean as one RMSSD sample at UTC midnight of the date.
+  Both in one series would mix a nightly mean with 5-minute windows and weight every
+  per-night statistic toward the mean, at a time of day the mean does not describe. The
+  mean stays where it already was, on the recovery score's components. Upstream's breathing
+  rate is kept, placed at the night's sleep start with that night's offset; a night with no
+  sleep record to anchor on gets its score and no samples.
+
+## Upstream's totals and page-scoped activity apply the fork's read rules
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: reconcile
+- **Why**: upstream added `/totals` endpoints for workouts, sleep and activity, and made
+  activity summaries aggregate only the page's days (`a28f5314`). Both now apply the
+  redundant-relay plan the matching list applies, so a total never counts a copy the list
+  leaves out, and both accept `include_redundant_relays`. Upstream's activity rewrite also
+  dropped `filter_by_priority` (it always collapsed) and keyed its cursor on
+  (date, source, device); the fork's parameter and its account-aware cursor are kept inside
+  upstream's windowed paging.

@@ -15,9 +15,12 @@ from app.constants.series_types.sdk import (
 from app.constants.sleep import SleepStageType
 from app.database import DbSession
 from app.integrations.redis_client import get_redis_client
+from app.models import EventRecord
+from app.schemas.enums import DeviceType, HealthScoreCategory, ProviderName
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
+    HealthScoreCreate,
     SleepStage,
 )
 from app.schemas.providers.mobile_sdk import (
@@ -29,7 +32,8 @@ from app.schemas.providers.mobile_sdk import (
     SyncRequest as SDKSyncRequest,
 )
 from app.services.event_record_service import event_record_service
-from app.services.sdk.device_resolution import extract_device_info
+from app.services.health_score_service import health_score_service
+from app.services.sdk.device_resolution import extract_device_info, extract_reported_device_type
 from app.utils.connection_context import get_active_connection_id
 from app.utils.structured_logging import log_structured
 
@@ -81,6 +85,18 @@ def key(user_id: str, scope: str = "") -> str:
     if not scope:
         return f"sleep:active:{user_id}"
     return f"sleep:active:{user_id}{_SCOPE_SEP}{scope}"
+
+
+SLEEP_SCORE_VALUE_TYPE = "sleepScore"
+
+
+def _extract_sleep_score(values: list[dict[str, Any]] | None) -> float | None:
+    """Return the provider sleep score carried in an SDK sleep entry's `values`, if any."""
+    for value in values or []:
+        if value.get("type") == SLEEP_SCORE_VALUE_TYPE and value.get("value") is not None:
+            with contextlib.suppress(TypeError, ValueError):
+                return float(value["value"])
+    return None
 
 
 def active_users_key() -> str:
@@ -147,11 +163,13 @@ def _create_new_sleep_state(
     source_name: str | None = None,
     device_model: str | None = None,
     zone_offset: str | None = None,
+    device_type: DeviceType | None = None,
 ) -> SleepState:
     return SleepState(
         uuid=id or str(uuid4()),
         source_name=source_name or "unknown",
         device_model=device_model,
+        device_type=device_type,
         provider=provider,
         zone_offset=zone_offset,
         start_time=start_time,
@@ -180,6 +198,7 @@ def _apply_transition(
     source_name: str | None = None,
     device_model: str | None = None,
     zone_offset: str | None = None,
+    device_type: DeviceType | None = None,
 ) -> SleepState:
     """Apply a transition to the sleep state."""
 
@@ -200,10 +219,14 @@ def _apply_transition(
 
     if delta_seconds > settings.sleep_end_gap_minutes * 60:
         finish_sleep(db_session, user_id, state)
-        state = _create_new_sleep_state(start_time, end_time, uuid, provider, source_name, device_model, zone_offset)
+        state = _create_new_sleep_state(
+            start_time, end_time, uuid, provider, source_name, device_model, zone_offset, device_type
+        )
 
     if zone_offset and not state.zone_offset:
         state.zone_offset = zone_offset
+    if device_type and not state.device_type and (source_name or "unknown") == state.source_name:
+        state.device_type = device_type
 
     duration_seconds = (end_time - start_time).total_seconds()
 
@@ -318,7 +341,7 @@ def handle_sleep_data(
         # Deduplicate, then split by reporting stream. Sorting before the split keeps
         # each stream chronological, which the gap logic in _apply_transition needs.
         seen = set()
-        by_scope: dict[str, list[tuple[Any, str | None, str | None]]] = defaultdict(list)
+        by_scope: dict[str, list[tuple[Any, str | None, str | None, DeviceType | None]]] = defaultdict(list)
 
         for item in sorted(request.data.sleep, key=lambda x: x.startDate):
             # Create a unique key for deduplication
@@ -331,9 +354,12 @@ def handle_sleep_data(
             seen.add(key_tuple)
 
             device_model, _software_version, original_source_name = extract_device_info(item.source)
+            # Only routes whose deviceType is the platform's own classification report
+            # one; on the Apple route it is the SDK's guess and comes back None.
+            device_type = extract_reported_device_type(provider, item.source)
             incoming_by_source[original_source_name or "unknown"] += 1
             by_scope[session_scope(original_source_name, device_model)].append(
-                (item, device_model, original_source_name)
+                (item, device_model, original_source_name, device_type)
             )
 
         # One session per reporting stream. A shared session would let whichever
@@ -343,7 +369,7 @@ def handle_sleep_data(
         for scope, scoped_records in by_scope.items():
             current_state = load_sleep_state(user_id, scope)
 
-            for sjson, device_model, original_source_name in scoped_records:
+            for sjson, device_model, original_source_name, device_type in scoped_records:
                 sleep_phase = get_apple_sleep_phase(sjson.stage)
 
                 if sleep_phase is None:
@@ -365,6 +391,7 @@ def handle_sleep_data(
                         original_source_name,
                         device_model,
                         sjson.zoneOffset,
+                        device_type,
                     )
 
                 current_state = _apply_transition(
@@ -379,9 +406,17 @@ def handle_sleep_data(
                     original_source_name,
                     device_model,
                     sjson.zoneOffset,
+                    device_type,
                 )
                 applied += 1
                 applied_by_source[original_source_name or "unknown"] += 1
+
+                # Samsung's SDK sends its own sleep score on the entry (upstream #1751).
+                # A state here is already one device's stream, but a resumed state may
+                # predate a provider switch, so it is still checked.
+                sleep_score = _extract_sleep_score(sjson.values)
+                if sleep_score is not None and current_state.provider == provider:
+                    current_state.sleep_score = sleep_score
 
             if not current_state:
                 continue
@@ -605,6 +640,7 @@ def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None
         source=source_for_lookup,
         provider=state.provider,
         device_model=state.device_model,
+        device_type=state.device_type,
     )
 
     detail = EventRecordDetailCreate(
@@ -625,6 +661,7 @@ def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None
         # Always use the returned record's ID (whether newly created or existing)
         detail_for_record = detail.model_copy(update={"record_id": created_or_existing_record.id})
         event_record_service.create_detail(db_session, detail_for_record, detail_type="sleep")
+        _save_provider_sleep_score(db_session, user_id, state, created_or_existing_record, start_time)
         # Delete from Redis only after a successful DB write so a transient error
         # keeps the session available for the next periodic finalization attempt.
         delete_sleep_state(user_id, state)
@@ -639,3 +676,37 @@ def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None
             event_record_id=sleep_record.id,
             error=str(e),
         )
+
+
+def _save_provider_sleep_score(
+    db_session: DbSession,
+    user_id: str,
+    state: SleepState,
+    record: EventRecord,
+    start_time: datetime,
+) -> None:
+    """Persist the provider-computed sleep score (e.g. Samsung SLEEP_SCORE) linked to the session."""
+    if state.sleep_score is None or state.provider is None:
+        return
+    try:
+        provider = ProviderName(state.provider)
+    except ValueError:
+        return
+
+    health_score_service.bulk_create(
+        db_session,
+        [
+            HealthScoreCreate(
+                id=uuid4(),
+                user_id=UUID(user_id),
+                data_source_id=record.data_source_id,
+                provider=provider,
+                category=HealthScoreCategory.SLEEP,
+                value=state.sleep_score,
+                recorded_at=start_time,
+                zone_offset=state.zone_offset,
+                event_record_id=record.id,
+            )
+        ],
+    )
+    db_session.commit()

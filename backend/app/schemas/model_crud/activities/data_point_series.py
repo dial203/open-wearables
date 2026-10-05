@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.enums import Resolution, SeriesType
+from app.schemas.enums import DeviceType, Resolution, SeriesType
 from app.utils.dates import ZoneOffset
 from app.utils.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
@@ -39,6 +39,7 @@ class TimeSeriesSampleCreate(TimeSeriesSampleBase):
     # On the create schema rather than the base: it is written at ingest and read from
     # the column, and putting it on the base would add it to every response body.
     provider_metadata: dict[str, Any] | None = None
+    device_type: DeviceType | None = None
 
 
 class TimeSeriesSampleUpdate(TimeSeriesSampleBase):

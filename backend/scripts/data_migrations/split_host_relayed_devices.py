@@ -45,6 +45,9 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.constants.devices_map import (
+    infer_device_type_from_source_name,
+)
 from app.database import SessionLocal
 from app.models import DataSource, Device, DeviceIdentity
 from app.repositories.device_repository import DeviceRepository
@@ -54,7 +57,6 @@ from app.schemas.enums import (
     DeviceIdentityKind,
     LabelSource,
     ProviderName,
-    infer_device_type_from_source_name,
 )
 from app.services.devices.identity import grouping_claim, relaying_host_model
 from app.utils.device_registry import relayed_brand

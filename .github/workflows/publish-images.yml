@@ -139,8 +139,7 @@ jobs:
             GIT_SHA=${{ github.sha }}
             FORK_COMMIT=${{ steps.fork.outputs.commit }}
             FORK_UPDATED_AT=${{ steps.fork.outputs.updated_at }}
-          # Frontend API URL is runtime (VITE_API_URL), not a build-arg.
-          # See frontend/src/lib/api/runtime-config.ts.
+          # Frontend config (VITE_API_URL, API_URL, REDIS_URL) is read at runtime, not a build-arg.
           cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
 

@@ -61,7 +61,16 @@ def _repo(label: str | None, sensor: str | None = None) -> DataSourceRepository:
 
 
 def _row(user_id: UUID, device_model: str | None, source: str | None, ds_id: UUID) -> SimpleNamespace:
-    return SimpleNamespace(user_id=user_id, device_model=device_model, source=source, id=ds_id)
+    # device_type and original_source_name are read too: the batch path re-resolves the
+    # type of rows it finds (upstream #1721), as the single path does.
+    return SimpleNamespace(
+        user_id=user_id,
+        device_model=device_model,
+        source=source,
+        id=ds_id,
+        device_type=None,
+        original_source_name=None,
+    )
 
 
 def test_null_device_request_resolves_to_the_labelled_source() -> None:
