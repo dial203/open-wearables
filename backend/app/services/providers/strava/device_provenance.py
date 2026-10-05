@@ -48,7 +48,12 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from app.schemas.enums import DeviceType, infer_device_type_from_model
+from app.constants.devices_map import (
+    infer_device_type_from_model,
+)
+from app.schemas.enums import (
+    DeviceType,
+)
 from app.schemas.providers.strava import ActivityJSON as StravaActivityJSON
 
 

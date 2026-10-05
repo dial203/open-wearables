@@ -9,6 +9,14 @@ from sqlalchemy import CursorResult, and_, asc, delete, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.constants.devices_map import (
+    HANDSET_DEVICE_TYPES,
+    infer_device_type_from_model,
+    infer_device_type_from_source_name,
+    reconcile_device_type,
+)
+from app.constants.devices_map.device_types import SINGLE_DEVICE_PROVIDER_TYPE
+from app.constants.sdk_providers import sdk_providers
 from app.database import DbSession
 from app.models import DataSource, HealthScore, ProviderPriority, UserConnection
 from app.repositories.provider_priority_repository import ProviderPriorityRepository
@@ -17,8 +25,6 @@ from app.schemas.enums import (
     DeviceModelOrigin,
     DeviceType,
     ProviderName,
-    infer_device_type_from_model,
-    infer_device_type_from_source_name,
 )
 from app.schemas.model_crud.data_priority import DataSourceCreate, DataSourceUpdate
 from app.utils.connection_context import get_active_connection_id
@@ -276,6 +282,7 @@ class DataSourceRepository(
         original_source_name: str | None = None,
         identity_claims: "list[IdentityClaim] | None" = None,
         recorded_at: datetime | None = None,
+        reported_type: DeviceType | None = None,
     ) -> DataSource:
         """The data source for one record, created if missing.
 
@@ -338,12 +345,20 @@ class DataSourceRepository(
             if original_source_name and existing.original_source_name is None:
                 object.__setattr__(existing, "original_source_name", original_source_name)
                 updated = True
-            if existing.device_type is None:
-                # Always store a value (including "unknown"): consumers key off
-                # device_type to separate real wearables from phone/app relays, and a
-                # NULL forces them back to guessing from model strings.
-                device_type = self._infer_device_type(device_model, original_source_name, source, declared_sensor)
-                object.__setattr__(existing, "device_type", device_type.value)
+            device_type = self.next_device_type(
+                provider,
+                existing.device_type,
+                self._infer_device_type(
+                    device_model,
+                    original_source_name or existing.original_source_name,
+                    source,
+                    declared_sensor,
+                    provider=provider,
+                    reported_type=reported_type,
+                ),
+            )
+            if device_type != existing.device_type:
+                object.__setattr__(existing, "device_type", device_type)
                 updated = True
             if updated:
                 db_session.flush()
@@ -353,7 +368,9 @@ class DataSourceRepository(
         provider_priority_repo = ProviderPriorityRepository(ProviderPriority)
         provider_priority_repo.ensure_provider_exists(db_session, provider)
 
-        device_type = self._infer_device_type(device_model, original_source_name, source, declared_sensor)
+        device_type = self._infer_device_type(
+            device_model, original_source_name, source, declared_sensor, provider=provider, reported_type=reported_type
+        )
 
         create_payload = DataSourceCreate(
             id=uuid4(),
@@ -559,6 +576,8 @@ class DataSourceRepository(
         original_source_name: str | None,
         source: str | None = None,
         declared_sensor: str | None = None,
+        provider: ProviderName | None = None,
+        reported_type: DeviceType | None = None,
     ) -> DeviceType:
         """Classify a data source from the strongest device signal available.
 
@@ -575,15 +594,36 @@ class DataSourceRepository(
         reading: a watch's samples routinely arrive stamped "iPhone18,1". So when the
         model says phone and the label names something worn, the label wins. A real
         wearable model (Watch7,x) is never downgraded by this.
+
+        After the declared sensor, two upstream signals (#1721): a provider that only
+        ships one form factor (Oura, Ultrahuman, WHOOP) names its type outright, and a
+        type the platform reported for itself is reconciled against the inference -
+        see ``reconcile_device_type`` for when each one wins. Callers pass
+        ``reported_type`` only from routes that report a real classification; the
+        Apple route's deviceType is the iOS SDK's own guess and is filtered out by
+        ``services/sdk/device_resolution`` before it gets here.
         """
         if declared_sensor:
             from_sensor = infer_device_type_from_source_name(declared_sensor)
             if from_sensor is not DeviceType.UNKNOWN:
                 return from_sensor
 
+        if provider in SINGLE_DEVICE_PROVIDER_TYPE:
+            return SINGLE_DEVICE_PROVIDER_TYPE[provider]
+
+        inferred = self._infer_from_strings(device_model, original_source_name, source)
+        return reconcile_device_type(reported_type, inferred)
+
+    def _infer_from_strings(
+        self,
+        device_model: str | None,
+        original_source_name: str | None,
+        source: str | None,
+    ) -> DeviceType:
+        """What the model and source strings alone say about a data source."""
         from_model = infer_device_type_from_model(device_model)
 
-        if from_model == DeviceType.PHONE:
+        if from_model in HANDSET_DEVICE_TYPES:
             from_source = infer_device_type_from_source_name(source)
             if from_source in self._WEARABLE_TYPES:
                 return from_source
@@ -597,12 +637,35 @@ class DataSourceRepository(
             return from_source
         return infer_device_type_from_source_name(original_source_name)
 
+    @staticmethod
+    def next_device_type(provider: ProviderName, current: str | None, resolved: DeviceType) -> str:
+        """The type an existing row should carry after a sync resolved ``resolved``.
+
+        Cloud rows take the inferred type (upstream #1721), so a better mapping reaches
+        rows that already exist; SDK rows only upgrade from unset, unknown or "other",
+        because the SDK path's own reported-type upgrade (services/devices/detection)
+        owns them. Two fork rules on top: a row always stores a value, "unknown"
+        included, because consumers key off device_type to tell wearables from relays
+        and NULL sends them back to guessing; and a sync that resolves UNKNOWN never
+        erases a type already known - it carried no signal, it did not contradict one.
+        """
+        unset = (None, DeviceType.UNKNOWN.value)
+        if resolved is DeviceType.UNKNOWN:
+            return current if current not in unset else DeviceType.UNKNOWN.value
+        if provider.value not in sdk_providers():
+            return resolved.value
+        if current in (*unset, DeviceType.OTHER.value):
+            return resolved.value
+        return current
+
     def batch_ensure_data_sources(
         self,
         db_session: DbSession,
         provider: ProviderName,
         user_connection_id: UUID | None,
         identities: set[tuple[UUID, str | None, str | None]],
+        reported_types: dict[tuple[UUID, str | None, str | None], DeviceType] | None = None,
+        *,
         label_identities: frozenset[tuple[UUID, str | None, str | None]] = frozenset(),
         labels_resolved: bool = False,
     ) -> dict[tuple[UUID, str | None, str | None], UUID]:
@@ -674,6 +737,36 @@ class DataSourceRepository(
             for requested, stored in stored_by_requested.items()
             if stored in ids_by_stored
         }
+
+        # Re-resolve the type of what already exists, as the single path does. Keyed on
+        # the stored identity: the caller's reported types are keyed on what it asked
+        # for, which may carry a null device_model the label history filled in.
+        reported_types = reported_types or {}
+        reported_by_stored = {
+            stored: reported_types[requested]
+            for requested, stored in stored_by_requested.items()
+            if requested in reported_types
+        }
+        upgraded = False
+        for ds in existing:
+            stored = (ds.user_id, ds.device_model, ds.source)
+            device_type = self.next_device_type(
+                provider,
+                ds.device_type,
+                self._infer_device_type(
+                    ds.device_model,
+                    ds.original_source_name,
+                    ds.source,
+                    _declared_sensor(ds.user_id),
+                    provider=provider,
+                    reported_type=reported_by_stored.get(stored),
+                ),
+            )
+            if device_type != ds.device_type:
+                object.__setattr__(ds, "device_type", device_type)
+                upgraded = True
+        if upgraded:
+            db_session.flush()
 
         missing = [stored for requested, stored in stored_by_requested.items() if requested not in result]
 
@@ -752,7 +845,12 @@ class DataSourceRepository(
                 # depending only on which path happened to create the row first.
                 original_source_name = self._resolve_original_source_name(provider, device_model, source, None)
                 device_type = self._infer_device_type(
-                    device_model, original_source_name, source, _declared_sensor(user_id)
+                    device_model,
+                    original_source_name,
+                    source,
+                    _declared_sensor(user_id),
+                    provider=provider,
+                    reported_type=reported_by_stored.get((user_id, device_model, source)),
                 )
                 values.append(
                     {
@@ -833,6 +931,9 @@ class DataSourceRepository(
             keys: dict[int, DataSourceIdentity] = {}
             label_identities: set[DataSourceIdentity] = set()
             provider_identities: set[DataSourceIdentity] = set()
+            # The platform's own classification, where the route sent one (upstream
+            # #1721). First one wins per identity, as in upstream's resolver.
+            reported_types: dict[DataSourceIdentity, DeviceType] = {}
             for i in indexes:
                 creator = creators[i]
                 model = creator.device_model
@@ -843,6 +944,9 @@ class DataSourceRepository(
                 elif model is not None:
                     provider_identities.add((creator.user_id, model, creator.source))
                 keys[i] = (creator.user_id, model, creator.source)
+                reported = getattr(creator, "device_type", None)
+                if reported is not None:
+                    reported_types.setdefault(keys[i], reported)
 
             ids = self.batch_ensure_data_sources(
                 db_session,
@@ -851,6 +955,7 @@ class DataSourceRepository(
                 set(keys.values()),
                 label_identities=frozenset(label_identities - provider_identities),
                 labels_resolved=timeline is not None,
+                reported_types=reported_types,
             )
             for i, key in keys.items():
                 result[i] = ids.get(key)

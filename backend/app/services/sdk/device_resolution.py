@@ -1,6 +1,7 @@
 """Device resolution utilities for mobile SDK data (HealthKit, Health Connect, Samsung Health)."""
 
-from app.schemas.enums import DeviceType, ProviderName, device_type_from_platform_report
+from app.constants.devices_map import device_type_from_platform_report
+from app.schemas.enums import DeviceType, ProviderName
 from app.schemas.providers.mobile_sdk import OSVersion, SourceInfo
 
 

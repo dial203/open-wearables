@@ -47,7 +47,9 @@ from app.schemas.responses.activity import (
     MenstrualCycleRecord,
     SleepSession,
     SleepStagesSummary,
+    SleepTotals,
     Workout,
+    WorkoutTotals,
 )
 from app.schemas.utils import (
     PaginatedResponse,
@@ -205,6 +207,9 @@ class EventRecordService(
         on, so a second convention here produces a duplicate score instead of
         replacing the existing one.
         """
+        if not settings.ow_scores_enabled:
+            return
+
         # Widened by a day either side so a session whose local start lands on a target
         # date is still inside the window whatever its zone offset.
         window_start = datetime.combine(min(sleep_dates), time.min, tzinfo=timezone.utc) - timedelta(days=1)
@@ -817,6 +822,20 @@ class EventRecordService(
         return DataSourceSchema.from_data_source(data_source)
 
     @handle_exceptions
+    def get_workout_totals(self, db_session: DbSession, user_id: UUID, params: EventRecordQueryParams) -> WorkoutTotals:
+        # The same relay plan the workout listing applies, so the total and the list agree.
+        relay_plan = self._relay_plan(db_session, params.model_copy(update={"category": "workout"}), str(user_id))
+        count, seconds, energy, distance = self.crud.get_workout_totals(
+            db_session, params, str(user_id), relay_plan=relay_plan
+        )
+        return WorkoutTotals(
+            count=count,
+            duration_seconds=seconds,
+            calories_kcal=float(energy) if energy is not None else None,
+            distance_meters=float(distance) if distance is not None else None,
+        )
+
+    @handle_exceptions
     def get_workouts(
         self,
         db_session: DbSession,
@@ -927,7 +946,42 @@ class EventRecordService(
             ),
         )
 
+    def _winning_sleep_ids(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        params: EventRecordQueryParams,
+        relay_plan: RelayDedupPlan | None = None,
+    ) -> Query:
+        """An inline subquery of the top-priority source's sessions per night."""
+        provider_order = self.priority_service.priority_repo.get_priority_order(db_session)
+        device_type_order = self.priority_service.device_type_priority_repo.get_priority_order(db_session)
+        return self.crud.winning_sleep_record_ids(
+            db_session, str(user_id), params, provider_order, device_type_order, relay_plan
+        )
+
     @handle_exceptions
+    def get_sleep_totals(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        params: EventRecordQueryParams,
+        filter_by_priority: bool = False,
+    ) -> SleepTotals:
+        # The same relay plan get_sleep_sessions applies, so the total and the list agree.
+        relay_plan = self._relay_plan(db_session, params.model_copy(update={"category": "sleep"}), str(user_id))
+        restrict = self._winning_sleep_ids(db_session, user_id, params, relay_plan) if filter_by_priority else None
+        count, naps, asleep, in_bed, efficiency = self.crud.get_sleep_totals(
+            db_session, params, str(user_id), restrict_to_record_ids=restrict, relay_plan=relay_plan
+        )
+        return SleepTotals(
+            count=count,
+            naps=naps,
+            sleep_duration_seconds=asleep,
+            time_in_bed_seconds=in_bed,
+            avg_efficiency_percent=float(efficiency) if efficiency is not None else None,
+        )
+
     @handle_exceptions
     def get_workout_fit_file(
         self,
@@ -969,16 +1023,13 @@ class EventRecordService(
         params.category = "sleep"
         with_stages = SleepInclude.STAGES in include
 
-        # inline query that restricts records to ones
-        # with highest priority
+        # The redundant relays this read leaves out, then the inline query that keeps
+        # only the highest-priority source's sessions - ranked after the relays are
+        # gone, so a relayed copy can never win a night the direct route also covers.
         relay_plan = self._relay_plan(db_session, params, str(user_id))
-        restrict_to_record_ids: Query | None = None
-        if filter_by_priority:
-            provider_order = self.priority_service.priority_repo.get_priority_order(db_session)
-            device_type_order = self.priority_service.device_type_priority_repo.get_priority_order(db_session)
-            restrict_to_record_ids = self.crud.winning_sleep_record_ids(
-                db_session, str(user_id), params, provider_order, device_type_order, relay_plan
-            )
+        restrict_to_record_ids = (
+            self._winning_sleep_ids(db_session, user_id, params, relay_plan) if filter_by_priority else None
+        )
 
         records, total_count, relay_plan = self._get_records_with_filters(
             db_session,

@@ -1,10 +1,12 @@
 """Tests for Polar247Data normalization."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+from app.repositories.data_point_series_repository import WriteCounts
 from app.schemas.enums import HealthScoreCategory, SeriesType
 from app.services.providers.polar.data_247 import Polar247Data
 from app.services.providers.polar.strategy import PolarStrategy
@@ -314,7 +316,7 @@ class TestPolar247NightlyRechargeNormalization:
 
     def test_produces_recovery_score(self, data_247: Polar247Data, sample_recharge: dict) -> None:
         user_id = uuid4()
-        scores = data_247.normalize_nightly_recharge([sample_recharge], user_id)
+        scores, _ = data_247.normalize_nightly_recharge([sample_recharge], user_id)
 
         assert len(scores) == 1
         score = scores[0]
@@ -325,7 +327,7 @@ class TestPolar247NightlyRechargeNormalization:
 
     def test_components_include_hrv(self, data_247: Polar247Data, sample_recharge: dict) -> None:
         user_id = uuid4()
-        score = data_247.normalize_nightly_recharge([sample_recharge], user_id)[0]
+        score = data_247.normalize_nightly_recharge([sample_recharge], user_id)[0][0]
 
         assert "heart_rate_variability_avg" in score.components
         assert score.components["heart_rate_variability_avg"].value == 48
@@ -334,7 +336,7 @@ class TestPolar247NightlyRechargeNormalization:
 
     def test_ans_charge_status_qualifier(self, data_247: Polar247Data, sample_recharge: dict) -> None:
         user_id = uuid4()
-        score = data_247.normalize_nightly_recharge([sample_recharge], user_id)[0]
+        score = data_247.normalize_nightly_recharge([sample_recharge], user_id)[0][0]
 
         assert "ans_charge_status" in score.components
         assert score.components["ans_charge_status"].qualifier == "usual"
@@ -343,16 +345,94 @@ class TestPolar247NightlyRechargeNormalization:
         user_id = uuid4()
         for status, label in [(1, "very poor"), (2, "poor"), (3, "compromised"), (4, "ok"), (6, "very good")]:
             sample_recharge["nightly_recharge_status"] = status
-            score = data_247.normalize_nightly_recharge([sample_recharge], user_id)[0]
+            score = data_247.normalize_nightly_recharge([sample_recharge], user_id)[0][0]
             assert score.qualifier == label
 
-    def test_missing_status_skipped(self, data_247: Polar247Data, sample_recharge: dict) -> None:
+    # The night's own sleep start, as the sleep record states it: 23:10 local, UTC+2.
+    SLEEP_START = datetime(2024, 1, 14, 23, 10, tzinfo=timezone(timedelta(hours=2)))
+
+    def test_breathing_rate_is_placed_at_the_night_s_sleep_start(
+        self, data_247: Polar247Data, sample_recharge: dict
+    ) -> None:
+        # Nightly Recharge dates carry no offset; the night's sleep record does. A bare date
+        # read as UTC midnight would sit outside the night for anyone west of Greenwich.
+        _, samples = data_247.normalize_nightly_recharge([sample_recharge], uuid4(), {"2024-01-15": self.SLEEP_START})
+
+        (breathing,) = samples
+        assert breathing.series_type == SeriesType.respiratory_rate
+        assert breathing.recorded_at == datetime(2024, 1, 14, 21, 10, tzinfo=timezone.utc)
+        assert breathing.zone_offset == "+02:00"
+
+    def test_a_night_without_a_status_still_yields_its_measurements(
+        self, data_247: Polar247Data, sample_recharge: dict
+    ) -> None:
+        # Polar withholds the status for the first three nights while it builds a baseline,
+        # but it already reports breathing rate for them.
         sample_recharge.pop("nightly_recharge_status")
+
+        scores, samples = data_247.normalize_nightly_recharge(
+            [sample_recharge], uuid4(), {"2024-01-15": self.SLEEP_START}
+        )
+
+        assert scores == []
+        assert [(s.series_type, float(s.value)) for s in samples] == [(SeriesType.respiratory_rate, 14.5)]
+
+    def test_the_nightly_hrv_mean_is_not_written_into_the_rmssd_series(
+        self, data_247: Polar247Data, sample_recharge: dict
+    ) -> None:
+        # Fork: heart_rate_variability_rmssd carries Polar's 5-minute windows
+        # (normalize_nightly_recharge_hrv). A nightly mean mixed into the same series
+        # would weight every per-night statistic toward it; it stays on the score.
         user_id = uuid4()
-        assert data_247.normalize_nightly_recharge([sample_recharge], user_id) == []
+        scores, samples = data_247.normalize_nightly_recharge(
+            [sample_recharge], user_id, {"2024-01-15": self.SLEEP_START}
+        )
+
+        assert SeriesType.heart_rate_variability_rmssd not in {s.series_type for s in samples}
+        assert scores[0].components["heart_rate_variability_avg"].value == 48
+
+    def test_a_night_with_no_sleep_record_gets_its_score_but_no_samples(
+        self, data_247: Polar247Data, sample_recharge: dict
+    ) -> None:
+        scores, samples = data_247.normalize_nightly_recharge([sample_recharge], uuid4())
+
+        assert samples == []
+        assert len(scores) == 1
+
+    def test_night_without_hrv_or_breathing_still_scores_but_yields_no_samples(
+        self, data_247: Polar247Data, sample_recharge: dict
+    ) -> None:
+        sample_recharge.pop("heart_rate_variability_avg")
+        sample_recharge.pop("breathing_rate_avg")
+
+        scores, samples = data_247.normalize_nightly_recharge([sample_recharge], uuid4())
+
+        assert samples == []
+        assert len(scores) == 1
+
+    def test_saving_an_unscored_night_reports_the_samples_it_wrote(
+        self, data_247: Polar247Data, sample_recharge: dict
+    ) -> None:
+        # A run that writes only samples must not report zero, or the sync counts it as a no-op.
+        sample_recharge.pop("nightly_recharge_status")
+
+        with (
+            patch.object(data_247, "get_nightly_recharge_data", return_value=[sample_recharge]),
+            patch("app.services.providers.polar.data_247.timeseries_service") as timeseries,
+        ):
+            timeseries.bulk_create_samples.return_value = WriteCounts(inserted=2, updated=0)
+            saved = data_247._save_nightly_recharge(
+                MagicMock(),
+                uuid4(),
+                datetime(2024, 1, 1, tzinfo=timezone.utc),
+                datetime(2024, 1, 31, tzinfo=timezone.utc),
+                lambda: [{"date": "2024-01-15", "sleep_start_time": "2024-01-14T23:10:00+02:00"}],
+            )
+
+        assert saved == 2
 
     def test_empty_input(self, data_247: Polar247Data) -> None:
-        assert data_247.normalize_nightly_recharge([], uuid4()) == []
+        assert data_247.normalize_nightly_recharge([], uuid4()) == ([], [])
 
 
 # ---------------------------------------------------------------------------

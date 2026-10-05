@@ -31,12 +31,13 @@ The rules, each chosen over a more convenient alternative:
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from app.schemas.enums import DeviceType, ProviderName, infer_device_type_from_model
-from app.schemas.enums.device_type import fold_model_name
+from app.constants.devices_map import infer_device_type_from_model
+from app.schemas.enums import DeviceType, ProviderName
 
 # Providers whose device name is on workouts and on nothing else. Strava is not here:
 # it holds no nights to file, and its activities come as often from a phone or a bike
@@ -53,9 +54,10 @@ _BRAND_PREFIX = re.compile(r"^(garmin|polar|suunto|fitbit|google|coros)\s+")
 
 
 def device_key(device_model: str) -> str:
-    """The name two spellings of one model share."""
-    folded = " ".join(fold_model_name(device_model).split())
-    return _BRAND_PREFIX.sub("", folded)
+    """The name two spellings of one model share: case, accents, spacing and brand aside."""
+    decomposed = unicodedata.normalize("NFKD", device_model)
+    folded = "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+    return _BRAND_PREFIX.sub("", " ".join(folded.split()))
 
 
 def provider_detects_switches(provider: str | ProviderName) -> bool:

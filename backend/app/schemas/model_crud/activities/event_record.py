@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.enums import EntrySource, WorkoutIntensity, WorkoutType
+from app.schemas.enums import DeviceType, EntrySource, WorkoutIntensity, WorkoutType
 from app.utils.dates import ZoneOffset
 from app.utils.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
@@ -101,6 +101,8 @@ class EventRecordCreate(EventRecordBase):
     # rather than IdentityClaim because that lives under app.services, and importing
     # it from a schema closes a cycle through app.services.__init__.
     identity_claims: list[Any] | None = Field(default=None, exclude=True, repr=False)
+
+    device_type: DeviceType | None = None
 
 
 class EventRecordUpdate(EventRecordBase):

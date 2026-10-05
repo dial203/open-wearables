@@ -8,6 +8,7 @@ on:
       - "mcp/**"
       - "backend/**"
       - "frontend/**"
+      - "frontend-react/**"
       - "docs/openapi.json"
   pull_request:
     paths: *paths
@@ -21,6 +22,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      frontend_react: ${{ steps.filter.outputs.frontend_react }}
       mcp: ${{ steps.filter.outputs.mcp }}
       openapi: ${{ steps.filter.outputs.openapi }}
     steps:
@@ -33,6 +35,8 @@ jobs:
               - 'backend/**'
             frontend:
               - 'frontend/**'
+            frontend_react:
+              - 'frontend-react/**'
             mcp:
               - 'mcp/**'
             openapi:
@@ -71,7 +75,7 @@ jobs:
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Install dependencies
         working-directory: backend
-        run: uv sync --group code-quality
+        run: uv sync --group code-quality --extra otel
       - name: Run linter
         working-directory: backend
         run: uv run ruff check
@@ -147,10 +151,15 @@ jobs:
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Install dependencies
         working-directory: backend
-        run: uv sync --group dev
+        run: uv sync --group dev --extra otel
       - name: Run tests with coverage
         working-directory: backend
         run: uv run pytest -v --cov=app --cov-report=xml --cov-report=term-missing
+      - name: Run OpenTelemetry tests without the otel extra
+        working-directory: backend
+        run: |
+          uv sync --group dev
+          uv run pytest -v tests/utils_tests/test_otel_wiring.py tests/utils_tests/test_otel_export.py
 
   backend-migrations:
     needs: changes
@@ -241,9 +250,135 @@ jobs:
         working-directory: mcp
         run: uv run pytest -v
 
-  frontend-setup:
+  frontend-build:
     needs: changes
     if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - name: Cache Bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+      - name: Install dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+      - name: Type check
+        working-directory: frontend
+        run: bun run check
+      - name: Build application
+        working-directory: frontend
+        run: bun run build
+
+  frontend-lint:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - name: Cache Bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+      - name: Install dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+      - name: Run eslint
+        working-directory: frontend
+        run: bun run lint
+
+  frontend-format-check:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - name: Cache Bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+      - name: Install dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+      - name: Run prettier check
+        working-directory: frontend
+        run: bun run format:check
+
+  frontend-test:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    # Sessions live in Redis, and the e2e suite signs in for real against the
+    # stand-in backend in e2e/mock-api.ts.
+    services:
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      REDIS_URL: redis://localhost:6379/15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - name: Cache Bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+      - name: Install dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+      # Component tests run in a real Chromium too, not only e2e.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: bunx playwright install --with-deps chromium
+      - name: Unit and component tests
+        working-directory: frontend
+        run: bun run test:unit --run
+      - name: End-to-end tests
+        working-directory: frontend
+        run: bunx playwright test
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+
+  # The fork's React dashboard, served until its screens are ported to the
+  # SvelteKit portal above. See docs/fork/DECISIONS.md.
+  frontend-react-setup:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend_react == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -256,21 +391,21 @@ jobs:
         with:
           node-version: "22"
           cache: "pnpm"
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          cache-dependency-path: frontend-react/pnpm-lock.yaml
       - name: Cache node_modules
         id: cache-node-modules
         uses: actions/cache@v4
         with:
-          path: frontend/node_modules
-          key: node-modules-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          path: frontend-react/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('frontend-react/pnpm-lock.yaml') }}
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
-        working-directory: frontend
+        working-directory: frontend-react
         run: pnpm install --frozen-lockfile
 
-  frontend-build:
-    needs: [changes, frontend-setup]
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
+  frontend-react-build:
+    needs: [changes, frontend-react-setup]
+    if: ${{ needs.changes.outputs.frontend_react == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -285,16 +420,16 @@ jobs:
       - name: Restore node_modules cache
         uses: actions/cache/restore@v4
         with:
-          path: frontend/node_modules
-          key: node-modules-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          path: frontend-react/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('frontend-react/pnpm-lock.yaml') }}
           fail-on-cache-miss: true
       - name: Build application
-        working-directory: frontend
+        working-directory: frontend-react
         run: pnpm run build
 
-  frontend-lint:
-    needs: [changes, frontend-setup]
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
+  frontend-react-lint:
+    needs: [changes, frontend-react-setup]
+    if: ${{ needs.changes.outputs.frontend_react == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -309,16 +444,16 @@ jobs:
       - name: Restore node_modules cache
         uses: actions/cache/restore@v4
         with:
-          path: frontend/node_modules
-          key: node-modules-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          path: frontend-react/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('frontend-react/pnpm-lock.yaml') }}
           fail-on-cache-miss: true
       - name: Run oxlint
-        working-directory: frontend
+        working-directory: frontend-react
         run: pnpm run lint
 
-  frontend-format-check:
-    needs: [changes, frontend-setup]
-    if: ${{ needs.changes.outputs.frontend == 'true' }}
+  frontend-react-format-check:
+    needs: [changes, frontend-react-setup]
+    if: ${{ needs.changes.outputs.frontend_react == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -333,9 +468,9 @@ jobs:
       - name: Restore node_modules cache
         uses: actions/cache/restore@v4
         with:
-          path: frontend/node_modules
-          key: node-modules-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          path: frontend-react/node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('frontend-react/pnpm-lock.yaml') }}
           fail-on-cache-miss: true
       - name: Run prettier check
-        working-directory: frontend
+        working-directory: frontend-react
         run: pnpm run format:check

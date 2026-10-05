@@ -24,10 +24,10 @@ Subcommands
     diff from the latest one is "what have we changed since a known-good base".
 
 ``stamp``
-    Refresh ``frontend/fork-version.json``: the fork's own version and
+    Refresh ``frontend-react/fork-version.json``: the fork's own version and
     last-updated timestamp, plus the commit and date of the newest upstream
     commit this fork contains, both as rendered in the UI footer. The file is
-    committed because the frontend image is built from a ``./frontend`` context
+    committed because the frontend image is built from a ``./frontend-react`` context
     with no ``.git`` in it, so a Docker build cannot read git itself.
 
 Stdlib only, no virtualenv: this spans backend, frontend, mcp and docs, so it
@@ -49,7 +49,7 @@ UPSTREAM_REMOTE = "upstream"
 UPSTREAM_BRANCH = "main"
 OUTPUT = REPO_ROOT / "docs" / "fork" / "DIVERGENCE.md"
 SYNC_TAG_PREFIX = "upstream-sync/"
-STAMP = REPO_ROOT / "frontend" / "fork-version.json"
+STAMP = REPO_ROOT / "frontend-react" / "fork-version.json"
 DEFAULT_FORK_VERSION = "0.1.0"
 
 # Files whose divergence is structural rather than behavioural: the fork is a
@@ -104,7 +104,7 @@ def latest_sync_tag() -> str | None:
 def area_of(path: str) -> str:
     """Top-level area a path belongs to, for grouping the report."""
     head = path.split("/", 1)[0]
-    if head in ("backend", "frontend", "mcp", "docs", "contributing", "scripts"):
+    if head in ("backend", "frontend", "frontend-react", "mcp", "docs", "contributing", "scripts"):
         return head
     if head.startswith("."):
         return "tooling"
@@ -307,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     p_diff.add_argument("--no-fetch", action="store_true", help="use the already-fetched upstream ref")
     p_diff.set_defaults(func=cmd_diff)
 
-    p_stamp = sub.add_parser("stamp", help="refresh frontend/fork-version.json from git")
+    p_stamp = sub.add_parser("stamp", help="refresh frontend-react/fork-version.json from git")
     p_stamp.add_argument(
         "--set-version",
         help="set the fork version (semver) as well; keeps the current one when omitted "
