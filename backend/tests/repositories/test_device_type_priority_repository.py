@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.repositories.device_type_priority_repository import DeviceTypePriorityRepository
-from app.schemas.enums import DeviceType
+from app.schemas.enums import DEFAULT_DEVICE_TYPE_PRIORITY, DeviceType
 
 
 class TestDeviceTypePriorityRepository:
@@ -133,3 +133,16 @@ class TestDeviceTypePriorityRepository:
         assert DeviceType.BAND in priority_order
         assert priority_order[DeviceType.WATCH] == 1
         assert priority_order[DeviceType.BAND] == 2
+
+    def test_initialize_defaults_adds_missing_types_only(
+        self, db: Session, repo: DeviceTypePriorityRepository, seeded_priorities: None
+    ) -> None:
+        repo.upsert(db, DeviceType.WATCH, 9)
+
+        order = {p.device_type: p.priority for p in repo.initialize_defaults(db)}
+
+        assert order[DeviceType.WATCH] == 9
+        # The fork's default, not upstream's 6: chest straps rank second, as the ECG
+        # reference for beat-to-beat heart rate.
+        assert order[DeviceType.CHEST_STRAP] == DEFAULT_DEVICE_TYPE_PRIORITY[DeviceType.CHEST_STRAP]
+        assert set(order) == set(DeviceType)

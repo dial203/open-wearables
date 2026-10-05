@@ -9,7 +9,9 @@ from app.schemas.model_crud.activities import EventRecordQueryParams, SleepInclu
 from app.schemas.responses.activity import (
     MenstrualCycleRecord,
     SleepSession,
+    SleepTotals,
     Workout,
+    WorkoutTotals,
 )
 from app.schemas.utils import PaginatedResponse
 from app.services import ApiKeyDep
@@ -18,6 +20,35 @@ from app.utils.dates import DateTimeQueryParam, parse_query_datetime, parse_quer
 from app.utils.pagination import DEFAULT_PAGE_SIZE, PageLimitQueryParam
 
 router = APIRouter()
+
+# Shared by each list and the totals that add it up, so the two cannot drift apart.
+WorkoutTypeQuery = Annotated[
+    WorkoutType | None,
+    Query(alias="type", description="Exact normalized workout type. Unlike `record_type`, does not substring-match."),
+]
+IsNapQuery = Annotated[
+    bool | None,
+    Query(description="When true, return only naps; when false, only main sleep. Omit to return both."),
+]
+IncludeRedundantRelaysQuery = Annotated[
+    bool,
+    Query(
+        description=(
+            "Keep the aggregator's copy of a maker that is also connected directly. Off by "
+            "default: data relayed through Apple Health, Google Health or Health Connect is "
+            "left out for the span in which the maker's own API delivered the same data, so a "
+            "device connected both ways is not counted twice. Nothing is deleted - set this to "
+            "read the relayed copies back. `metadata.relay_dedup` lists what was left out."
+        ),
+    ),
+]
+FilterByPriorityQuery = Annotated[
+    bool,
+    Query(
+        description="When true, keep only the highest-priority source's sessions per sleep date "
+        "(provider/device priority, same ranking as summaries). Defaults to false for backwards compatibility."
+    ),
+]
 
 
 @router.get("/users/{user_id}/events/workouts")
@@ -29,30 +60,14 @@ def list_workouts(
     _api_key: ApiKeyDep,
     include: Annotated[list[WorkoutInclude], Query(default_factory=list)],
     record_type: str | None = None,
-    workout_type: Annotated[
-        WorkoutType | None,
-        Query(
-            alias="type", description="Exact normalized workout type. Unlike `record_type`, does not substring-match."
-        ),
-    ] = None,
+    workout_type: WorkoutTypeQuery = None,
     cursor: str | None = None,
     limit: PageLimitQueryParam = DEFAULT_PAGE_SIZE,
     provider: ProviderName | None = None,
     source: str | None = None,
     device_model: str | None = None,
     data_source_id: UUID | None = None,
-    include_redundant_relays: Annotated[
-        bool,
-        Query(
-            description=(
-                "Keep the aggregator's copy of a maker that is also connected directly. Off by "
-                "default: data relayed through Apple Health, Google Health or Health Connect is "
-                "left out for the span in which the maker's own API delivered the same data, so a "
-                "device connected both ways is not counted twice. Nothing is deleted - set this to "
-                "read the relayed copies back. `metadata.relay_dedup` lists what was left out."
-            ),
-        ),
-    ] = False,
+    include_redundant_relays: IncludeRedundantRelaysQuery = False,
 ) -> PaginatedResponse[Workout]:
     """Returns workout sessions."""
     params = EventRecordQueryParams(
@@ -81,6 +96,40 @@ def list_workout_types(
     return event_record_service.get_workout_types(db, user_id)
 
 
+@router.get("/users/{user_id}/events/workouts/totals")
+def get_workout_totals(
+    user_id: UUID,
+    start_date: DateTimeQueryParam,
+    end_date: DateTimeQueryParam,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+    record_type: str | None = None,
+    workout_type: WorkoutTypeQuery = None,
+    provider: ProviderName | None = None,
+    source: str | None = None,
+    device_model: str | None = None,
+    data_source_id: UUID | None = None,
+    include_redundant_relays: IncludeRedundantRelaysQuery = False,
+) -> WorkoutTotals:
+    """Returns the count, duration, energy and distance of the workouts the same filters would list.
+
+    Added up in the database, so it covers every matching workout however many
+    there are, without paging through them.
+    """
+    params = EventRecordQueryParams(
+        start_datetime=parse_query_datetime(start_date),
+        end_datetime=parse_query_end_datetime(end_date),
+        record_type=record_type,
+        workout_type=workout_type,
+        provider=provider,
+        source=source,
+        device_model=device_model,
+        data_source_id=data_source_id,
+        include_redundant_relays=include_redundant_relays,
+    )
+    return event_record_service.get_workout_totals(db, user_id, params)
+
+
 @router.get("/users/{user_id}/events/sleep")
 def list_sleep_sessions(
     user_id: UUID,
@@ -95,29 +144,9 @@ def list_sleep_sessions(
     source: str | None = None,
     device_model: str | None = None,
     data_source_id: UUID | None = None,
-    include_redundant_relays: Annotated[
-        bool,
-        Query(
-            description=(
-                "Keep the aggregator's copy of a maker that is also connected directly. Off by "
-                "default: data relayed through Apple Health, Google Health or Health Connect is "
-                "left out for the span in which the maker's own API delivered the same data, so a "
-                "device connected both ways is not counted twice. Nothing is deleted - set this to "
-                "read the relayed copies back. `metadata.relay_dedup` lists what was left out."
-            ),
-        ),
-    ] = False,
-    is_nap: Annotated[
-        bool | None,
-        Query(description="When true, return only naps; when false, only main sleep. Omit to return both."),
-    ] = None,
-    filter_by_priority: Annotated[
-        bool,
-        Query(
-            description="When true, keep only the highest-priority source's sessions per sleep date "
-            "(provider/device priority, same ranking as summaries). Defaults to false for backwards compatibility."
-        ),
-    ] = False,
+    include_redundant_relays: IncludeRedundantRelaysQuery = False,
+    is_nap: IsNapQuery = None,
+    filter_by_priority: FilterByPriorityQuery = False,
 ) -> PaginatedResponse[SleepSession]:
     """Returns sleep sessions (including naps)."""
     params = EventRecordQueryParams(
@@ -162,6 +191,41 @@ def download_workout_fit(
     )
 
 
+@router.get("/users/{user_id}/events/sleep/totals")
+def get_sleep_totals(
+    user_id: UUID,
+    start_date: DateTimeQueryParam,
+    end_date: DateTimeQueryParam,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+    provider: ProviderName | None = None,
+    source: str | None = None,
+    device_model: str | None = None,
+    data_source_id: UUID | None = None,
+    is_nap: IsNapQuery = None,
+    filter_by_priority: FilterByPriorityQuery = False,
+    include_redundant_relays: IncludeRedundantRelaysQuery = False,
+) -> SleepTotals:
+    """Returns the count, naps, time asleep, time in bed and mean efficiency of the sessions.
+
+    The same filters as the sleep list, so it adds up exactly what that would page through.
+
+    Added up in the database, so it covers every matching session however many
+    there are, without paging through them.
+    """
+    params = EventRecordQueryParams(
+        start_datetime=parse_query_datetime(start_date),
+        end_datetime=parse_query_end_datetime(end_date),
+        provider=provider,
+        source=source,
+        device_model=device_model,
+        data_source_id=data_source_id,
+        is_nap=is_nap,
+        include_redundant_relays=include_redundant_relays,
+    )
+    return event_record_service.get_sleep_totals(db, user_id, params, filter_by_priority=filter_by_priority)
+
+
 @router.get("/users/{user_id}/events/menstrual-cycles")
 def list_menstrual_cycles(
     user_id: UUID,
@@ -175,18 +239,7 @@ def list_menstrual_cycles(
     source: str | None = None,
     device_model: str | None = None,
     data_source_id: UUID | None = None,
-    include_redundant_relays: Annotated[
-        bool,
-        Query(
-            description=(
-                "Keep the aggregator's copy of a maker that is also connected directly. Off by "
-                "default: data relayed through Apple Health, Google Health or Health Connect is "
-                "left out for the span in which the maker's own API delivered the same data, so a "
-                "device connected both ways is not counted twice. Nothing is deleted - set this to "
-                "read the relayed copies back. `metadata.relay_dedup` lists what was left out."
-            ),
-        ),
-    ] = False,
+    include_redundant_relays: IncludeRedundantRelaysQuery = False,
 ) -> PaginatedResponse[MenstrualCycleRecord]:
     """Returns menstrual cycle records."""
     params = EventRecordQueryParams(

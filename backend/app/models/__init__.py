@@ -23,6 +23,7 @@ from .series_type_definition import SeriesTypeDefinition
 from .sleep_details import SleepDetails
 from .sync_run import SyncRun
 from .sync_run_data_type import SyncRunDataType
+from .telemetry_state import TelemetryState
 from .user import User
 from .user_connection import UserConnection
 from .user_connection_device_period import UserConnectionDevicePeriod
@@ -69,4 +70,5 @@ __all__ = [
     "HealthScore",
     "DetailType",
     "DETAIL_MODELS",
+    "TelemetryState",
 ]

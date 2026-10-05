@@ -8,6 +8,7 @@ from logging import Logger, getLogger
 from uuid import UUID
 
 from app.config import settings
+from app.constants.devices_map import infer_device_type_from_model
 from app.database import DbSession
 from app.models import DataPointSeries, EventRecord, HealthScore, ProviderPriority, User
 from app.repositories import EventRecordRepository, ProviderPriorityRepository
@@ -29,10 +30,10 @@ from app.schemas.enums import (
     ProviderName,
     SeriesType,
     get_series_type_id,
-    infer_device_type_from_model,
 )
 from app.schemas.responses.activity import (
     ActivitySummary,
+    ActivityTotals,
     BloodPressure,
     BodyAveraged,
     BodyLatest,
@@ -164,6 +165,11 @@ ACTIVITY_SERIES: list[SeriesType] = [
     SeriesType.flights_climbed,
     SeriesType.active_time,
 ]
+
+
+def _midnight(day: date) -> datetime:
+    """A calendar date as the UTC midnight that starts it."""
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
 
 
 class SummariesService:
@@ -316,7 +322,6 @@ class SummariesService:
 
                 provider_priority = provider_order.get(provider, 99)
 
-                # Parse device type
                 device_model = entry.get("device_model")
                 device_type = self._entry_device_type(entry)
                 device_type_priority = device_type_order.get(device_type, 99) if device_type else 99
@@ -460,7 +465,7 @@ class SummariesService:
             last_result = results[-1]
             last_date = last_result["sleep_date"]
             last_id = last_result["record_id"]
-            last_date_midnight = datetime.combine(last_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+            last_date_midnight = _midnight(last_date)
             if has_more:
                 next_cursor = encode_cursor(last_date_midnight, last_id, "next")
 
@@ -469,7 +474,7 @@ class SummariesService:
                 first_result = results[0]
                 first_date = first_result["sleep_date"]
                 first_id = first_result["record_id"]
-                first_date_midnight = datetime.combine(first_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+                first_date_midnight = _midnight(first_date)
                 previous_cursor = encode_cursor(first_date_midnight, first_id, "prev")
 
         # Transform to schema
@@ -680,13 +685,21 @@ class SummariesService:
         - Active/sedentary minutes (based on step threshold)
         - Intensity minutes (HR zones using max HR = 220 - age):
           light 50-63%, moderate 64-76%, vigorous 77-93%
+
+        Only the page's days are aggregated (upstream), so the cost follows the page
+        rather than the period. ``filter_by_priority`` and ``include_redundant_relays``
+        are the fork's: the first collapses each date to its highest-priority source
+        and defaults on here (off on /timeseries - see the pin test), the second keeps
+        an aggregator's copy of a maker that is also connected directly.
         """
         self.logger.debug(f"Fetching activity summaries for user {user_id} from {start_date} to {end_date}")
 
         # What the redundant-relay rule leaves out of every part of this summary. Built
-        # once: the aggregate, the archive, the active minutes and the intensity minutes
-        # all have to drop the same rows, or a day's steps and its active minutes would
-        # come from different sets of sources.
+        # once, over the whole period: the aggregate, the archive, the active minutes
+        # and the intensity minutes all have to drop the same rows, or a day's steps and
+        # its active minutes would come from different sets of sources. The plan's
+        # conditions are bounded by the span each direct route covers, so applying it
+        # to one page's window drops exactly what it would drop from the period.
         relay_plan = self._relay_plan(
             db_session,
             user_id,
@@ -697,98 +710,9 @@ class SummariesService:
             include_archive=True,
         )
 
-        # Get aggregated data from time-series repository (live data)
-        results = self.data_point_repo.get_daily_activity_aggregates(
-            db_session, user_id, start_date, end_date, relay_plan
+        results = self._activity_page_days(
+            db_session, user_id, start_date, end_date, cursor, limit, sort_order, relay_plan, filter_by_priority
         )
-
-        # Merge archived data when archival is enabled
-        results = self._merge_archive_activity(db_session, user_id, start_date, end_date, results, relay_plan)
-
-        # Collapse to the highest-priority source per date unless the caller wants
-        # every source (filter_by_priority=false).
-        if filter_by_priority:
-            results = self._filter_by_priority(db_session, user_id, results, date_key="activity_date")
-
-        # Get workout aggregates (elevation, distance, energy from workouts)
-        workout_aggregates = self.event_record_repo.get_daily_workout_aggregates(
-            db_session,
-            user_id,
-            start_date,
-            end_date,
-            self._relay_plan(
-                db_session, user_id, include_redundant_relays, categories=["workout"], start=start_date, end=end_date
-            ),
-        )
-
-        # Build lookup dict for workout data by (date, source, device, account)
-        workout_lookup: dict[tuple, dict] = {_activity_key(wa["workout_date"], wa): wa for wa in workout_aggregates}
-
-        # Get active/sedentary minutes from step data
-        activity_minutes = self.data_point_repo.get_daily_active_minutes(
-            db_session,
-            user_id,
-            start_date,
-            end_date,
-            active_threshold=ACTIVE_STEPS_THRESHOLD,
-            relay_plan=relay_plan,
-        )
-
-        # Build lookup for activity minutes
-        activity_lookup: dict[tuple, ActiveMinutesResult] = {
-            _activity_key(am["activity_date"], am): am for am in activity_minutes
-        }
-
-        # Get intensity minutes from HR data
-        # Calculate HR zone thresholds based on user's max HR (220 - age)
-        max_hr = self._get_user_max_hr(db_session, user_id, start_date)
-        hr_zones = self._get_hr_zone_thresholds(max_hr)
-        intensity_minutes_data = self.data_point_repo.get_daily_intensity_minutes(
-            db_session,
-            user_id,
-            start_date,
-            end_date,
-            light_min=hr_zones["light_min"],
-            light_max=hr_zones["light_max"],
-            moderate_max=hr_zones["moderate_max"],
-            vigorous_max=hr_zones["vigorous_max"],
-            relay_plan=relay_plan,
-        )
-
-        # Build lookup for intensity minutes
-        intensity_lookup: dict[tuple, IntensityMinutesResult] = {
-            _activity_key(im["activity_date"], im): im for im in intensity_minutes_data
-        }
-
-        # Order by the full cursor key, not the date alone: the cursor below compares
-        # on (date, source, device, account), which only walks a list sorted the same
-        # way. Sorted by date only, a day holding several sources could skip or repeat
-        # a row at a page boundary. The cursors carry the same values _page_key sorts
-        # on - an empty source, not "unknown", which sorts after most real ones.
-        results = sorted(results, key=_page_key, reverse=sort_order == "desc")
-
-        # Apply cursor-based pagination using compound key (date, source, device, account)
-        # This ensures we don't skip records when multiple sources exist for the same date
-        if cursor:
-            cursor_date, cursor_provider, cursor_device, cursor_account, direction = decode_activity_cursor(cursor)
-            cursor_key = (cursor_date, cursor_provider, cursor_device or "", cursor_account or "")
-
-            if direction == "prev":
-                # Backward pagination: get items BEFORE cursor key (in current sort order)
-                if sort_order == "desc":
-                    # In desc order, "before" means items with GREATER keys
-                    results = [r for r in results if _page_key(r) > cursor_key]
-                else:
-                    results = [r for r in results if _page_key(r) < cursor_key]
-                # Reverse to get correct order for backward pagination
-                results = list(reversed(results))
-            else:
-                # Forward pagination: get items AFTER cursor key (in current sort order)
-                if sort_order == "desc":
-                    # In desc order, "after" means items with SMALLER keys
-                    results = [r for r in results if _page_key(r) < cursor_key]
-                else:
-                    results = [r for r in results if _page_key(r) > cursor_key]
 
         # Check for more data
         has_more = len(results) > limit
@@ -821,6 +745,61 @@ class SummariesService:
                     "prev",
                     account_id=_account_str(first),
                 )
+
+        # The per-day extras, for this page's dates only.
+        page_dates = [r["activity_date"] for r in results]
+        page_start = _midnight(min(page_dates)) if page_dates else start_date
+        page_end = _midnight(max(page_dates)) + timedelta(days=1) if page_dates else start_date
+
+        # Get workout aggregates (elevation, distance, energy from workouts)
+        workout_aggregates = self.event_record_repo.get_daily_workout_aggregates(
+            db_session,
+            user_id,
+            page_start,
+            page_end,
+            self._relay_plan(
+                db_session, user_id, include_redundant_relays, categories=["workout"], start=start_date, end=end_date
+            ),
+        )
+
+        # Build lookup dict for workout data by (date, source, device, account)
+        workout_lookup: dict[tuple, dict] = {_activity_key(wa["workout_date"], wa): wa for wa in workout_aggregates}
+
+        # Get active/sedentary minutes from step data
+        activity_minutes = self.data_point_repo.get_daily_active_minutes(
+            db_session,
+            user_id,
+            page_start,
+            page_end,
+            active_threshold=ACTIVE_STEPS_THRESHOLD,
+            relay_plan=relay_plan,
+        )
+
+        # Build lookup for activity minutes
+        activity_lookup: dict[tuple, ActiveMinutesResult] = {
+            _activity_key(am["activity_date"], am): am for am in activity_minutes
+        }
+
+        # Get intensity minutes from HR data
+        # Calculate HR zone thresholds based on user's max HR (220 - age)
+        max_hr = self._get_user_max_hr(db_session, user_id, start_date)
+        hr_zones = self._get_hr_zone_thresholds(max_hr)
+        intensity_minutes_data = self.data_point_repo.get_daily_intensity_minutes(
+            db_session,
+            user_id,
+            page_start,
+            page_end,
+            light_min=hr_zones["light_min"],
+            light_max=hr_zones["light_max"],
+            moderate_max=hr_zones["moderate_max"],
+            vigorous_max=hr_zones["vigorous_max"],
+            relay_plan=relay_plan,
+        )
+
+        # Build lookup for intensity minutes
+        intensity_lookup: dict[tuple, IntensityMinutesResult] = {
+            _activity_key(im["activity_date"], im): im for im in intensity_minutes_data
+        }
 
         # Transform to schema
         data = []
@@ -925,6 +904,125 @@ class SummariesService:
                 relay_dedup=relay_dedup_metadata(relay_plan),
             ),
         )
+
+    def get_activity_totals(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        start_date: datetime,
+        end_date: datetime,
+        include_redundant_relays: bool = False,
+    ) -> ActivityTotals:
+        """The daily summaries' steps, distance and active energy, added up over the period.
+
+        Only the daily sums: the per-day extras the summaries attach (workouts, active
+        and intensity minutes) are most of their cost and none of a total. The same days
+        the default summaries return - one per date after source priority, with the same
+        redundant relays left out - so a total matches what paging through them adds up to.
+        """
+        relay_plan = self._relay_plan(
+            db_session,
+            user_id,
+            include_redundant_relays,
+            series=ACTIVITY_SERIES,
+            start=start_date,
+            end=end_date,
+            include_archive=True,
+        )
+        days = self._activity_days(db_session, user_id, start_date, end_date, relay_plan, filter_by_priority=True)
+        steps = [float(day["steps_sum"]) for day in days if day.get("steps_sum") is not None]
+        return ActivityTotals(
+            days=len(days),
+            steps=round(sum(steps)),
+            distance_meters=sum(float(day.get("distance_sum") or 0) for day in days),
+            active_calories_kcal=sum(float(day.get("active_energy_sum") or 0) for day in days),
+            avg_steps=round(sum(steps) / len(steps)) if steps else None,
+        )
+
+    def _activity_days(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        start: datetime,
+        end: datetime,
+        relay_plan: "RelayDedupPlan | None",
+        filter_by_priority: bool,
+    ) -> list[dict]:
+        """The rows for [start, end): live and archived, collapsed per date when asked.
+
+        Sorted by the full cursor key, not the date alone: the cursor compares on
+        (date, source, device, account), which only walks a list sorted the same way.
+        Sorted by date only, a day holding several sources could skip or repeat a row
+        at a page boundary.
+        """
+        results = self.data_point_repo.get_daily_activity_aggregates(db_session, user_id, start, end, relay_plan)
+        results = self._merge_archive_activity(db_session, user_id, start, end, results, relay_plan)
+        if filter_by_priority:
+            results = self._filter_by_priority(db_session, user_id, results, date_key="activity_date")
+        return sorted(results, key=_page_key)
+
+    def _activity_page_days(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        start_date: datetime,
+        end_date: datetime,
+        cursor: str | None,
+        limit: int,
+        sort_order: str,
+        relay_plan: "RelayDedupPlan | None",
+        filter_by_priority: bool,
+    ) -> list[dict]:
+        """The rows for one page, in page order, plus one more if there is a next page.
+
+        Aggregates a window that starts limit + 2 days wide from where the page
+        begins, and widens it fourfold until it holds enough rows or reaches the
+        edge of the period. A user with daily data needs one pass; a sparse one a few.
+        Unfiltered, a day can hold several rows, so the window holds at least as many
+        rows as days and a dense multi-source user still needs only one pass.
+        """
+        cursor_date: date | None = None
+        direction = "next"
+        cursor_key: tuple = ()
+        if cursor:
+            cursor_date, cursor_provider, cursor_device, cursor_account, direction = decode_activity_cursor(cursor)
+            cursor_key = (cursor_date, cursor_provider, cursor_device or "", cursor_account or "")
+        # Which way the page runs from its anchor: into the past, or the future.
+        backwards = (sort_order == "desc") == (direction != "prev")
+
+        # The page, one more to tell there is a next, and the cursor's own day,
+        # which the window holds and the cursor then drops.
+        span = timedelta(days=limit + 2)
+        # A window over half the period is not worth a second, wider pass.
+        if span * 2 >= end_date - start_date:
+            span = end_date - start_date
+        while True:
+            if backwards:
+                anchor = min(end_date, _midnight(cursor_date) + timedelta(days=1)) if cursor_date else end_date
+                window = (max(start_date, anchor - span), anchor)
+                complete = window[0] <= start_date
+            else:
+                anchor = max(start_date, _midnight(cursor_date)) if cursor_date else start_date
+                window = (anchor, min(end_date, anchor + span))
+                complete = window[1] >= end_date
+
+            results = self._activity_days(db_session, user_id, *window, relay_plan, filter_by_priority)
+            if sort_order == "desc":
+                results = list(reversed(results))
+
+            # Compound key (date, source, device, account), so a date two sources or two
+            # accounts share is not skipped. A backwards page keeps the keys below the
+            # cursor, else above.
+            if cursor:
+                results = [
+                    r for r in results if (_page_key(r) < cursor_key if backwards else _page_key(r) > cursor_key)
+                ]
+                if direction == "prev":
+                    results = list(reversed(results))
+
+            if complete or len(results) > limit:
+                return results
+            span *= 4
 
     def _calculate_age(self, birth_date: date, reference_date: date) -> int:
         """Calculate age in years from birth date to reference date."""

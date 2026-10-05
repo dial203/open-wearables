@@ -30,6 +30,11 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from app.constants.devices_map import (
+    HANDSET_DEVICE_TYPES,
+    infer_device_type_from_source_name,
+    reconcile_device_type,
+)
 from app.database import DbSession
 from app.models import DataSource, Device, EventRecord, UserConnection
 from app.repositories.device_repository import SYSTEM_ACTOR, DeviceRepository
@@ -40,8 +45,6 @@ from app.schemas.enums import (
     IdentityConfidence,
     LabelSource,
     ProviderName,
-    infer_device_type_from_source_name,
-    reconcile_device_type,
 )
 from app.services.devices.identity import IdentityClaim, claims_from_data_source, relaying_host_model
 from app.utils.device_registry import humanize_device_model, relayed_brand, resolve_brand
@@ -265,7 +268,7 @@ class DeviceDetectionService:
         """
         if reported is None or device.device_type != DeviceType.UNKNOWN.value:
             return
-        if reported is DeviceType.PHONE and device.host_model_raw is not None:
+        if reported in HANDSET_DEVICE_TYPES and device.host_model_raw is not None:
             return
 
         self.repo.update_fields(
@@ -396,7 +399,7 @@ class DeviceDetectionService:
         # means the model string named the host, so a report agreeing that this is a
         # phone is describing the same carrier and would classify the relayed device
         # as the handset it was relayed through.
-        reported = None if reported_device_type is DeviceType.PHONE else reported_device_type
+        reported = None if reported_device_type in HANDSET_DEVICE_TYPES else reported_device_type
         device_type = reconcile_device_type(reported, infer_device_type_from_source_name(writer))
 
         return self.repo.create(

@@ -7,6 +7,7 @@ from app.database import DbSession
 from app.schemas.enums import ProviderName, TimelineBucket, TimelineGroupBy
 from app.schemas.responses.activity import (
     ActivitySummary,
+    ActivityTotals,
     BodySummary,
     RecoverySummary,
     SleepSummary,
@@ -62,6 +63,32 @@ def get_activity_summary(
         limit,
         sort_order,
         filter_by_priority=filter_by_priority,
+        include_redundant_relays=include_redundant_relays,
+    )
+
+
+@router.get("/users/{user_id}/summaries/activity/totals")
+def get_activity_totals(
+    user_id: UUID,
+    start_date: DateTimeQueryParam,
+    end_date: DateTimeQueryParam,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+    include_redundant_relays: Annotated[
+        bool,
+        Query(description="Count the aggregator's copy of a maker also connected directly, as on the summaries."),
+    ] = False,
+) -> ActivityTotals:
+    """Returns the period's daily activity added up: days, steps, distance and active energy.
+
+    The same days the daily summaries return, one per date after source priority,
+    so a total matches what paging through them would add up to.
+    """
+    return summaries_service.get_activity_totals(
+        db,
+        user_id,
+        parse_query_datetime(start_date),
+        parse_query_end_datetime(end_date),
         include_redundant_relays=include_redundant_relays,
     )
 

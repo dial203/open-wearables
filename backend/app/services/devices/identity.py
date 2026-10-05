@@ -29,14 +29,16 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.constants.devices_map import (
+    HANDSET_DEVICE_TYPES,
+    infer_device_type_from_model,
+    infer_device_type_from_source_name,
+)
 from app.schemas.enums import (
     WRITER_MODEL_SEPARATOR,
     DeviceIdentityKind,
-    DeviceType,
     IdentityConfidence,
     ProviderName,
-    infer_device_type_from_model,
-    infer_device_type_from_source_name,
 )
 
 # Garmin's summaryId looks like "{devicePrefix}-{hex(startTimeInSeconds)}" with an
@@ -466,7 +468,7 @@ def _is_platform_own_writer(provider_value: str, writer_id: str, device_model: s
     # On HealthKit the writer id is usually the source's display name, which for the
     # platform's own data is the hardware's name ("Michael's iPhone"). A writer that
     # names a phone is the phone.
-    if infer_device_type_from_source_name(normalized) is DeviceType.PHONE:
+    if infer_device_type_from_source_name(normalized) in HANDSET_DEVICE_TYPES:
         return True
     return _writer_names_the_host(normalized, device_model)
 
@@ -515,7 +517,7 @@ def relaying_host_model(
         return None
     if _is_platform_own_writer(provider_value, writer_id, device_model):
         return None
-    if infer_device_type_from_model(device_model) is not DeviceType.PHONE:
+    if infer_device_type_from_model(device_model) not in HANDSET_DEVICE_TYPES:
         return None
     return device_model
 

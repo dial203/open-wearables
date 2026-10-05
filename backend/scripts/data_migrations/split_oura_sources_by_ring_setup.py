@@ -44,8 +44,13 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.constants.devices_map import (
+    infer_device_type_from_model,
+)
 from app.database import SessionLocal
-from app.schemas.enums import ProviderName, infer_device_type_from_model
+from app.schemas.enums import (
+    ProviderName,
+)
 from app.services.providers.oura.data_247 import Oura247Data
 from app.services.providers.oura.strategy import OuraStrategy
 

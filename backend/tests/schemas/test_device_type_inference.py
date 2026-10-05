@@ -2,12 +2,14 @@
 
 import pytest
 
-from app.schemas.enums import (
-    DeviceType,
+from app.constants.devices_map import (
     device_type_from_platform_report,
     infer_device_type_from_model,
     infer_device_type_from_source_name,
     reconcile_device_type,
+)
+from app.schemas.enums import (
+    DeviceType,
 )
 
 
@@ -56,8 +58,10 @@ from app.schemas.enums import (
         ("LM-V350", DeviceType.PHONE),
         # ...but the wearables sharing those prefixes are still wearables.
         ("Google Pixel Watch 4 (45mm)", DeviceType.WATCH),
-        ("SM-R830", DeviceType.OTHER),
-        ("SM-Q501", DeviceType.OTHER),
+        # Upstream's Samsung model-code table names them outright (#1721): a Galaxy
+        # Watch Active2 and a Galaxy Ring - not phones, which is what this checks.
+        ("SM-R830", DeviceType.WATCH),
+        ("SM-Q501", DeviceType.RING),
         ("Something Unrecognised", DeviceType.OTHER),
     ],
 )
@@ -124,7 +128,8 @@ class TestPlatformReportedDeviceType:
             ("chest_strap", DeviceType.CHEST_STRAP),
             # Health Connect's own spelling for a wrist band.
             ("fitness_band", DeviceType.BAND),
-            ("smart_display", DeviceType.OTHER),
+            # Upstream added a type for it (#1729); the fork had filed it as other.
+            ("smart_display", DeviceType.SMART_DISPLAY),
             # Case and padding, since the value is relayed through a mobile SDK.
             ("WATCH", DeviceType.WATCH),
             ("  ring  ", DeviceType.RING),
