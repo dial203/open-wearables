@@ -12,6 +12,8 @@ from app.repositories.provider_settings_repository import ProviderSettingsReposi
 from app.schemas.auth import ConnectionStatus, LiveSyncMode, SDKAuthContext
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.user_management import (
+    DeviceDetectRequest,
+    DeviceDetectResult,
     DeviceRefileRequest,
     DeviceRefileResult,
     DeviceTimelineRead,
@@ -231,6 +233,33 @@ def replace_device_timeline_endpoint(
     """
     connection = _account_or_404(db, user_id, connection_id)
     return device_timeline_service.replace_timeline(db, connection, body)
+
+
+@router.post("/users/{user_id}/connections/accounts/{connection_id}/device-timeline/detect")
+def detect_device_timeline_endpoint(
+    user_id: UUID,
+    connection_id: UUID,
+    body: DeviceDetectRequest,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+) -> DeviceDetectResult:
+    """Date this account's devices from the device names its provider puts on workouts.
+
+    Garmin, Polar, Suunto and Fitbit name the watch on every workout and on nothing
+    else, so the workouts say which device was worn when. A switch is dated to the new
+    device's first workout. This runs on its own every few minutes for accounts whose
+    history is automatic; calling it applies it now.
+
+    Without ``reset`` only switches after the last hand edit are added; with it the
+    whole history is rebuilt from the workouts. When the history changes, stored
+    records are re-filed to match (``refile``, default true) - never a workout, nor a
+    sample inside one, since those are the provider's own captures.
+    """
+    connection = _account_or_404(db, user_id, connection_id)
+    try:
+        return device_timeline_service.detect(db, connection, body, actor=f"principal:{_api_key}")
+    except DeviceTimelineError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/users/{user_id}/connections/accounts/{connection_id}/device-timeline/refile")

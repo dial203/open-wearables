@@ -22,6 +22,10 @@ until the next one's. Three rules, each chosen over a more convenient alternativ
 
 A caller with no timestamp (``at`` None) gets the current period - the latest - which
 is what the undated label meant, so such callers behave as before.
+
+A period is either stated by a person or detected from the device names the provider
+puts on the account's workouts (app/utils/device_switch_detection.py). Resolution
+treats the two alike.
 """
 
 from __future__ import annotations

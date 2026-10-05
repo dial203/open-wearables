@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Index
+from sqlalchemy import CheckConstraint, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import BaseDbModel
@@ -23,9 +23,12 @@ class UserConnectionDevicePeriod(BaseDbModel):
     no open-start row is covered by nothing, and resolves to no label rather than to
     the nearest period: an unstated stretch is left unattributed, never guessed.
 
-    It is a statement, not a capture. It only ever fills a device the provider did
-    not report; a model the provider stamped on a record always wins over it. See
-    app/utils/device_timeline.py.
+    It only ever fills a device the provider did not report; a model the provider
+    stamped on a record always wins over it. See app/utils/device_timeline.py.
+
+    ``origin`` says where the period came from: ``detected`` from the device names the
+    provider put on the account's own workouts, ``stated`` by a person
+    (DevicePeriodOrigin, app/utils/device_switch_detection.py).
     """
 
     __tablename__ = "user_connection_device_period"
@@ -40,6 +43,7 @@ class UserConnectionDevicePeriod(BaseDbModel):
             unique=True,
             postgresql_nulls_not_distinct=True,
         ),
+        CheckConstraint("origin IN ('stated', 'detected')", name="ck_user_connection_device_period_origin"),
     )
 
     id: Mapped[PrimaryKey[UUID]]
@@ -49,3 +53,4 @@ class UserConnectionDevicePeriod(BaseDbModel):
     user_connection_id: Mapped[UUID] = mapped_column(ForeignKey("user_connection.id", ondelete="CASCADE"))
     device_label: Mapped[str_100]
     effective_from: Mapped[datetime | None]
+    origin: Mapped[str] = mapped_column(String(16), server_default=text("'stated'"))

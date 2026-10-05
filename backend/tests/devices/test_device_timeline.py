@@ -403,8 +403,108 @@ class TestRefile:
         # And the score stays with the record that did not move.
         assert db.query(HealthScore).filter_by(data_source_id=worn_through_the_switch.id).count() == 1
 
-    def test_a_source_the_provider_named_is_never_moved(self, db: Session, user: User, garmin: UserConnection) -> None:
+    def test_a_source_the_provider_named_is_never_moved(self, db: Session, user: User) -> None:
+        """On a provider that may name the device on any record, a named source is a capture."""
+        strava = UserConnectionFactory(user=user, provider="strava", provider_user_id="s-personal")
         stamped = DataSourceFactory(
+            user=user,
+            provider=ProviderName.STRAVA,
+            user_connection_id=strava.id,
+            device_model="fenix 8",
+            source="strava",
+            device_model_origin=DeviceModelOrigin.PROVIDER.value,
+        )
+        EventRecordFactory(data_source=stamped, start_datetime=AFTER, end_datetime=AFTER + timedelta(hours=1))
+        db.commit()
+        _state(db, strava, ("fenix 8", None), ("Venu X1", SWITCH))
+
+        result = _refile(db, strava, dry_run=False, include=[stamped.id])
+
+        (verdict,) = result.sources
+        assert not verdict.eligible
+        assert result.moves == []
+
+    def test_a_source_of_unrecorded_origin_moves_only_when_named(self, db: Session, user: User) -> None:
+        strava = UserConnectionFactory(user=user, provider="strava", provider_user_id="s-personal")
+        legacy = DataSourceFactory(
+            user=user,
+            provider=ProviderName.STRAVA,
+            user_connection_id=strava.id,
+            device_model="fenix 8",
+            source="strava",
+            device_model_origin=None,
+        )
+        EventRecordFactory(data_source=legacy, start_datetime=AFTER, end_datetime=AFTER + timedelta(hours=8))
+        db.commit()
+        _state(db, strava, ("fenix 8", None), ("Venu X1", SWITCH))
+
+        assert _refile(db, strava).moves == []
+        assert not _refile(db, strava).sources[0].eligible
+
+        named = _refile(db, strava, include=[legacy.id])
+        assert named.sources[0].eligible
+        assert named.total_moved.event_records == 1
+
+    @pytest.mark.parametrize("origin", [DeviceModelOrigin.PROVIDER.value, None])
+    def test_on_garmin_a_named_source_keeps_its_workouts_and_gives_up_its_nights(
+        self, db: Session, user: User, garmin: UserConnection, origin: str | None
+    ) -> None:
+        """A label spelled as Garmin spells the watch shares the watch's source.
+
+        Garmin names the device on workouts and nothing else, so on that source the
+        workout and the samples inside it are the watch's own and the night is a label's.
+        """
+        shared = DataSourceFactory(
+            user=user,
+            provider=ProviderName.GARMIN,
+            user_connection_id=garmin.id,
+            device_model="fenix 8",
+            source="garmin",
+            device_model_origin=origin,
+        )
+        workout = EventRecordFactory(data_source=shared, start_datetime=AFTER, end_datetime=AFTER + timedelta(hours=1))
+        night = EventRecordFactory(
+            data_source=shared,
+            category="sleep",
+            type="sleep_session",
+            start_datetime=AFTER + timedelta(hours=12),
+            end_datetime=AFTER + timedelta(hours=20),
+        )
+        hr = SeriesTypeDefinitionFactory.get_or_create_heart_rate()
+        in_workout = DataPointSeries(
+            id=uuid4(),
+            data_source_id=shared.id,
+            recorded_at=AFTER + timedelta(minutes=30),
+            value=Decimal(150),
+            series_type_definition_id=hr.id,
+        )
+        overnight = DataPointSeries(
+            id=uuid4(),
+            data_source_id=shared.id,
+            recorded_at=AFTER + timedelta(hours=14),
+            value=Decimal(48),
+            series_type_definition_id=hr.id,
+        )
+        db.add_all([in_workout, overnight])
+        db.commit()
+        _state(db, garmin, ("fenix 8", None), ("Venu X1", SWITCH))
+
+        result = _refile(db, garmin, dry_run=False)
+
+        (verdict,) = [v for v in result.sources if v.data_source_id == shared.id]
+        assert verdict.eligible
+        assert verdict.captures_kept
+        venu = _sources(db, garmin)["Venu X1"]
+        db.expire_all()
+        assert db.get(EventRecord, workout.id).data_source_id == shared.id
+        assert db.get(EventRecord, night.id).data_source_id == venu.id
+        assert db.get(DataPointSeries, in_workout.id).data_source_id == shared.id
+        assert db.get(DataPointSeries, overnight.id).data_source_id == venu.id
+
+    def test_on_garmin_an_archived_day_of_a_named_source_stays_and_is_counted(
+        self, db: Session, user: User, garmin: UserConnection
+    ) -> None:
+        shared = DataSourceFactory(
             user=user,
             provider=ProviderName.GARMIN,
             user_connection_id=garmin.id,
@@ -412,37 +512,26 @@ class TestRefile:
             source="garmin",
             device_model_origin=DeviceModelOrigin.PROVIDER.value,
         )
-        EventRecordFactory(data_source=stamped, start_datetime=AFTER, end_datetime=AFTER + timedelta(hours=1))
-        db.commit()
-        _state(db, garmin, ("fenix 8", None), ("Venu X1", SWITCH))
-
-        result = _refile(db, garmin, dry_run=False, include=[stamped.id])
-
-        (verdict,) = result.sources
-        assert not verdict.eligible
-        assert result.moves == []
-
-    def test_a_source_of_unrecorded_origin_moves_only_when_named(
-        self, db: Session, user: User, garmin: UserConnection
-    ) -> None:
-        legacy = DataSourceFactory(
-            user=user,
-            provider=ProviderName.GARMIN,
-            user_connection_id=garmin.id,
-            device_model="fenix 8",
-            source="garmin",
-            device_model_origin=None,
+        hr = SeriesTypeDefinitionFactory.get_or_create_heart_rate()
+        day = DataPointSeriesArchive(
+            id=uuid4(),
+            data_source_id=shared.id,
+            series_type_definition_id=hr.id,
+            bucket_start_at=_utc(2026, 9, 24),
+            aggregation_type=AggregationMethod.AVG,
+            value=Decimal(60),
+            sample_count=10,
         )
-        EventRecordFactory(data_source=legacy, start_datetime=AFTER, end_datetime=AFTER + timedelta(hours=8))
+        db.add(day)
         db.commit()
         _state(db, garmin, ("fenix 8", None), ("Venu X1", SWITCH))
 
-        assert _refile(db, garmin).moves == []
-        assert not _refile(db, garmin).sources[0].eligible
+        (move,) = _refile(db, garmin, dry_run=False).moves
 
-        named = _refile(db, garmin, include=[legacy.id])
-        assert named.sources[0].eligible
-        assert named.total_moved.event_records == 1
+        assert move.archive_days_kept == 1
+        assert move.moved.archive_days == 0
+        db.expire_all()
+        assert db.get(DataPointSeriesArchive, day.id).data_source_id == shared.id
 
     def test_another_account_is_never_touched(
         self, db: Session, user: User, garmin: UserConnection, worn_through_the_switch: DataSource

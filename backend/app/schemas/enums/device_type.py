@@ -1,6 +1,7 @@
 """Device type enum and priority configuration."""
 
 import re
+import unicodedata
 from enum import StrEnum
 
 
@@ -64,6 +65,33 @@ _EEG_KEYWORDS: tuple[str, ...] = ("muse s", "muse 2", "muse-", "dreem", "frenz",
 # Whole tokens rather than substrings, so "eeg" cannot be hit inside an unrelated word.
 _EEG_TOKENS: frozenset[str] = frozenset({"muse", "eeg"})
 
+# Garmin wrist-worn families, folded (no diacritics: Garmin writes "fēnix", "vívoactive").
+# The bands ("vivosmart", "vivofit") are matched above, by the generic "band" pass.
+_GARMIN_WATCH_KEYWORDS: tuple[str, ...] = (
+    "forerunner",
+    "fenix",
+    "venu",
+    "epix",
+    "enduro",
+    "instinct",
+    "tactix",
+    "approach",
+    "vivoactive",
+    "vivomove",
+    "marq",
+    "descent",
+    "quatix",
+    "lily",
+    "bounce",
+)
+
+
+def fold_model_name(device_model: str) -> str:
+    """Lower-case with diacritics removed, so "fēnix 8" and "Fenix 8" compare equal."""
+    decomposed = unicodedata.normalize("NFKD", device_model)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+
 # Handset model codes, which name no body part and would otherwise fall through to
 # OTHER. This matters beyond iconography: a relayed stream is recognised as relayed by
 # its model naming a phone, and a Pixel or Galaxy handset that reads as OTHER leaves
@@ -80,7 +108,7 @@ def infer_device_type_from_model(device_model: str | None) -> DeviceType:
     if not device_model:
         return DeviceType.UNKNOWN
 
-    model_lower = device_model.lower()
+    model_lower = fold_model_name(device_model)
 
     # Apple productType codes
     if device_model.startswith("Watch"):
@@ -123,10 +151,10 @@ def infer_device_type_from_model(device_model: str | None) -> DeviceType:
     if "scale" in model_lower or "index" in model_lower:
         return DeviceType.SCALE
 
-    # Garmin device patterns
-    if any(
-        x in model_lower for x in ["forerunner", "fenix", "venu", "epix", "enduro", "instinct", "tactix", "approach"]
-    ):
+    # Garmin device patterns. Garmin names the watch on every activity, and an
+    # unrecognised one falls to OTHER - which keeps it out of dated device history
+    # detection (app/utils/device_switch_detection.py) as surely as a bike computer.
+    if any(x in model_lower for x in _GARMIN_WATCH_KEYWORDS):
         return DeviceType.WATCH
 
     # Polar patterns

@@ -626,6 +626,35 @@ Template:
   new period with a switch date nobody gave. See `docs/dev-guides/device-registry.mdx`.
 
 
+## Dated device history is detected from the provider's workouts
+
+- **Area**: backend, frontend
+- **Status**: active
+- **On conflict**: keep ours. Upstream files touched: `app/schemas/enums/device_type.py`
+  (diacritic folding and the Garmin watch families - keep them if upstream reworks the
+  keyword table) and `app/services/providers/garmin/data_247.py` (`entry_source` on the
+  bulk activity path - re-apply in `_build_activity_record`).
+- **Why**: the history above was typed by hand, and the dialog seeded it with today's
+  watch "from the start" - wrong for any account that had worn more than one. Garmin,
+  Polar, Suunto and Fitbit name the device on every workout and nowhere else, so the
+  account's workouts already date each switch. Detection reads them
+  (`app/utils/device_switch_detection.py`): a period per change of watch/band/ring,
+  dated to the new device's first workout, no smoothing; a Celery beat task keeps it
+  current and re-files after a change. Hand edits set
+  `user_connection.device_timeline_detect_from`, after which detection only appends.
+
+  Re-file on those four providers now also takes rows off provider-named and
+  unrecorded-origin sources, keeping the captures (workouts, samples inside them,
+  archived days). Without it, nights filed under a label spelled exactly as Garmin
+  spells the watch share the watch's source and could never move - whether detection
+  or a person dated them. Other providers keep the stricter rule.
+
+  `infer_device_type_from_model` now folds diacritics ("fēnix", "vívoactive") and names
+  more Garmin watch families; before, those fell to OTHER, which both ranked them below
+  every typed device and kept them out of detection. The bulk Garmin activity path now
+  records `entry_source` like the push path, so a typed-in activity is never taken for
+  a sighting of the watch. See `docs/dev-guides/device-registry.mdx`.
+
 ## Polar registers each account under its own member-id
 
 - **Area**: backend

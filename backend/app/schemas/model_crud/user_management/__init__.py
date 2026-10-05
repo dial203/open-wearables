@@ -7,6 +7,8 @@ from .developer import (
     PasswordChange,
 )
 from .device_timeline import (
+    DeviceDetectRequest,
+    DeviceDetectResult,
     DevicePeriodInput,
     DevicePeriodRead,
     DeviceRefileRequest,
@@ -45,6 +47,8 @@ from .user_connection import (
 
 __all__ = [
     # Device timeline
+    "DeviceDetectRequest",
+    "DeviceDetectResult",
     "DevicePeriodInput",
     "DevicePeriodRead",
     "DeviceRefileRequest",

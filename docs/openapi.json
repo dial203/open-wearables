@@ -1077,6 +1077,91 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/connections/accounts/{connection_id}/device-timeline/detect": {
+      "post": {
+        "tags": [
+          "External: Connections"
+        ],
+        "summary": "Detect Device Timeline Endpoint",
+        "description": "Date this account's devices from the device names its provider puts on workouts.\n\nGarmin, Polar, Suunto and Fitbit name the watch on every workout and on nothing\nelse, so the workouts say which device was worn when. A switch is dated to the new\ndevice's first workout. This runs on its own every few minutes for accounts whose\nhistory is automatic; calling it applies it now.\n\nWithout ``reset`` only switches after the last hand edit are added; with it the\nwhole history is rebuilt from the workouts. When the history changes, stored\nrecords are re-filed to match (``refile``, default true) - never a workout, nor a\nsample inside one, since those are the provider's own captures.",
+        "operationId": "detect_device_timeline_endpoint_api_v1_users__user_id__connections_accounts__connection_id__device_timeline_detect_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceDetectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceDetectResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/connections/accounts/{connection_id}/device-timeline/refile": {
       "post": {
         "tags": [
@@ -13730,6 +13815,62 @@
         "title": "DataTypeKind",
         "description": "What sort of thing a data type entry describes.\n\nProviders report at different granularities. SDK uploads report per series type,\nwhile REST pulls report per fetch task, and one task can write several series types.\nThe kind records which of those a row represents so the two are not confused."
       },
+      "DetectedPeriodRead": {
+        "properties": {
+          "device_label": {
+            "type": "string",
+            "title": "Device Label"
+          },
+          "effective_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective From"
+          },
+          "evidence_count": {
+            "type": "integer",
+            "title": "Evidence Count"
+          },
+          "first_seen": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Seen"
+          },
+          "previous_last_seen": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Last Seen"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_label",
+          "effective_from",
+          "evidence_count",
+          "first_seen",
+          "last_seen",
+          "previous_last_seen"
+        ],
+        "title": "DetectedPeriodRead"
+      },
       "DeveloperRead": {
         "properties": {
           "id": {
@@ -14089,6 +14230,87 @@
         ],
         "title": "DeviceDataSourceResponse",
         "description": "A data source attributed to a device, kept whole rather than merged into it."
+      },
+      "DeviceDetectRequest": {
+        "properties": {
+          "reset": {
+            "type": "boolean",
+            "title": "Reset",
+            "description": "Rebuild the whole history from the provider's workouts, discarding periods a person stated. Without it only switches after the last hand edit are added.",
+            "default": false
+          },
+          "refile": {
+            "type": "boolean",
+            "title": "Refile",
+            "description": "Move stored records to match the new history (label-filled rows only)",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "DeviceDetectRequest"
+      },
+      "DeviceDetectResult": {
+        "properties": {
+          "changed": {
+            "type": "boolean",
+            "title": "Changed"
+          },
+          "timeline": {
+            "$ref": "#/components/schemas/DeviceTimelineRead"
+          },
+          "refile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeviceRefileResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "changed",
+          "timeline"
+        ],
+        "title": "DeviceDetectResult"
+      },
+      "DeviceDetectionRead": {
+        "properties": {
+          "supported": {
+            "type": "boolean",
+            "title": "Supported"
+          },
+          "proposed": {
+            "items": {
+              "$ref": "#/components/schemas/DetectedPeriodRead"
+            },
+            "type": "array",
+            "title": "Proposed"
+          },
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceSightingRead"
+            },
+            "type": "array",
+            "title": "Devices"
+          },
+          "differs": {
+            "type": "boolean",
+            "title": "Differs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "supported",
+          "proposed",
+          "devices",
+          "differs"
+        ],
+        "title": "DeviceDetectionRead",
+        "description": "What the provider's own device names say, beside what the account holds."
       },
       "DeviceHistoryListResponse": {
         "properties": {
@@ -14477,10 +14699,26 @@
             ],
             "title": "Effective To"
           },
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "previous_last_seen": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Last Seen"
           }
         },
         "type": "object",
@@ -14488,6 +14726,7 @@
           "id",
           "device_label",
           "effective_from",
+          "origin",
           "created_at"
         ],
         "title": "DevicePeriodRead"
@@ -14838,6 +15077,36 @@
         "type": "object",
         "title": "DeviceRetireRequest"
       },
+      "DeviceSightingRead": {
+        "properties": {
+          "device_label": {
+            "type": "string",
+            "title": "Device Label"
+          },
+          "evidence_count": {
+            "type": "integer",
+            "title": "Evidence Count"
+          },
+          "first_seen": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Seen"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_label",
+          "evidence_count",
+          "first_seen",
+          "last_seen"
+        ],
+        "title": "DeviceSightingRead"
+      },
       "DeviceSplitRequest": {
         "properties": {
           "data_source_ids": {
@@ -14995,6 +15264,25 @@
             },
             "type": "array",
             "title": "Periods"
+          },
+          "auto": {
+            "type": "boolean",
+            "title": "Auto"
+          },
+          "detect_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detect From"
+          },
+          "detection": {
+            "$ref": "#/components/schemas/DeviceDetectionRead"
           }
         },
         "type": "object",
@@ -15002,7 +15290,10 @@
           "connection_id",
           "provider",
           "device_label",
-          "periods"
+          "periods",
+          "auto",
+          "detect_from",
+          "detection"
         ],
         "title": "DeviceTimelineRead"
       },
@@ -15015,6 +15306,18 @@
             "type": "array",
             "maxItems": 500,
             "title": "Periods"
+          },
+          "auto": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto",
+            "description": "Whether new device switches seen in the provider's workouts are added automatically. Omit to leave as is."
           }
         },
         "additionalProperties": false,
@@ -17863,6 +18166,11 @@
             "type": "integer",
             "title": "Archive Days Straddling",
             "default": 0
+          },
+          "archive_days_kept": {
+            "type": "integer",
+            "title": "Archive Days Kept",
+            "default": 0
           }
         },
         "type": "object",
@@ -17922,6 +18230,11 @@
           "eligible": {
             "type": "boolean",
             "title": "Eligible"
+          },
+          "captures_kept": {
+            "type": "boolean",
+            "title": "Captures Kept",
+            "default": false
           },
           "reason": {
             "type": "string",

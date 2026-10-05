@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.config import settings
+from app.constants.entry_source import get_unified_garmin_entry_source
 from app.constants.sleep import SleepStageType
 from app.database import DbSession
 from app.models import DataPointSeries, EventRecord, EventRecordDetail
@@ -1044,6 +1045,11 @@ class Garmin247Data(Base247DataTemplate):
             total_elevation_gain=Decimal(str(elevation_gain)) if elevation_gain is not None else None,
             average_speed=Decimal(str(avg_speed)) if avg_speed is not None else None,
             average_cadence=Decimal(str(avg_cadence)) if avg_cadence is not None else None,
+            # As the push path records it (workouts._build_metrics). Besides what it
+            # tells a reader, it is what keeps a typed-in activity - which names no
+            # device - from counting as a sighting of the watch in device history
+            # detection (app/utils/device_switch_detection.py).
+            entry_source=get_unified_garmin_entry_source(raw_activity.get("manual"), raw_activity.get("isWebUpload")),
         )
 
         return record, detail
