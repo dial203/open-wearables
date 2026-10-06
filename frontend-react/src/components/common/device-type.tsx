@@ -103,3 +103,23 @@ export function registryDeviceName(device: Device): string {
     )
   );
 }
+
+// Case- and accent-insensitive with numeric runs compared as numbers, so "fēnix 6"
+// sits with "Fenix 6" and "Gen 10" comes after "Gen 9".
+const DEVICE_NAME_COLLATOR = new Intl.Collator(undefined, {
+  sensitivity: 'base',
+  numeric: true,
+});
+
+/**
+ * Registry devices in alphabetical order of the name shown for them, for pickers.
+ *
+ * Ties keep their incoming order, so two units with the same name stay adjacent in
+ * the order the server listed them.
+ */
+export function sortDevicesByName(devices: readonly Device[]): Device[] {
+  return devices
+    .map((device) => ({ device, name: registryDeviceName(device) }))
+    .sort((a, b) => DEVICE_NAME_COLLATOR.compare(a.name, b.name))
+    .map(({ device }) => device);
+}

@@ -14,6 +14,7 @@ import {
 import {
   DeviceTypeSelect,
   registryDeviceName,
+  sortDevicesByName,
 } from '@/components/common/device-type';
 import { providerLabel } from '@/components/common/source-badge';
 import { SourceActivityPanel } from '@/components/user/source-activity';
@@ -114,6 +115,10 @@ export function LinkDataSourceDialog({
   const activity = useMemo(
     () => activityData?.items.find((a) => a.data_source_id === sourceId),
     [activityData, sourceId]
+  );
+  const sortedDevices = useMemo(
+    () => sortDevicesByName(devices ?? []),
+    [devices]
   );
 
   const creating = deviceId === NEW_DEVICE;
@@ -264,7 +269,7 @@ export function LinkDataSourceDialog({
             >
               <option value="">Select a device…</option>
               <option value={NEW_DEVICE}>+ Create a new device…</option>
-              {(devices ?? []).map((d) => (
+              {sortedDevices.map((d) => (
                 <option
                   key={d.id}
                   value={d.id}

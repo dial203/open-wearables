@@ -39,6 +39,7 @@ import {
   DeviceTypeSelect,
   deviceTypeInfo,
   registryDeviceName,
+  sortDevicesByName,
 } from '@/components/common/device-type';
 import {
   useDevices,
@@ -1219,7 +1220,9 @@ function MergeDeviceDialog({
     onClose();
   };
 
-  const others = candidates.filter((d) => d.id !== device?.id);
+  const others = sortDevicesByName(
+    candidates.filter((d) => d.id !== device?.id)
+  );
 
   return (
     <Dialog open={!!device} onOpenChange={(open) => !open && close()}>
