@@ -8,18 +8,22 @@ tests pin down how the timeline is reconstructed and how missing beats are handl
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.models import EventRecord, User
+from app.models import DataPointSeries, DataSource, EventRecord, User
 from app.repositories.event_record_repository import EventRecordRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.enums import SeriesType
+from app.schemas.enums.series_types import get_series_type_id
 from app.schemas.providers.polar import ExerciseJSON as PolarExerciseJSON
 from app.services.providers.polar.oauth import PolarOAuth
 from app.services.providers.polar.workouts import PolarWorkouts
+from tests.factories import UserConnectionFactory, UserFactory
 
 
 @pytest.fixture(autouse=True)
@@ -91,6 +95,14 @@ class TestBuildRrSamples:
         ]
         assert all(s.series_type == SeriesType.rr_interval for s in samples)
         assert all(s.device_model == "Polar H10" for s in samples)
+
+    def test_rr_sample_with_null_recording_rate_is_read(self, workouts: PolarWorkouts) -> None:
+        """AccessLink sends recording-rate null on RR, the one sample type without a fixed rate."""
+        exercise = _exercise([{"recording-rate": None, "sample-type": "11", "data": "1000,900,1100"}])
+
+        samples = workouts._rr_samples_for(MagicMock(), exercise, uuid4())
+
+        assert [int(s.value) for s in samples] == [1000, 900, 1100]
 
     def test_missing_beats_absorb_the_unaccounted_time(self, workouts: PolarWorkouts) -> None:
         """Two missing beats share the 2 s the valid intervals don't account for."""
@@ -169,6 +181,51 @@ class TestBuildRrSamples:
             workouts._rr_samples_for(MagicMock(), exercise, uuid4())
 
         assert lookup.call_args.args[2] == datetime(2026, 9, 22, 23, 0)
+
+
+class TestRrSurvivesThePull:
+    """Through load_data against the database, as a scheduled pull runs it."""
+
+    @staticmethod
+    def _raw(exercise_id: str, start_time: str, samples: list[dict] | None = None) -> dict:
+        return {
+            "id": exercise_id,
+            "device": "Polar H10",
+            "sport": "OTHER",
+            "start_time": start_time,
+            "start_time_utc_offset": 0,
+            "duration": "PT10S",
+            "samples": samples,
+        }
+
+    @staticmethod
+    def _stored_rr(db: Session, user_id: UUID) -> list[int]:
+        values = db.scalars(
+            select(DataPointSeries.value)
+            .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+            .where(
+                DataSource.user_id == user_id,
+                DataPointSeries.series_type_definition_id == get_series_type_id(SeriesType.rr_interval),
+            )
+            .order_by(DataPointSeries.recorded_at)
+        )
+        return [int(v) for v in values]
+
+    def test_rr_is_kept_when_an_already_stored_exercise_follows(self, db: Session, workouts: PolarWorkouts) -> None:
+        """Flow re-lists 30 days on every pull, so the next exercise is usually one we hold."""
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        held = self._raw("HELD", "2024-01-14T22:00:00")
+        with patch.object(workouts, "_make_api_request", return_value=[held]):
+            workouts.load_data(db, user.id)
+
+        new = self._raw(
+            "NEW", "2024-01-15T22:00:00", [{"recording-rate": None, "sample-type": "11", "data": "1000,900,1100"}]
+        )
+        with patch.object(workouts, "_make_api_request", return_value=[new, held]):
+            workouts.load_data(db, user.id)
+
+        assert self._stored_rr(db, user.id) == [1000, 900, 1100]
 
 
 class TestSamplesAreRequested:

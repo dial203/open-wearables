@@ -7,9 +7,11 @@ class HeartRateJSON(BaseModel):
 
 
 class HRSamplesJSON(BaseModel):
-    recording_rate: int = Field(alias="recording-rate")
-    sample_type: str = Field(alias="sample-type")
-    data: str
+    # AccessLink sends this null on RR (sample type 11), which has no fixed rate. As a
+    # required int it rejected every chest-strap exercise, and every RR beat with it.
+    recording_rate: int | None = Field(None, alias="recording-rate")
+    sample_type: str | None = Field(None, alias="sample-type")
+    data: str | None = None
 
 
 class HRZoneJSON(BaseModel):

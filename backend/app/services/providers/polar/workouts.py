@@ -359,6 +359,10 @@ class PolarWorkouts(BaseWorkoutsTemplate):
             # Flushed per exercise: a night on a chest strap is ~30k beats, so holding
             # every session's beats until the end of a backfill is a lot of memory.
             self._save_rr_samples(db, self._rr_samples_for(db, raw_workout, user_id, day_cache))
+            # Committed here rather than by the next exercise's create(): when that one is
+            # already stored, its duplicate insert rolls the session back and these beats
+            # with it. Flow re-lists 30 days on every pull, so that is the usual case.
+            db.commit()
             count += 1
 
         return count
