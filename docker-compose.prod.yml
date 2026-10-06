@@ -197,13 +197,10 @@ services:
       # VITE_API_URL is what a browser dials; API_URL is the server's own hop.
       - VITE_API_URL=${VITE_API_URL:?Set VITE_API_URL in your environment}
       - API_URL=http://app:8000
-      # Database 2 keeps portal sessions clear of the backend (0) and svix (1).
-      - REDIS_URL=redis://redis:6379/2
     ports:
       - "${PORTAL_PORT:-3001}:3000"
     depends_on:
       - app
-      - redis
     restart: unless-stopped
 
 volumes:
