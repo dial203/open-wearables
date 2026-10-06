@@ -15606,7 +15606,7 @@
           "display_name": {
             "type": "string",
             "title": "Display Name",
-            "description": "What to call this device on screen, derived so every consumer agrees.\n\nA label a person set wins: it is the only name that can say which of two\nidentical units this is. Then the hand-set model, then an auto label, then the\nprovider's verbatim string - showing a raw code beats guessing a friendlier name\nthat may be wrong - and finally a brand-and-type description for a device\nnothing has named yet.",
+            "description": "What to call this device on screen, derived so every consumer agrees.\n\nA label a person set wins: it is the only name that can say which of two\nidentical units this is. Then the hand-set model (else the hardware table's name\nfor the provider's code), then an auto label, then the provider's verbatim\nstring - showing a raw code beats guessing a friendlier name that may be\nwrong - and finally a brand-and-type description for a device nothing has\nnamed yet. A phone is called \"iPhone\", never by model.",
             "readOnly": true
           }
         },
@@ -20563,7 +20563,7 @@
               }
             ],
             "title": "Device Name",
-            "description": "Marketing name for ``device``, derived so it cannot drift from the raw model.",
+            "description": "Marketing name for ``device``, derived so it cannot drift from the raw model.\n\nNever a phone's model: where ``device`` names the phone an app relayed through,\nthis is the maker the writing app names (\"Oura\"), and on the phone's own data\nit is just \"iPhone\". ``device`` keeps the raw string either way.",
             "readOnly": true
           }
         },

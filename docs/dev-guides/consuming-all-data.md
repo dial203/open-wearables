@@ -61,7 +61,12 @@ multiple pipes. **Your app decides** which copy to trust; OW just keeps them all
 Where the provider does report one, nothing needs entering: the model lands on the
 data source with the first sample, and `GET /users/{user_id}/connections` returns it
 per account as `observed_devices`, humanised (`Watch7,5` reads as
-`Apple Watch Series 8`) and most recent first.
+`Apple Watch Ultra 2`), phones left out, most recent first.
+
+`source.device` is always the raw string the provider sent. `source.device_name` is
+its marketing name, except where `device` names a phone: there it is the maker the
+writing app names (`"Oura"` for an Oura ring relayed through Apple Health), or just
+`"iPhone"` for the phone's own data. Key on `device`, display `device_name`.
 
 When a provider doesn't report a device, an operator sets one:
 `PATCH /users/{user_id}/connections/accounts/{connection_id}` with `device_label`.

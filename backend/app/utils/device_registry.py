@@ -13,13 +13,21 @@ Two helpers:
   not supply one.
 
 - ``humanize_device_model()`` maps opaque hardware codes (Apple ``productType``,
-  Samsung ``SM-*``) to marketing names *for display only*. Unknown codes return
-  ``None`` so callers fall back to the raw identifier - we prefer showing the raw
-  code over guessing wrong.
+  Samsung ``SM-*``) to marketing names *for display only*. A code nothing names
+  returns ``None`` so callers fall back to the raw identifier - we prefer showing the
+  raw code over guessing wrong - except an Apple code newer than the table, which
+  still says its family ("Apple Watch (Watch9,1)").
+
+Phones are never named by model. A phone is not a device anyone is validating, and
+on a relayed stream its model is the carrier of somebody else's data, so naming it
+there sends the reader to the wrong hardware. See ``source_device_name()``.
 """
 
-from app.constants.devices_map import DEVICE_NAMES
-from app.schemas.enums import IngestionRoute, ProviderName
+import re
+
+from app.constants.devices_map import DEVICE_NAMES, HANDSET_DEVICE_TYPES, infer_device_type_from_model
+from app.schemas.enums import DeviceType, IngestionRoute, ProviderName
+from app.utils.device_naming import device_display_name
 
 # --- Android package name -> brand (google/health-connect `source` values) -------
 # Matched by exact value or prefix (Health Connect appends a per-record hash).
@@ -127,20 +135,13 @@ AGGREGATOR_PROVIDERS: frozenset[ProviderName] = frozenset(
     }
 )
 
-# --- Apple productType -> marketing name (display only) --------------------------
-APPLE_MODEL_NAMES: dict[str, str] = {
-    "iPhone7,1": "iPhone 6 Plus",
-    "iPhone7,2": "iPhone 6",
-    "iPhone10,5": "iPhone 8 Plus",
-    "iPhone11,8": "iPhone XR",
-    "iPhone12,5": "iPhone 11 Pro Max",
-    "iPhone14,3": "iPhone 13 Pro Max",
-    "iPhone15,3": "iPhone 14 Pro Max",
-    "Watch3,4": "Apple Watch Series 3",
-    "Watch4,2": "Apple Watch Series 4",
-    "Watch6,2": "Apple Watch Series 6",
-    "Watch7,5": "Apple Watch Series 8",
-}
+# --- Apple productType families ---------------------------------------------------
+# Apple codes are named from the full table (app/constants/devices_map/apple.py) and
+# nowhere else. A second, shorter table here once named "Watch7,5" - the Ultra 2 - as a
+# Series 8 and was consulted first, so every Ultra 2 in the system carried the wrong
+# name. A code newer than the table still says what family it belongs to.
+_APPLE_HARDWARE_CODE = re.compile(r"^(Watch|iPhone|iPad|iPod)\d+,\d+$")
+_APPLE_FAMILIES: dict[str, str] = {"Watch": "Apple Watch", "iPhone": "iPhone", "iPad": "iPad", "iPod": "iPod"}
 
 # --- Samsung / LG model code -> marketing name (display only) ---------------------
 SAMSUNG_MODEL_NAMES: dict[str, str] = {
@@ -268,21 +269,111 @@ def resolve_ingestion_route(
     return IngestionRoute.AGGREGATOR
 
 
+def apple_hardware_family(device_model: str | None) -> str | None:
+    """The family an Apple hardware code belongs to ("Watch9,1" -> "Apple Watch")."""
+    match = _APPLE_HARDWARE_CODE.match(device_model or "")
+    return _APPLE_FAMILIES[match.group(1)] if match else None
+
+
+def is_apple_hardware_code(device_model: str | None) -> bool:
+    return apple_hardware_family(device_model) is not None
+
+
 def humanize_device_model(device_model: str | None) -> str | None:
     """Map an opaque hardware code to a marketing name, for display only.
 
-    Returns None for unknown codes so callers keep the raw identifier.
+    Returns None for a code nothing names, so callers keep the raw identifier. An
+    Apple code the table does not know yet is the exception: its family is certain
+    from the code alone, so it reads "Apple Watch (Watch9,1)" until the code is added
+    and the full name takes over everywhere at once.
     """
     if not device_model:
         return None
-    if device_model in APPLE_MODEL_NAMES:
-        return APPLE_MODEL_NAMES[device_model]
     if device_model in SAMSUNG_MODEL_NAMES:
         return SAMSUNG_MODEL_NAMES[device_model]
-    # The curated maps above only cover the handful of codes we name explicitly;
-    # fall through to the full hardware registry so a current Apple Watch shows as
-    # "Apple Watch Series 10 46mm (GPS)" rather than the raw "Watch7,9".
-    return DEVICE_NAMES.get(device_model)
+    if name := DEVICE_NAMES.get(device_model):
+        return name
+    if family := apple_hardware_family(device_model):
+        return f"{family} ({device_model})"
+    return None
+
+
+def is_handset_model(device_model: str | None) -> bool:
+    """Whether a model string names a phone or tablet rather than something worn."""
+    return bool(device_model) and infer_device_type_from_model(device_model) in HANDSET_DEVICE_TYPES
+
+
+def handset_name(device_model: str | None) -> str:
+    """A phone or tablet's name without its model: "iPhone", "iPad", else "Phone".
+
+    Matched on the prefix rather than the full code, because the Apple XML import
+    stores HKDevice's bare ``model`` ("iPhone") rather than the hardware code.
+    """
+    for family in ("iPhone", "iPad", "iPod"):
+        if (device_model or "").startswith(family):
+            return family
+    return "Tablet" if infer_device_type_from_model(device_model) == DeviceType.TABLET else "Phone"
+
+
+def source_device_name(
+    device_model: str | None,
+    provider: str | ProviderName | None = None,
+    writers: tuple[str | None, ...] = (),
+) -> str | None:
+    """What to call the device behind a sample, never by a phone's model.
+
+    Where the model string names a phone, the sample either came from an app that
+    relayed another maker's device through it - and that maker, read off the writing
+    app, is the device worth naming ("Oura", "Garmin") - or from the phone itself,
+    which is called "iPhone" and no more. Everything else is the marketing name, or
+    the provider's own string when nothing names it.
+    """
+    if not device_model:
+        return None
+    if not is_handset_model(device_model):
+        return humanize_device_model(device_model) or device_model
+    try:
+        provider_enum = ProviderName(provider) if provider else None
+    except ValueError:
+        provider_enum = None
+    if provider_enum is not None:
+        for writer in writers:
+            if brand := relayed_brand(provider_enum, writer):
+                return brand
+    return handset_name(device_model)
+
+
+def registry_device_name(
+    *,
+    label: str | None,
+    model_display: str | None,
+    model_raw: str | None,
+    brand_display: str | None = None,
+    brand: str | None = None,
+    device_type: str | None = None,
+    label_source: str | None = None,
+) -> str:
+    """What to call a registry device on screen.
+
+    ``device_display_name`` with two things this module knows and that one may not
+    import: a model nobody named by hand is named from the hardware table at read time,
+    so a code added to the table (or a name corrected there) reaches devices already
+    stored; and a phone is called "iPhone" rather than by model unless a person
+    labelled it.
+    """
+    if is_handset_model(model_raw):
+        if label and label_source != "auto":
+            return label
+        return handset_name(model_raw)
+    return device_display_name(
+        label=label,
+        model_display=model_display or humanize_device_model(model_raw),
+        model_raw=model_raw,
+        brand_display=brand_display,
+        brand=brand,
+        device_type=device_type,
+        label_source=label_source,
+    )
 
 
 # --- Brand -> the provider that would deliver it directly -------------------------

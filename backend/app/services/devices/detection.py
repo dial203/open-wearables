@@ -31,6 +31,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.constants.devices_map import (
+    DEVICE_NAMES,
     HANDSET_DEVICE_TYPES,
     infer_device_type_from_source_name,
     reconcile_device_type,
@@ -47,7 +48,7 @@ from app.schemas.enums import (
     ProviderName,
 )
 from app.services.devices.identity import IdentityClaim, claims_from_data_source, relaying_host_model
-from app.utils.device_registry import humanize_device_model, relayed_brand, resolve_brand
+from app.utils.device_registry import is_apple_hardware_code, relayed_brand, resolve_brand
 
 log = getLogger(__name__)
 
@@ -342,13 +343,24 @@ class DeviceDetectionService:
                 db_session, user_id, provider, data_source, host_model, declared_sensor, reported_device_type
             )
         else:
+            # model_display is left for a person to set. The hardware table names
+            # model_raw when the device is read, so a code the table learns later -
+            # or a name it corrects - reaches this device too; a name copied in here
+            # would freeze whatever the table said today, which is how every Ultra 2
+            # came to be stored as a Series 8.
+            if is_apple_hardware_code(data_source.device_model) and data_source.device_model not in DEVICE_NAMES:
+                log.warning(
+                    "Apple hardware code %s is not in app/constants/devices_map/apple.py; "
+                    "shown by family until it is added",
+                    data_source.device_model,
+                )
             device = self.repo.create(
                 db_session,
                 user_id=user_id,
                 device_type=data_source.device_type or DeviceType.UNKNOWN.value,
                 brand=resolve_brand(_provider_enum(provider), data_source.device_model, data_source.source),
                 model_raw=data_source.device_model,
-                model_display=humanize_device_model(data_source.device_model),
+                model_display=None,
                 actor=SYSTEM_ACTOR,
                 reason=f"First seen on the {provider} route",
                 detected=True,

@@ -16,6 +16,7 @@ import {
   registryDeviceName,
   sortDevicesByName,
 } from '@/components/common/device-type';
+import { visibleModel } from '@/lib/utils/device';
 import { providerLabel } from '@/components/common/source-badge';
 import { SourceActivityPanel } from '@/components/user/source-activity';
 import {
@@ -132,7 +133,8 @@ export function LinkDataSourceDialog({
       ...EMPTY_DRAFT,
       device_type: source?.device_type ?? 'unknown',
       brand: source?.original_source_name ?? '',
-      model_raw: source?.device_model ?? '',
+      // A phone's model would name the handset the app ran on, not this device.
+      model_raw: visibleModel(source?.device_model) ?? '',
     });
   };
 
@@ -203,9 +205,11 @@ export function LinkDataSourceDialog({
               {source?.source && source.source !== source.provider
                 ? ` · ${source.source}`
                 : ''}
-              {source?.device_model
-                ? ` · ${source.device_model}`
-                : ' · no model reported'}
+              {visibleModel(source?.device_model)
+                ? ` · ${source?.device_model}`
+                : source?.device_model
+                  ? ''
+                  : ' · no model reported'}
             </div>
             {source?.user_connection_id ? (
               <div className="space-y-0.5">

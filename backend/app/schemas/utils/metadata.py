@@ -4,9 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, computed_field
 
-from app.constants.devices_map import resolve_device_name
 from app.schemas.enums import DeviceType, Resolution
-from app.utils.device_naming import device_display_name
+from app.utils.device_registry import registry_device_name, source_device_name
 
 
 class SourceMetadata(BaseModel):
@@ -26,8 +25,13 @@ class SourceMetadata(BaseModel):
     @computed_field
     @property
     def device_name(self) -> str | None:
-        """Marketing name for ``device``, derived so it cannot drift from the raw model."""
-        return resolve_device_name(self.device)
+        """Marketing name for ``device``, derived so it cannot drift from the raw model.
+
+        Never a phone's model: where ``device`` names the phone an app relayed through,
+        this is the maker the writing app names ("Oura"), and on the phone's own data
+        it is just "iPhone". ``device`` keeps the raw string either way.
+        """
+        return source_device_name(self.device, self.provider, (self.source, self.original_source_name))
 
     # Identity fields — let a consumer join a sample straight back to the row from
     # GET /users/{id}/data-sources instead of re-deriving a composite key.
@@ -225,7 +229,7 @@ def device_metadata_fields(device: Any) -> dict[str, Any]:
     device_type = getattr(device, "device_type", None)
     fields: dict[str, Any] = {
         "device_label": getattr(device, "label", None),
-        "device_display_name": device_display_name(
+        "device_display_name": registry_device_name(
             label=getattr(device, "label", None),
             model_display=getattr(device, "model_display", None),
             model_raw=getattr(device, "model_raw", None),

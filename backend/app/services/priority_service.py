@@ -19,7 +19,12 @@ from app.schemas.model_crud.data_priority import (
 )
 from app.schemas.model_crud.user_management import account_display_label
 from app.services.sources.relay_dedup import classify_sources
-from app.utils.device_registry import humanize_device_model, resolve_ingestion_route
+from app.utils.device_registry import (
+    handset_name,
+    humanize_device_model,
+    is_handset_model,
+    resolve_ingestion_route,
+)
 from app.utils.exceptions import handle_exceptions
 
 
@@ -261,12 +266,16 @@ class PriorityService:
             # Rows loaded from the database carry provider as a plain str (the
             # column is a String, not a native enum), so there is no .value.
             parts.append(ds.provider.capitalize())
-        if ds.device_model:
+        if ds.device_model and not is_handset_model(ds.device_model):
             # Prefer a marketing name for opaque hardware codes; fall back to the
             # raw device_model when the code is unknown (never lost).
             parts.append(humanize_device_model(ds.device_model) or ds.device_model)
         elif ds.original_source_name:
+            # Also where the model names a phone: that is the handset an app ran on,
+            # and the app's brand is the better name for what recorded the data.
             parts.append(ds.original_source_name)
+        elif ds.device_model:
+            parts.append(handset_name(ds.device_model))
         name = " - ".join(parts) if parts else "Unknown Source"
         # Two accounts with one provider report the same model, so "Garmin -
         # fenix 7" names both of them. Appended only when the user actually

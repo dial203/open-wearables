@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, computed_field
 
 from app.schemas.enums import DeviceType, LabelSource
-from app.utils.device_naming import device_display_name
+from app.utils.device_registry import registry_device_name
 
 
 class DeviceIdentityResponse(BaseModel):
@@ -133,12 +133,13 @@ class DeviceResponse(BaseModel):
         """What to call this device on screen, derived so every consumer agrees.
 
         A label a person set wins: it is the only name that can say which of two
-        identical units this is. Then the hand-set model, then an auto label, then the
-        provider's verbatim string - showing a raw code beats guessing a friendlier name
-        that may be wrong - and finally a brand-and-type description for a device
-        nothing has named yet.
+        identical units this is. Then the hand-set model (else the hardware table's name
+        for the provider's code), then an auto label, then the provider's verbatim
+        string - showing a raw code beats guessing a friendlier name that may be
+        wrong - and finally a brand-and-type description for a device nothing has
+        named yet. A phone is called "iPhone", never by model.
         """
-        return device_display_name(
+        return registry_device_name(
             label=self.label,
             model_display=self.model_display,
             model_raw=self.model_raw,

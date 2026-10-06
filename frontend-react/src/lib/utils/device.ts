@@ -16,7 +16,7 @@ const APPLE_MODEL_NAMES: Record<string, string> = {
   'Watch3,4': 'Apple Watch Series 3',
   'Watch4,2': 'Apple Watch Series 4',
   'Watch6,2': 'Apple Watch Series 6',
-  'Watch7,5': 'Apple Watch Series 8',
+  'Watch7,5': 'Apple Watch Ultra 2',
 };
 
 const SAMSUNG_MODEL_NAMES: Record<string, string> = {
@@ -37,6 +37,23 @@ export function humanizeDeviceModel(
 }
 
 export type DeviceKind = 'watch' | 'ring' | 'band' | 'phone' | 'other';
+
+/** Whether a raw model string names a phone or tablet ("iPhone18,1", "SM-S901U"). */
+export function isHandsetModel(model: string | null | undefined): boolean {
+  if (!model) return false;
+  return inferDeviceKind(model) === 'phone' || /^(iPad|iPod)\d/.test(model);
+}
+
+/**
+ * A raw model string worth showing, or null where it names a phone.
+ *
+ * On an Apple Health or Health Connect source the phone is the handset an app ran on,
+ * not a device anyone wore, and its model beside the watches only invites mapping the
+ * wrong thing. The raw value is still stored and sent; this is display only.
+ */
+export function visibleModel(model: string | null | undefined): string | null {
+  return model && !isHandsetModel(model) ? model : null;
+}
 
 /** Best-effort device kind from the model string, for choosing an icon. */
 export function inferDeviceKind(device: string | null | undefined): DeviceKind {

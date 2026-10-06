@@ -41,6 +41,7 @@ import {
   registryDeviceName,
   sortDevicesByName,
 } from '@/components/common/device-type';
+import { visibleModel } from '@/lib/utils/device';
 import {
   useDevices,
   useCreateDevice,
@@ -339,7 +340,9 @@ function UnattributedSources({
             <span className="truncate">
               {source.provider}
               {source.source ? ` · ${source.source}` : ''}
-              {source.device_model ? ` · ${source.device_model}` : ''}
+              {visibleModel(source.device_model)
+                ? ` · ${source.device_model}`
+                : ''}
             </span>
             <SourceAccount
               connectionId={source.user_connection_id}
@@ -502,13 +505,14 @@ function DeviceCard({
 
           <p className="mt-0.5 text-xs text-muted-foreground">
             {device.brand_display ?? device.brand ?? 'Unknown brand'}
-            {device.model_raw ? ` · reported as "${device.model_raw}"` : ''}
+            {visibleModel(device.model_raw)
+              ? ` · reported as "${device.model_raw}"`
+              : ''}
             {/* The provider only ever described the phone that relayed this, so
                 everything naming the unit itself was typed by a person. Saying so is
-                what stops the name reading as something a provider confirmed. */}
-            {device.host_model_raw
-              ? ` · relayed by ${device.host_model_raw}`
-              : ''}
+                what stops the name reading as something a provider confirmed. Which
+                phone it was is left out: it is never the device being mapped. */}
+            {device.host_model_raw ? ' · relayed through a phone' : ''}
             {device.wear_location ? ` · ${device.wear_location}` : ''}
             {device.serial ? ` · s/n ${device.serial}` : ''}
             {device.firmware_version ? ` · fw ${device.firmware_version}` : ''}
@@ -542,7 +546,9 @@ function DeviceCard({
                     <span className="truncate">
                       {ds.provider}
                       {ds.source ? ` · ${ds.source}` : ''}
-                      {ds.device_model ? ` · ${ds.device_model}` : ''}
+                      {visibleModel(ds.device_model)
+                        ? ` · ${ds.device_model}`
+                        : ''}
                     </span>
                     <SourceAccount
                       connectionId={ds.user_connection_id}
@@ -1151,7 +1157,7 @@ function SplitDeviceDialog({
               <span className="truncate">
                 {ds.provider}
                 {ds.source ? ` · ${ds.source}` : ''}
-                {ds.device_model ? ` · ${ds.device_model}` : ''}
+                {visibleModel(ds.device_model) ? ` · ${ds.device_model}` : ''}
               </span>
             </label>
           ))}

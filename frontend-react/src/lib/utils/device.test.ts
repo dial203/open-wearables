@@ -3,7 +3,9 @@ import {
   deviceDisplayName,
   humanizeDeviceModel,
   inferDeviceKind,
+  isHandsetModel,
   sourceDeviceName,
+  visibleModel,
 } from './device';
 
 const base = {
@@ -35,12 +37,12 @@ describe('deviceDisplayName', () => {
       deviceDisplayName(
         {
           ...base,
-          model_display: 'Apple Watch Series 8',
+          model_display: 'Apple Watch Ultra 2',
           model_raw: 'Watch7,5',
         },
         'Watch'
       )
-    ).toBe('Apple Watch Series 8');
+    ).toBe('Apple Watch Ultra 2');
 
     // Showing the provider's raw code beats guessing a friendlier one that is wrong.
     expect(deviceDisplayName({ ...base, model_raw: 'Watch7,9' }, 'Watch')).toBe(
@@ -129,5 +131,21 @@ describe('inferDeviceKind', () => {
     expect(inferDeviceKind('Whoop 5.0')).toBe('band');
     expect(inferDeviceKind('iPhone15,3')).toBe('phone');
     expect(inferDeviceKind(undefined)).toBe('other');
+  });
+});
+
+describe('visibleModel', () => {
+  it('hides a phone or tablet model, which is never the device being mapped', () => {
+    expect(isHandsetModel('iPhone18,1')).toBe(true);
+    expect(isHandsetModel('iPad16,3')).toBe(true);
+    expect(isHandsetModel('SM-S901U')).toBe(true);
+    expect(visibleModel('iPhone18,1')).toBeNull();
+  });
+
+  it('keeps every other model as reported', () => {
+    expect(isHandsetModel('Watch8,1')).toBe(false);
+    expect(visibleModel('Watch8,1')).toBe('Watch8,1');
+    expect(visibleModel('Garmin fenix 8')).toBe('Garmin fenix 8');
+    expect(visibleModel(null)).toBeNull();
   });
 });
