@@ -7,9 +7,11 @@ class HeartRateJSON(BaseModel):
 
 
 class HRSamplesJSON(BaseModel):
-    recording_rate: int = Field(alias="recording-rate")
-    sample_type: str = Field(alias="sample-type")
-    data: str
+    # AccessLink sends this null on RR (sample type 11), which has no fixed rate. As a
+    # required int it rejected every chest-strap exercise, and every RR beat with it.
+    recording_rate: int | None = Field(None, alias="recording-rate")
+    sample_type: str | None = Field(None, alias="sample-type")
+    data: str | None = None
 
 
 class HRZoneJSON(BaseModel):
@@ -53,7 +55,9 @@ class ExerciseJSON(BaseModel):
     duration: str
 
     calories: int | None = None
-    distance: int | None = None
+    # Metres. AccessLink types this as a number and sends fractions (1600.2), which an
+    # int field rejects.
+    distance: float | None = None
     heart_rate: HeartRateJSON | None = None
     heart_rate_zones: list[HRZoneJSON] | None = None
 
