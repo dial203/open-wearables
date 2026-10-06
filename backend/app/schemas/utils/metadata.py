@@ -154,7 +154,9 @@ class SourceMetadata(BaseModel):
             source_tag=data_source.source,
             original_source_name=data_source.original_source_name,
             ingestion_route=(
-                resolve_ingestion_route(data_source.provider, data_source.original_source_name).value
+                resolve_ingestion_route(
+                    data_source.provider, data_source.original_source_name, data_source.device_model
+                ).value
                 if data_source.provider
                 else None
             ),

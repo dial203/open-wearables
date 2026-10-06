@@ -121,7 +121,7 @@ class PriorityService:
                 account_label=self._account_label(accounts.get(ds.user_connection_id)),
                 account_email=getattr(accounts.get(ds.user_connection_id), "account_email", None),
                 account_type=getattr(accounts.get(ds.user_connection_id), "account_type", None),
-                ingestion_route=resolve_ingestion_route(ds.provider, ds.original_source_name),
+                ingestion_route=resolve_ingestion_route(ds.provider, ds.original_source_name, ds.device_model),
                 relay_visibility=self._relay_visibility(ds),
                 redundant_relay=ds.id in relay_status,
                 direct_provider=getattr(relay_status.get(ds.id), "direct_provider", None),
@@ -176,7 +176,9 @@ class PriorityService:
             display_name=self._build_display_name(data_source),
             device_id=data_source.device_id,
             attribution_locked_at=data_source.attribution_locked_at,
-            ingestion_route=resolve_ingestion_route(data_source.provider, data_source.original_source_name),
+            ingestion_route=resolve_ingestion_route(
+                data_source.provider, data_source.original_source_name, data_source.device_model
+            ),
             relay_visibility=self._relay_visibility(data_source),
             redundant_relay=data_source.id in relay_status,
             direct_provider=getattr(relay_status.get(data_source.id), "direct_provider", None),

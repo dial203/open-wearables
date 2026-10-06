@@ -238,6 +238,7 @@ def relayed_brand(provider: ProviderName, writer_id: str | None) -> str | None:
 def resolve_ingestion_route(
     provider: ProviderName | str,
     original_source_name: str | None = None,
+    device_model: str | None = None,
 ) -> IngestionRoute:
     """Whether a source reached us from its maker or via an aggregator platform.
 
@@ -247,9 +248,12 @@ def resolve_ingestion_route(
     another maker's data - the Oura/Garmin/Whoop rows that arrive via Apple or
     Google Health.
 
-    Deliberately conservative: a source is only called an aggregator when a brand
-    other than the platform's own can actually be named, so an unrecognised brand
-    is never mislabelled as relayed.
+    An Apple Watch writes under the name its owner gave it ("JOSHUA A's Apple
+    Watch", "MD Apple Watch Ultra 4"), which is not the platform's brand, so a name
+    alone made every renamed watch read as relayed - and a consumer that keeps only
+    first-party Apple HRV dropped those nights. Apple Watch hardware writing under a
+    watch's own name is first-party. A writer that is an app, or a watch renamed
+    past recognition, keeps the conservative answer below.
     """
     try:
         provider_enum = ProviderName(provider)
@@ -264,6 +268,13 @@ def resolve_ingestion_route(
         return IngestionRoute.DIRECT
 
     if original_source_name.strip().casefold() == platform_brand.casefold():
+        return IngestionRoute.DIRECT
+
+    if (
+        provider_enum == ProviderName.APPLE
+        and apple_hardware_family(device_model) == "Apple Watch"
+        and "apple watch" in " ".join(original_source_name.split()).casefold()
+    ):
         return IngestionRoute.DIRECT
 
     return IngestionRoute.AGGREGATOR

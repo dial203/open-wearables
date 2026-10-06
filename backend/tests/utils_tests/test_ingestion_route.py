@@ -49,3 +49,24 @@ def test_accepts_plain_provider_strings() -> None:
     assert resolve_ingestion_route("oura", "Oura") == IngestionRoute.DIRECT
     # An unrecognised provider must not raise.
     assert resolve_ingestion_route("not_a_provider", "Oura") == IngestionRoute.DIRECT
+
+
+@pytest.mark.parametrize(
+    ("writer", "device_model", "expected"),
+    [
+        # A watch writes under the name its owner gave it, which is not "Apple".
+        ("JOSHUA A's Apple Watch", "Watch8,1", IngestionRoute.DIRECT),
+        ("MD Apple Watch Ultra 4", "Watch8,1", IngestionRoute.DIRECT),
+        ("Michael’s Apple Watch", "Watch7,5", IngestionRoute.DIRECT),
+        # An app on the watch, a watch renamed past recognition, and the phone stay
+        # where the name alone puts them.
+        ("AutoSleep", "Watch7,5", IngestionRoute.AGGREGATOR),
+        ("Josh's Ultra", "Watch8,1", IngestionRoute.AGGREGATOR),
+        ("Oura", "iPhone18,1", IngestionRoute.AGGREGATOR),
+        ("Michael's Apple Watch", None, IngestionRoute.AGGREGATOR),
+    ],
+)
+def test_an_apple_watch_under_its_own_name_is_first_party(
+    writer: str, device_model: str | None, expected: IngestionRoute
+) -> None:
+    assert resolve_ingestion_route(ProviderName.APPLE, writer, device_model) == expected

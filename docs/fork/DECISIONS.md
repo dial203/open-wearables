@@ -852,3 +852,14 @@ the registry is called `iPhone` unless a person labelled it, and the dashboard d
 phone codes from source lines, tooltips and the "relayed by" note. The raw strings are
 unchanged in storage and in `source.device`, which is what consumers key on (the
 Sleep Validation Hub's OW origin key is `device`, not `device_name`).
+
+## An Apple Watch under its owner's name is first-party Apple data
+
+`resolve_ingestion_route` called a source relayed whenever its name was not the
+platform's brand. An Apple Watch writes under the name its owner gave it ("JOSHUA A's
+Apple Watch"), so every watch that had been named read as relayed, and a consumer that
+keeps only first-party Apple HRV - the Sleep Validation Hub's SDNN pairing - dropped
+those nights. Apple Watch hardware (`Watch*` codes) writing under a name that says
+"Apple Watch" is now `direct`. An app writing from the watch ("AutoSleep") and a watch
+renamed past recognition keep the conservative answer, since nothing on the row can
+then tell the watch's own data from an app's.
