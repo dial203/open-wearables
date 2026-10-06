@@ -298,6 +298,17 @@ def humanize_device_model(device_model: str | None) -> str | None:
     return None
 
 
+def hardware_model_name(device_model: str | None) -> str | None:
+    """The one model a hardware code identifies, or None where the code alone does not.
+
+    An exact table hit only: a family fallback, a phone and a provider's free-text
+    string identify nothing a consumer should file data under without asking.
+    """
+    if not device_model or is_handset_model(device_model):
+        return None
+    return SAMSUNG_MODEL_NAMES.get(device_model) or DEVICE_NAMES.get(device_model)
+
+
 def is_handset_model(device_model: str | None) -> bool:
     """Whether a model string names a phone or tablet rather than something worn."""
     return bool(device_model) and infer_device_type_from_model(device_model) in HANDSET_DEVICE_TYPES

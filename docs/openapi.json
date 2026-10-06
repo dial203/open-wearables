@@ -20527,6 +20527,19 @@
             "description": "Human-assigned name for the device, if one has been set.",
             "example": "Sub 04 fenix"
           },
+          "device_label_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Label Source",
+            "description": "`manual` when a person set `device_label`, `auto` when OW's detection guessed it. Only a manual label is someone's statement of which device this is.",
+            "example": "manual"
+          },
           "device_display_name": {
             "anyOf": [
               {
@@ -20565,12 +20578,26 @@
             "title": "Device Name",
             "description": "Marketing name for ``device``, derived so it cannot drift from the raw model.\n\nNever a phone's model: where ``device`` names the phone an app relayed through,\nthis is the maker the writing app names (\"Oura\"), and on the phone's own data\nit is just \"iPhone\". ``device`` keeps the raw string either way.",
             "readOnly": true
+          },
+          "device_hardware_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Hardware Name",
+            "description": "The model ``device`` identifies on its own, or null where it does not.\n\nSet only where the provider's hardware code names exactly one model in OW's table\n(Apple \"Watch8,1\" -> \"Apple Watch Ultra 4 49mm\"). Null for a phone, a code the\ntable does not know yet and a provider's free-text model string. Unlike\n``device_name`` this is never a family, a writer or a guess, so a consumer may\nfile data under it without asking anyone.",
+            "readOnly": true
           }
         },
         "type": "object",
         "required": [
           "provider",
-          "device_name"
+          "device_name",
+          "device_hardware_name"
         ],
         "title": "SourceMetadata",
         "description": "Attribution for a sample or record.\n\n``provider`` is the integration the data arrived through (apple, garmin, ...).\n``source`` is the writer inside that integration - a third-party app name for\nHealthKit/Health Connect data (\"Connect\", \"Zepp Life\"), or the provider key\nitself for native API integrations."
