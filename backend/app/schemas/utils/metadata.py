@@ -4,9 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, computed_field
 
-from app.constants.devices_map import resolve_device_name
 from app.schemas.enums import DeviceType, Resolution
-from app.utils.device_naming import device_display_name
+from app.utils.device_registry import hardware_model_name, registry_device_name, source_device_name
 
 
 class SourceMetadata(BaseModel):
@@ -26,8 +25,26 @@ class SourceMetadata(BaseModel):
     @computed_field
     @property
     def device_name(self) -> str | None:
-        """Marketing name for ``device``, derived so it cannot drift from the raw model."""
-        return resolve_device_name(self.device)
+        """Marketing name for ``device``, derived so it cannot drift from the raw model.
+
+        Never a phone's model: where ``device`` names the phone an app relayed through,
+        this is the maker the writing app names ("Oura"), and on the phone's own data
+        it is just "iPhone". ``device`` keeps the raw string either way.
+        """
+        return source_device_name(self.device, self.provider, (self.source, self.original_source_name))
+
+    @computed_field
+    @property
+    def device_hardware_name(self) -> str | None:
+        """The model ``device`` identifies on its own, or null where it does not.
+
+        Set only where the provider's hardware code names exactly one model in OW's table
+        (Apple "Watch8,1" -> "Apple Watch Ultra 4 49mm"). Null for a phone, a code the
+        table does not know yet and a provider's free-text model string. Unlike
+        ``device_name`` this is never a family, a writer or a guess, so a consumer may
+        file data under it without asking anyone.
+        """
+        return hardware_model_name(self.device)
 
     # Identity fields — let a consumer join a sample straight back to the row from
     # GET /users/{id}/data-sources instead of re-deriving a composite key.
@@ -82,6 +99,14 @@ class SourceMetadata(BaseModel):
         description="Human-assigned name for the device, if one has been set.",
         example="Sub 04 fenix",
     )
+    device_label_source: str | None = Field(
+        None,
+        description=(
+            "`manual` when a person set `device_label`, `auto` when OW's detection guessed it. "
+            "Only a manual label is someone's statement of which device this is."
+        ),
+        example="manual",
+    )
     device_display_name: str | None = Field(
         None,
         description=(
@@ -129,7 +154,9 @@ class SourceMetadata(BaseModel):
             source_tag=data_source.source,
             original_source_name=data_source.original_source_name,
             ingestion_route=(
-                resolve_ingestion_route(data_source.provider, data_source.original_source_name).value
+                resolve_ingestion_route(
+                    data_source.provider, data_source.original_source_name, data_source.device_model
+                ).value
                 if data_source.provider
                 else None
             ),
@@ -225,7 +252,8 @@ def device_metadata_fields(device: Any) -> dict[str, Any]:
     device_type = getattr(device, "device_type", None)
     fields: dict[str, Any] = {
         "device_label": getattr(device, "label", None),
-        "device_display_name": device_display_name(
+        "device_label_source": getattr(device, "label_source", None),
+        "device_display_name": registry_device_name(
             label=getattr(device, "label", None),
             model_display=getattr(device, "model_display", None),
             model_raw=getattr(device, "model_raw", None),

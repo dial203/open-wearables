@@ -198,8 +198,10 @@ Nobody should be typing those in.
 `GET /users/{id}/connections` returns `observed_devices` per account: the
 distinct device models that account has reported, run through the same
 `humanize_device_model` used elsewhere (so `Watch7,5` reads as
-`Apple Watch Series 8`), most recent first. The dashboard shows them with an
-"auto" marker to distinguish them from a value somebody entered.
+`Apple Watch Ultra 2`), most recent first. Phones are left out: on an Apple or
+Health Connect account a phone's model is the handset an app ran on, not a device
+anyone wore. The dashboard shows them with an "auto" marker to distinguish them
+from a value somebody entered.
 
 `device_label` remains the manual fallback, and is only needed for providers
 whose API reports no device at all — Whoop is the main one. Oura is filled

@@ -12,10 +12,10 @@ import re
 from typing import Any
 from uuid import UUID
 
-from app.constants.devices_map import resolve_device_name
 from app.constants.webhooks.events import SERIES_TYPE_TO_GRANULAR_EVENT, SERIES_TYPE_TO_GROUP_EVENT
 from app.schemas.webhooks.event_types import WebhookEventType
 from app.services.outgoing_webhooks import svix as svix_service
+from app.utils.device_registry import source_device_name
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ def on_sleep_created(
                     "source": source_app,
                     "device": device,
                     "device_type": device_type,
-                    "device_name": resolve_device_name(device),
+                    "device_name": source_device_name(device, provider, (source_app,)),
                 },
                 "efficiency_percent": efficiency_percent,
                 "stages": stages,

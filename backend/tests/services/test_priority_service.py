@@ -190,13 +190,29 @@ class TestPriorityServiceGetUserDataSources:
     def test_get_user_data_sources_keeps_an_unrecognised_model_verbatim(
         self, db: Session, priority_service: PriorityService
     ) -> None:
-        """A hardware code we cannot name is shown as-is, never dropped or guessed at."""
+        """A hardware code we cannot name is kept, never dropped or guessed at.
+
+        An Apple code newer than the table still says its family, which is not a guess.
+        """
         user = UserFactory()
         DataSourceFactory(user=user, provider=ProviderName.APPLE, device_model="Watch99,9")
 
         result = priority_service.get_user_data_sources(db, user.id)
 
-        assert result.items[0].display_name == "Apple - Watch99,9"
+        assert result.items[0].display_name == "Apple - Apple Watch (Watch99,9)"
+
+    def test_get_user_data_sources_names_a_relay_by_its_app_not_the_phone(
+        self, db: Session, priority_service: PriorityService
+    ) -> None:
+        """The phone that ran the writing app is not the device; the app's brand is."""
+        user = UserFactory()
+        DataSourceFactory(
+            user=user, provider=ProviderName.APPLE, device_model="iPhone18,1", original_source_name="Oura"
+        )
+
+        result = priority_service.get_user_data_sources(db, user.id)
+
+        assert result.items[0].display_name == "Apple - Oura"
 
 
 class TestPriorityServiceGetDeviceTypePriorities:

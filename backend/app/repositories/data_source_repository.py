@@ -31,6 +31,7 @@ from app.utils.connection_context import get_active_connection_id
 from app.utils.device_registry import (
     PROVIDER_BRANDS,
     humanize_device_model,
+    is_handset_model,
     looks_like_writer_id,
     resolve_brand_signal,
 )
@@ -979,6 +980,10 @@ class DataSourceRepository(
         Returned humanised (marketing names for opaque hardware codes) and
         de-duplicated, ordered by how recently the source was created so the
         current device leads. Accounts with nothing observed are absent.
+
+        Phones are left out. A phone's model on an Apple or Health Connect account
+        is the handset that ran an app, not a device anyone wore, and listing it
+        beside the watches only invites mapping the wrong thing.
         """
         rows = (
             db_session.query(self.model.user_connection_id, self.model.device_model)
@@ -992,6 +997,8 @@ class DataSourceRepository(
         )
         observed: dict[UUID, list[str]] = {}
         for connection_id, device_model in rows:
+            if is_handset_model(device_model):
+                continue
             name = humanize_device_model(device_model) or device_model
             seen = observed.setdefault(connection_id, [])
             if name not in seen:

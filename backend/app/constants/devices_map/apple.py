@@ -124,6 +124,12 @@ APPLE_DEVICE_NAMES = {
     "Watch7,18": "Apple Watch Series 11 46mm",
     "Watch7,19": "Apple Watch Series 11 42mm (GPS+Cellular)",
     "Watch7,20": "Apple Watch Series 11 46mm (GPS+Cellular)",
+    # 2026 models, from https://everymac.com/devices/by-identifier/all-apple-watch-model-identifiers.html
+    "Watch8,1": "Apple Watch Ultra 4 49mm",
+    "Watch8,2": "Apple Watch Series 12 42mm (GPS)",
+    "Watch8,3": "Apple Watch Series 12 46mm (GPS)",
+    "Watch8,4": "Apple Watch Series 12 42mm (GPS+Cellular)",
+    "Watch8,5": "Apple Watch Series 12 46mm (GPS+Cellular)",
     # iPads (common models)
     "iPad1,1": "iPad",
     "iPad2,1": "iPad 2nd Gen",

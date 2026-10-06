@@ -226,7 +226,10 @@ def _candidates(db_session: DbSession, user_id: UUID) -> _Candidates:
             continue
         if visibility is RelayVisibility.ALWAYS:
             continue
-        if resolve_ingestion_route(source.provider, source.original_source_name) is not IngestionRoute.AGGREGATOR:
+        if (
+            resolve_ingestion_route(source.provider, source.original_source_name, source.device_model)
+            is not IngestionRoute.AGGREGATOR
+        ):
             continue
         brand = _brand_key(source)
         if not brand or brand not in directs:

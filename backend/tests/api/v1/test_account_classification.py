@@ -205,7 +205,26 @@ class TestDevicesLabelThemselves:
         db.commit()
 
         response = client.get(f"/api/v1/users/{user.id}/connections", headers=api_key_header)
-        assert response.json()[0]["observed_devices"] == ["Apple Watch Series 8"]
+        assert response.json()[0]["observed_devices"] == ["Apple Watch Ultra 2"]
+
+    def test_phones_are_not_listed_among_an_accounts_devices(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        """The handset an app ran on is not a device anyone wore."""
+        connection = UserConnectionFactory(user=user, provider="apple", provider_user_id=None)
+        db.commit()
+        for model in ("Watch8,1", "iPhone18,1"):
+            DataSourceRepository().ensure_data_source(
+                db,
+                user_id=user.id,
+                provider=ProviderName.APPLE,
+                user_connection_id=connection.id,
+                device_model=model,
+            )
+        db.commit()
+
+        response = client.get(f"/api/v1/users/{user.id}/connections", headers=api_key_header)
+        assert response.json()[0]["observed_devices"] == ["Apple Watch Ultra 4 49mm"]
 
     def test_each_account_reports_only_its_own_devices(
         self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]

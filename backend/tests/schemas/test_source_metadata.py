@@ -199,3 +199,41 @@ class TestRelayedAttribution:
 
         fields = device_metadata_fields(self._device(label=None, brand=None, device_type="headband"))
         assert fields["device_display_name"] == "Unidentified headband"
+
+
+class TestWhatAConsumerMayFileUnasked:
+    """The fields a downstream system can map a device from without asking anyone.
+
+    The Sleep Validation Hub holds every night from a source nobody has mapped. These
+    two fields say when OW already knows the device: the hardware code names one model,
+    or a person labelled the unit.
+    """
+
+    def test_a_watch_code_names_its_model(self) -> None:
+        meta = SourceMetadata(provider="apple", source="MD Apple Watch Ultra 4", device="Watch8,1")
+        assert meta.device_hardware_name == "Apple Watch Ultra 4 49mm"
+        assert meta.device_name == "Apple Watch Ultra 4 49mm"
+
+    def test_nothing_is_identified_by_a_phone_an_unknown_code_or_free_text(self) -> None:
+        for device in ("iPhone18,1", "Watch99,9", "Garmin fenix 8", None):
+            assert SourceMetadata(provider="apple", device=device).device_hardware_name is None
+
+    def test_a_relay_through_a_phone_is_named_by_its_maker(self) -> None:
+        meta = SourceMetadata(provider="apple", source="Oura", device="iPhone18,1", device_type="ring")
+        assert meta.device_name == "Oura"
+
+    def test_the_label_says_whether_a_person_set_it(self) -> None:
+        from app.schemas.utils.metadata import device_metadata_fields
+
+        device = SimpleNamespace(
+            label="Left wrist Ultra",
+            label_source="manual",
+            model_display=None,
+            model_raw="Watch8,1",
+            brand_display=None,
+            brand="Apple",
+            device_type="watch",
+        )
+        fields = device_metadata_fields(device)
+        assert fields["device_label_source"] == "manual"
+        assert fields["device_display_name"] == "Left wrist Ultra"

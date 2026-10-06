@@ -17,7 +17,7 @@ import {
 } from '@/components/user/link-data-source-dialog';
 import { useUserConnections } from '@/hooks/api/use-health';
 import { cn } from '@/lib/utils';
-import { sourceDeviceName } from '@/lib/utils/device';
+import { isHandsetModel, sourceDeviceName } from '@/lib/utils/device';
 import type { SourceMetadata } from '@/lib/api/types';
 import { buildAccountMap, type AccountDescriptor } from '@/lib/utils/account';
 
@@ -162,12 +162,14 @@ export function DataSourceInfo({
               <div>
                 {deviceTypeLabel}: {deviceName}
               </div>
-              {reportedModel && reportedModel !== deviceName && (
-                <div className="text-muted-foreground">
-                  {isRelayed ? 'Reported by provider as' : 'Model'}:{' '}
-                  {reportedModel}
-                </div>
-              )}
+              {reportedModel &&
+                reportedModel !== deviceName &&
+                !isHandsetModel(reportedModel) && (
+                  <div className="text-muted-foreground">
+                    {isRelayed ? 'Reported by provider as' : 'Model'}:{' '}
+                    {reportedModel}
+                  </div>
+                )}
             </div>
           ) : (
             NO_DEVICE_INFO

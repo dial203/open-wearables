@@ -832,3 +832,34 @@ Template:
   dropped `filter_by_priority` (it always collapsed) and keyed its cursor on
   (date, source, device); the fork's parameter and its account-aware cursor are kept inside
   upstream's windowed paging.
+
+## Apple hardware is named from one table, at read time; phones are never named by model
+
+`app/utils/device_registry.py` kept a second, shorter Apple table that was consulted
+before the full one in `app/constants/devices_map/apple.py`, and it named `Watch7,5` -
+the Ultra 2 - a Series 8. Detection copied that name into `Device.model_display` when
+it created each device, so the wrong name was stored as well as shown. The short table
+is gone; detection no longer copies a derived name onto a device, and the hardware
+table names `model_raw` when the device is read. A code the table learns later, or a
+name it corrects, then reaches every device already stored. Migration `c4e8a1d2f6b7`
+clears the stored Series 8 copies. An Apple code newer than the table reads as its
+family plus the code (`Apple Watch (Watch9,1)`), and detection logs it so the table
+can be updated.
+
+Phones are not shown by model anywhere a device is named: `observed_devices` leaves
+them out, `source.device_name` names the relayed maker or says `iPhone`, a phone in
+the registry is called `iPhone` unless a person labelled it, and the dashboard drops
+phone codes from source lines, tooltips and the "relayed by" note. The raw strings are
+unchanged in storage and in `source.device`, which is what consumers key on (the
+Sleep Validation Hub's OW origin key is `device`, not `device_name`).
+
+## An Apple Watch under its owner's name is first-party Apple data
+
+`resolve_ingestion_route` called a source relayed whenever its name was not the
+platform's brand. An Apple Watch writes under the name its owner gave it ("JOSHUA A's
+Apple Watch"), so every watch that had been named read as relayed, and a consumer that
+keeps only first-party Apple HRV - the Sleep Validation Hub's SDNN pairing - dropped
+those nights. Apple Watch hardware (`Watch*` codes) writing under a name that says
+"Apple Watch" is now `direct`. An app writing from the watch ("AutoSleep") and a watch
+renamed past recognition keep the conservative answer, since nothing on the row can
+then tell the watch's own data from an app's.
