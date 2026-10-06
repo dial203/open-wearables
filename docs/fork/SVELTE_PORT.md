@@ -46,7 +46,7 @@ the React code's line counts, tests excluded.
 
 - **Data loading moves server-side.** The React app fetched in the browser with TanStack
   Query (`hooks/api/*`). The portal loads in `+page.server.ts` and keeps the session in
-  Redis, so a React hook usually becomes a `load` function plus a typed client call in
+  an HttpOnly cookie (upstream #1786), so a React hook usually becomes a `load` function plus a typed client call in
   `lib/server/`. Mutations become form actions.
 - **Port the tests too.** The React tests next to each file (`*.test.ts(x)`) are the
   behaviour to keep: `compare-section.test.ts`, `hypnogram.test.tsx`,
