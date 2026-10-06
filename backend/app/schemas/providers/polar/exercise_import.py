@@ -53,7 +53,9 @@ class ExerciseJSON(BaseModel):
     duration: str
 
     calories: int | None = None
-    distance: int | None = None
+    # Metres. AccessLink types this as a number and sends fractions (1600.2), which an
+    # int field rejects.
+    distance: float | None = None
     heart_rate: HeartRateJSON | None = None
     heart_rate_zones: list[HRZoneJSON] | None = None
 

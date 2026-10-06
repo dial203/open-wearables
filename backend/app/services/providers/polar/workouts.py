@@ -5,6 +5,7 @@ from typing import Any, Iterable
 from uuid import UUID, uuid4
 
 import isodate
+from pydantic import ValidationError
 
 from app.constants.series_types.polar import RR_INTERVAL_SAMPLE_TYPE
 from app.constants.workout_types.polar import get_unified_workout_type
@@ -315,6 +316,19 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         counts = timeseries_service.bulk_create_samples(db, samples)
         return int(counts)
 
+    def _parse_exercise(self, raw: dict[str, Any]) -> PolarExerciseJSON | None:
+        """One exercise from the list, or None when it does not validate.
+
+        Flow lists every exercise of the last 30 days on every pull, so one exercise the
+        schema rejects would fail the whole workouts step on every sync for a month and
+        take every valid exercise down with it.
+        """
+        try:
+            return PolarExerciseJSON(**raw)
+        except ValidationError as e:
+            self.logger.warning("Polar exercise %s failed validation, skipped: %s", raw.get("id"), e)
+            return None
+
     def _build_bundles(
         self,
         raw: list[PolarExerciseJSON],
@@ -332,7 +346,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
     ) -> int:
         """Load data from Polar API."""
         workouts_data = self.get_workouts_from_api(db, user_id, **kwargs)
-        workouts = [PolarExerciseJSON(**w) for w in workouts_data]
+        workouts = [w for w in (self._parse_exercise(raw) for raw in workouts_data) if w is not None]
 
         count = 0
         # One cache for the whole pull: Flow lists every exercise of the last 30 days on

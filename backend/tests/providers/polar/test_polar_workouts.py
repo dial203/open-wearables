@@ -571,6 +571,74 @@ class TestPolarWorkoutsDataLoading:
         # Assert
         assert result == 0
 
+    @patch("app.services.providers.templates.base_workouts.make_authenticated_request")
+    @patch("app.services.event_record_service.event_record_service.create")
+    @patch("app.services.event_record_service.event_record_service.create_detail")
+    def test_load_data_fractional_distance(
+        self,
+        mock_create_detail: MagicMock,
+        mock_create: MagicMock,
+        mock_request: MagicMock,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        """AccessLink types distance as a number; a fractional one must not fail the sync."""
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        workouts = _polar_workouts()
+        mock_request.return_value = [{**sample_polar_exercise, "distance": 1600.2}]
+
+        result = workouts.load_data(db, user.id)
+
+        assert result == 1
+        assert mock_create_detail.call_args.args[1].distance == Decimal("1600.2")
+
+    @patch("app.services.providers.templates.base_workouts.make_authenticated_request")
+    @patch("app.services.event_record_service.event_record_service.create")
+    @patch("app.services.event_record_service.event_record_service.create_detail")
+    def test_load_data_skips_invalid_exercise(
+        self,
+        mock_create_detail: MagicMock,
+        mock_create: MagicMock,
+        mock_request: MagicMock,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        """One exercise the schema rejects is skipped; the rest of the list still saves."""
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        workouts = _polar_workouts()
+        invalid = {k: v for k, v in sample_polar_exercise.items() if k != "start_time"} | {"id": "BAD"}
+        mock_request.return_value = [invalid, sample_polar_exercise]
+
+        result = workouts.load_data(db, user.id)
+
+        assert result == 1
+        mock_create.assert_called_once()
+        assert mock_create.call_args.args[1].external_id == sample_polar_exercise["id"]
+
+
+def _polar_workouts() -> PolarWorkouts:
+    from app.models import EventRecord, User
+    from app.repositories.event_record_repository import EventRecordRepository
+    from app.repositories.user_connection_repository import UserConnectionRepository
+    from app.repositories.user_repository import UserRepository
+    from app.services.providers.polar.oauth import PolarOAuth
+
+    connection_repo = UserConnectionRepository()
+    return PolarWorkouts(
+        workout_repo=EventRecordRepository(EventRecord),
+        connection_repo=connection_repo,
+        provider_name="polar",
+        api_base_url="https://www.polaraccesslink.com",
+        oauth=PolarOAuth(
+            user_repo=UserRepository(User),
+            connection_repo=connection_repo,
+            provider_name="polar",
+            api_base_url="https://www.polaraccesslink.com",
+        ),
+    )
+
 
 class TestGetUnifiedWorkoutType:
     @pytest.mark.parametrize(
