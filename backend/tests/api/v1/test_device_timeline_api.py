@@ -6,7 +6,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models import User, UserConnection
-from tests.factories import UserConnectionFactory, UserFactory
+from app.schemas.enums import DeviceModelOrigin, ProviderName
+from tests.factories import DataSourceFactory, EventRecordFactory, UserConnectionFactory, UserFactory
 
 SWITCH = "2026-09-22T12:00:00+00:00"
 
@@ -171,3 +172,47 @@ class TestResendingTheCurrentLabel:
         assert response.status_code == 200
         db.expire_all()
         assert db.get(DataSource, unstated.id).device_model is None
+
+
+class TestDetect:
+    def test_detecting_dates_the_watches_the_workouts_name(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        garmin = UserConnectionFactory(user=user, provider="garmin", device_label="Venu X1")
+        march = datetime(2026, 3, 1, 7, tzinfo=timezone.utc)
+        june = datetime(2026, 6, 1, 7, tzinfo=timezone.utc)
+        for model, at in (("fenix 7", march), ("Venu X1", june)):
+            source = DataSourceFactory(
+                user=user,
+                provider=ProviderName.GARMIN,
+                user_connection_id=garmin.id,
+                device_model=model,
+                source="garmin",
+                device_model_origin=DeviceModelOrigin.PROVIDER.value,
+            )
+            EventRecordFactory(data_source=source, start_datetime=at, end_datetime=at + timedelta(hours=1))
+        db.commit()
+
+        proposal = client.get(_url(user, garmin), headers=api_key_header).json()
+        assert proposal["periods"] == []
+        assert proposal["auto"] is True
+        assert [p["device_label"] for p in proposal["detection"]["proposed"]] == ["fenix 7", "Venu X1"]
+
+        response = client.post(_url(user, garmin, "/detect"), json={}, headers=api_key_header)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["changed"] is True
+        periods = body["timeline"]["periods"]
+        assert [(p["device_label"], p["origin"]) for p in periods] == [("fenix 7", "detected"), ("Venu X1", "detected")]
+        assert periods[1]["previous_last_seen"] is not None
+
+    def test_a_provider_that_names_no_device_is_a_bad_request(
+        self, client: TestClient, db: Session, user: User, api_key_header: dict[str, str]
+    ) -> None:
+        whoop = UserConnectionFactory(user=user, provider="whoop")
+        db.commit()
+
+        response = client.post(_url(user, whoop, "/detect"), json={}, headers=api_key_header)
+
+        assert response.status_code == 400

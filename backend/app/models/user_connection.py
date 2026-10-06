@@ -1,8 +1,8 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Index, text
-from sqlalchemy.orm import Mapped
+from sqlalchemy import Boolean, Index, text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import BaseDbModel
 from app.mappings import FKUser, PrimaryKey, str_32, str_64, str_100, str_255
@@ -118,6 +118,15 @@ class UserConnection(BaseDbModel):
     # aggregator's relaying handset goes - and this names the unit. The provider's
     # report survives untouched in data_source.device_model.
     sensor_label: Mapped[str_100 | None]
+
+    # Whether this account's dated device history follows the device names its
+    # provider puts on workouts (app/utils/device_switch_detection.py). On by default:
+    # an account whose provider names no device simply has nothing to detect from.
+    device_timeline_auto: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    # Detection may only add switches after this instant. Set when a person saves the
+    # history, so a period they removed or re-dated is not put back by the next run;
+    # NULL means detection owns the whole history.
+    device_timeline_detect_from: Mapped[datetime | None]
 
     # OAuth tokens (optional for SDK-based providers like Apple)
     access_token: Mapped[str | None]

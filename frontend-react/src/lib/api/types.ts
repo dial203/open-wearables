@@ -381,7 +381,42 @@ export interface DevicePeriod {
   effective_from: string | null;
   /** Exclusive end - the next period's start; null for the current one. */
   effective_to: string | null;
+  /** Read off the provider's workouts, or typed by a person. */
+  origin: 'detected' | 'stated';
   created_at: string;
+  /**
+   * The previous device's last workout before this period: the switch fell
+   * between it and effective_from. Null when no workout says.
+   */
+  previous_last_seen: string | null;
+}
+
+/** A period the provider's workouts show, before anything is saved. */
+export interface DetectedPeriod {
+  device_label: string;
+  effective_from: string | null;
+  evidence_count: number;
+  first_seen: string;
+  last_seen: string;
+  previous_last_seen: string | null;
+}
+
+/** One device the provider named on the account's workouts. */
+export interface DeviceSighting {
+  device_label: string;
+  evidence_count: number;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface DeviceDetection {
+  /** The provider names devices on workouts (Garmin, Polar, Suunto, Fitbit). */
+  supported: boolean;
+  /** The whole history the workouts show, ignoring hand edits. */
+  proposed: DetectedPeriod[];
+  devices: DeviceSighting[];
+  /** The saved history differs from `proposed`. */
+  differs: boolean;
 }
 
 export interface DeviceTimeline {
@@ -390,6 +425,22 @@ export interface DeviceTimeline {
   /** The current period's label, kept equal to the account's device_label. */
   device_label: string | null;
   periods: DevicePeriod[];
+  /** New switches seen in the provider's workouts are added automatically. */
+  auto: boolean;
+  /** Detection only adds switches after this; null: it owns the history. */
+  detect_from: string | null;
+  detection: DeviceDetection;
+}
+
+export interface DeviceTimelineUpdate {
+  periods: DevicePeriodInput[];
+  auto?: boolean;
+}
+
+export interface DeviceDetectResult {
+  changed: boolean;
+  timeline: DeviceTimeline;
+  refile: DeviceRefileResult | null;
 }
 
 export interface DevicePeriodInput {
@@ -410,6 +461,8 @@ export interface RefileSource {
   device_model_origin: 'provider' | 'label' | null;
   source: string | null;
   eligible: boolean;
+  /** Its workouts stay; only what the provider could not have named moves. */
+  captures_kept: boolean;
   reason: string;
 }
 
@@ -423,6 +476,7 @@ export interface RefileMove {
   moved: RefileCounts;
   conflicts: RefileCounts;
   archive_days_straddling: number;
+  archive_days_kept: number;
 }
 
 export interface DeviceRefileResult {

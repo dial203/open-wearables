@@ -5,7 +5,7 @@ import {
   type SummaryParams,
 } from '@/lib/api/services/health.service';
 import type {
-  DevicePeriodInput,
+  DeviceTimelineUpdate,
   TimeSeriesParams,
   SleepSessionsParams,
   BodySummaryParams,
@@ -132,8 +132,8 @@ export function useDeviceTimeline(
  */
 export function useReplaceDeviceTimeline(userId: string, connectionId: string) {
   return useMutation({
-    mutationFn: (periods: DevicePeriodInput[]) =>
-      healthService.replaceDeviceTimeline(userId, connectionId, periods),
+    mutationFn: (body: DeviceTimelineUpdate) =>
+      healthService.replaceDeviceTimeline(userId, connectionId, body),
     onSuccess: () => {
       // The account's device_label follows the current period.
       queryClient.invalidateQueries({
@@ -146,6 +146,32 @@ export function useReplaceDeviceTimeline(userId: string, connectionId: string) {
         error instanceof Error
           ? error.message
           : 'Failed to save device history';
+      toast.error(message);
+    },
+  });
+}
+
+/**
+ * Date the account's devices from its provider's workouts now (the server also
+ * does this on a schedule), re-filing stored records when the history changes.
+ */
+export function useDetectDeviceTimeline(userId: string, connectionId: string) {
+  return useMutation({
+    mutationFn: (body: { reset: boolean }) =>
+      healthService.detectDeviceTimeline(userId, connectionId, body),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.connections.all(userId),
+      });
+      if (result.refile && !result.refile.dry_run) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.health.all });
+        queryClient.invalidateQueries({ queryKey: queryKeys.devices.all });
+        queryClient.invalidateQueries({ queryKey: queryKeys.priorities.all });
+      }
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : 'Device detection failed';
       toast.error(message);
     },
   });

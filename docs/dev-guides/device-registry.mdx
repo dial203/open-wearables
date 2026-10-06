@@ -302,13 +302,54 @@ from its `effective_from` until the next one's (`user_connection_device_period`)
   exists an undated label edit is refused with 409 - it would disagree with the history
   about what is worn now.
 
-Stating a history moves nothing already stored. **Re-file** does, as a separate step
-that defaults to a dry run:
+#### Detected from workouts
 
-- it moves rows only off a source whose `device_model_origin` is `label` (or that has
-  no model). A provider-stamped source is never moved; a source written before origin
-  was recorded (`device_model_origin` null) is listed and left alone unless the request
-  names it in `include_data_source_ids`;
+Garmin, Polar, Suunto and Fitbit name the device on every workout and on nothing else.
+On those accounts the history is **detected** rather than typed
+(`app/utils/device_switch_detection.py`): each change of device across the account's
+workouts starts a period at the new device's first workout, and the first period runs
+from the start of the account's data.
+
+- **Evidence is a workout the provider named a watch, band or ring on.** A bike
+  computer (Edge), a chest strap or a phone records workouts but not nights, so it
+  never starts a period. A typed-in workout (`entry_source = manual`) and a
+  label-derived source never count. Model names compare folded, so "fēnix 8",
+  "Fenix 8" and "Garmin fenix 8" are one device.
+- **The switch is dated to the new device's first workout.** Workouts only bracket a
+  switch; the nights between the old device's last workout and the new one's first stay
+  with the old device. The dashboard shows that window under each detected period
+  (`previous_last_seen`), so a known date can be entered by hand.
+- **Every change is a switch.** No smoothing. A second watch worn for one session
+  alongside the primary reads as two switches; detection assumes one device at a time.
+- **It keeps itself current.** `detect_device_switches` (Celery beat, every
+  `DEVICE_SWITCH_DETECT_INTERVAL_SECONDS`, default 900) re-reads each account with
+  `device_timeline_auto` on, appends any new switch, and re-files. An unchanged account
+  is one query and no writes.
+- **Hand edits win.** Saving the history by hand sets `device_timeline_detect_from` to
+  that moment (or the latest start, if later). Periods saved exactly as detected keep
+  `origin = detected`, the rest are `stated`; detection then only adds switches it sees
+  in workouts after `detect_from`, so a removed or re-dated period is not put back.
+  `POST .../device-timeline/detect` with `reset: true` rebuilds the whole history from
+  the workouts and clears `detect_from`.
+
+Existing histories were typed, so the migration marks them `stated` with
+`detect_from` at the later of their save time and latest start; the dialog shows when
+the workouts disagree and offers **Rebuild from workouts**.
+
+#### Re-filing what is already stored
+
+Stating a history moves nothing already stored. **Re-file** does, as a separate step
+that defaults to a dry run (detection runs it itself after a change):
+
+- it moves rows off a source whose `device_model_origin` is `label` (or that has no
+  model). On Garmin, Polar, Suunto and Fitbit, a provider-named source - or one of
+  unrecorded origin - is re-filed too, but **keeps its captures**: its workouts, every
+  sample inside one of its workouts, and its archived days (one daily row can mix both)
+  stay; its nights, daily totals and out-of-workout samples move. This matters because
+  a label spelled exactly as Garmin spells the watch shares the watch's data source, so
+  its nights could otherwise never move. On any other provider a provider-stamped source
+  is never moved, and a source written before origin was recorded is left alone unless
+  the request names it in `include_data_source_ids`;
 - a row whose destination already holds one at the same instant is a conflict and stays;
 - an archived day a switch falls inside cannot be split and stays whole;
 - only that account's sources are read or written, and each move is recorded in
@@ -381,7 +422,8 @@ Per account, under `/connections/accounts/{connection_id}`:
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/device-timeline` | The account's dated device history |
-| `PUT` | `/device-timeline` | Replace it (an empty list removes it) |
+| `PUT` | `/device-timeline` | Replace it (an empty list removes it); `auto` turns detection on or off |
+| `POST` | `/device-timeline/detect` | Date devices from the provider's workouts now, and re-file if that changed the history (`reset` rebuilds it whole) |
 | `POST` | `/device-timeline/refile` | Preview (`dry_run`, the default) or apply a re-file |
 
 Every mutation records the developer and an optional reason in `device_history`.

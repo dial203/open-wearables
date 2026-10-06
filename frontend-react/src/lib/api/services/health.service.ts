@@ -1,9 +1,10 @@
 import { apiClient } from '../client';
 import { API_ENDPOINTS } from '../config';
 import type {
+  DeviceDetectResult,
   DeviceRefileResult,
   DeviceTimeline,
-  DevicePeriodInput,
+  DeviceTimelineUpdate,
   UserConnection,
   EventRecordResponse,
   HealthDataParams,
@@ -198,11 +199,27 @@ export const healthService = {
   async replaceDeviceTimeline(
     userId: string,
     connectionId: string,
-    periods: DevicePeriodInput[]
+    body: DeviceTimelineUpdate
   ): Promise<DeviceTimeline> {
     return apiClient.put<DeviceTimeline>(
       API_ENDPOINTS.userConnectionDeviceTimeline(userId, connectionId),
-      { periods }
+      body
+    );
+  },
+
+  /**
+   * Date the account's devices from the names its provider puts on workouts,
+   * and re-file stored records to match when that changes the history.
+   * `reset` rebuilds the whole history, discarding hand edits.
+   */
+  async detectDeviceTimeline(
+    userId: string,
+    connectionId: string,
+    body: { reset: boolean }
+  ): Promise<DeviceDetectResult> {
+    return apiClient.post<DeviceDetectResult>(
+      API_ENDPOINTS.userConnectionDeviceTimelineDetect(userId, connectionId),
+      body
     );
   },
 

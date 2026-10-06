@@ -626,6 +626,36 @@ Template:
   new period with a switch date nobody gave. See `docs/dev-guides/device-registry.mdx`.
 
 
+## Dated device history is detected from the provider's workouts
+
+- **Area**: backend, frontend
+- **Status**: active
+- **On conflict**: keep ours. Upstream files touched:
+  `app/constants/devices_map/device_types.py` (the Garmin watch families marked "fork" -
+  keep them if upstream reworks the keyword table) and
+  `app/services/providers/garmin/data_247.py` (`entry_source` on the bulk activity path -
+  re-apply in `_build_activity_record`).
+- **Why**: the history above was typed by hand, and the dialog seeded it with today's
+  watch "from the start" - wrong for any account that had worn more than one. Garmin,
+  Polar, Suunto and Fitbit name the device on every workout and nowhere else, so the
+  account's workouts already date each switch. Detection reads them
+  (`app/utils/device_switch_detection.py`): a period per change of watch/band/ring,
+  dated to the new device's first workout, no smoothing; a Celery beat task keeps it
+  current and re-files after a change. Hand edits set
+  `user_connection.device_timeline_detect_from`, after which detection only appends.
+
+  Re-file on those four providers now also takes rows off provider-named and
+  unrecorded-origin sources, keeping the captures (workouts, samples inside them,
+  archived days). Without it, nights filed under a label spelled exactly as Garmin
+  spells the watch share the watch's source and could never move - whether detection
+  or a person dated them. Other providers keep the stricter rule.
+
+  The keyword table names the rest of Garmin's wrist line (MARQ, Descent, quatix, Lily,
+  Bounce); before, those fell to OTHER, which both ranked them below every typed device
+  and kept them out of detection. The bulk Garmin activity path now
+  records `entry_source` like the push path, so a typed-in activity is never taken for
+  a sighting of the watch. See `docs/dev-guides/device-registry.mdx`.
+
 ## Polar registers each account under its own member-id
 
 - **Area**: backend

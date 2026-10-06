@@ -121,6 +121,14 @@ DEVICE_MODEL_KEYWORDS: list[tuple[tuple[str, ...], DeviceType]] = [
             "approach s",
             "vivoactive",
             "vivomove",
+            # Fork: the rest of Garmin's wrist line. Garmin names the watch on every
+            # activity, and one that falls to OTHER is never read as a sighting of the
+            # watch by device history detection (app/utils/device_switch_detection.py).
+            "marq",
+            "descent",
+            "quatix",
+            "lily",
+            "bounce",
         ),
         DeviceType.WATCH,
     ),

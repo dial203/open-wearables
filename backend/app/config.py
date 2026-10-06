@@ -182,6 +182,9 @@ class Settings(BaseSettings):
     # not the whole run: the sweep leaves anything still reporting in Redis alone.
     sync_run_stale_after_hours: int = Field(2, ge=1)
     sync_run_sweep_interval_seconds: int = Field(1800, ge=60)
+    # How often accounts' dated device histories are re-read from their workouts, so a
+    # new watch is picked up without anyone opening the dashboard (default: 15 min).
+    device_switch_detect_interval_seconds: int = Field(900, ge=60)
 
     # API SETTINGS
     api_base_url: str = "http://localhost:8000"

@@ -134,6 +134,21 @@ class DeviceModelOrigin(StrEnum):
     LABEL = "label"
 
 
+class DevicePeriodOrigin(StrEnum):
+    """Who put a period in an account's dated device history.
+
+    ``DETECTED`` periods are read off the provider's own device names - the watch a
+    provider names on each workout - and are rebuilt as new workouts arrive. ``STATED``
+    periods are a person's, and detection never rewrites them: it only adds switches
+    it sees after the account's ``device_timeline_detect_from``. A detected period a
+    person saved unchanged keeps its origin, so the history still says which of its
+    dates came from the data and which from someone's memory.
+    """
+
+    STATED = "stated"
+    DETECTED = "detected"
+
+
 class LinkProposalStatus(StrEnum):
     """Lifecycle of a cross-route link proposal.
 
