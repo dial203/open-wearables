@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.constants.series_types.sdk import get_series_type_from_metric_type
-from app.models import DataPointSeries, DataSource, EventRecord, MealDetails, WorkoutDetails
+from app.models import DataPointSeries, DataSource, EventRecord, MealDetails, SeriesTypeDefinition, WorkoutDetails
 from app.schemas.enums import SeriesType
 from app.schemas.model_crud.activities import EventRecordQueryParams
 from app.schemas.providers.mobile_sdk import SyncRequest as SDKSyncRequest
@@ -812,6 +812,123 @@ class TestSDKImportUnitConversion:
         assert len(samples) == 1
         assert samples[0].series_type == series_type
         assert samples[0].value == Decimal("42.5")
+
+
+class TestSDKImportTemperature:
+    """HealthKit's two temperature constructs land in separate series.
+
+    HKQuantityTypeIdentifierAppleSleepingWristTemperature is the watch's overnight wrist
+    skin temperature, a few degrees below a core reading; BodyTemperature and
+    BasalBodyTemperature are thermometer readings. Filing them in one series made a
+    night's wrist value read as a hypothermic body temperature.
+    """
+
+    # The shape the iOS SDK sends for Apple's own wrist temperature: written under the
+    # watch's name, with its product type as deviceModel, spanning the night.
+    WRIST_TEMPERATURE_RECORD: dict[str, Any] = {
+        "id": "5C1E8C1D-2B7A-4C61-9F0E-7A3D2B1C9E44",
+        "type": "HKQuantityTypeIdentifierAppleSleepingWristTemperature",
+        "unit": "degC",
+        "value": 35.12,
+        "startDate": "2026-09-20T03:41:00Z",
+        "endDate": "2026-09-20T10:52:00Z",
+        "zoneOffset": "-04:00",
+        "source": {
+            "appId": "com.apple.health.4C3B2A19-8E7D-4F6A-B5C4-D3E2F1A0B9C8",
+            "name": "Test User's Apple Watch",
+            "deviceName": "Apple Watch",
+            "deviceManufacturer": "Apple Inc.",
+            "deviceModel": "Watch7,5",
+            "deviceType": "watch",
+            "operatingSystemVersion": {"majorVersion": 27, "minorVersion": 0, "patchVersion": 0},
+        },
+    }
+
+    # A thermometer app's spot reading, written from the phone.
+    BODY_TEMPERATURE_RECORD: dict[str, Any] = {
+        "id": "8F2D6E4A-1C3B-4A5D-9E7F-0B1C2D3E4F5A",
+        "type": "HKQuantityTypeIdentifierBodyTemperature",
+        "unit": "degC",
+        "value": 36.8,
+        "startDate": "2026-09-20T12:15:00Z",
+        "endDate": "2026-09-20T12:15:00Z",
+        "zoneOffset": "-04:00",
+        "source": {
+            "appId": "com.example.thermometer",
+            "name": "Thermometer",
+            "deviceModel": "iPhone15,2",
+            "deviceType": "phone",
+            "operatingSystemVersion": {"majorVersion": 27, "minorVersion": 0, "patchVersion": 0},
+        },
+    }
+
+    @pytest.fixture
+    def import_service(self) -> ImportService:
+        return ImportService(log=logging.getLogger("test"))
+
+    def test_wrist_temperature_resolves_to_skin_temperature(self) -> None:
+        """The Apple Health XML import resolves types through the same map as the SDK."""
+        assert (
+            get_series_type_from_metric_type("HKQuantityTypeIdentifierAppleSleepingWristTemperature")
+            == SeriesType.skin_temperature
+        )
+
+    @pytest.mark.parametrize(
+        ("metric_type", "series_type"),
+        [
+            ("HKQuantityTypeIdentifierAppleSleepingWristTemperature", SeriesType.skin_temperature),
+            ("HKQuantityTypeIdentifierBodyTemperature", SeriesType.body_temperature),
+            ("HKQuantityTypeIdentifierBasalBodyTemperature", SeriesType.body_temperature),
+        ],
+    )
+    def test_healthkit_temperatures_kept_apart_and_not_scaled(
+        self,
+        import_service: ImportService,
+        metric_type: str,
+        series_type: SeriesType,
+    ) -> None:
+        """Each temperature type lands in its own construct's series, in °C as sent."""
+        records = [{**self.WRIST_TEMPERATURE_RECORD, "type": metric_type}]
+        request = SDKSyncRequest(**{**SDK_ENVELOPE, "data": {"records": records}})
+
+        samples = import_service._build_statistic_bundles(request.data.records, request.provider, str(uuid4()))
+
+        assert len(samples) == 1
+        assert samples[0].series_type == series_type
+        assert samples[0].value == Decimal("35.12")
+
+    def test_wrist_and_body_temperature_are_stored_in_separate_series(
+        self,
+        db: Session,
+        import_service: ImportService,
+    ) -> None:
+        """One sync carrying both: the watch's night is skin_temperature, the thermometer's
+        reading stays body_temperature, each on its writer's own data source.
+
+        The wrist row's source keeps the watch's product type, which is what
+        scripts/data_migrations/relabel_apple_wrist_temp_to_skin_temp.py uses to find the
+        rows filed under body_temperature before this mapping changed.
+        """
+        user = UserFactory()
+        payload = {
+            **SDK_ENVELOPE,
+            "data": {"records": [self.WRIST_TEMPERATURE_RECORD, self.BODY_TEMPERATURE_RECORD]},
+        }
+
+        response = import_service.import_data_from_request(db, json.dumps(payload), "application/json", str(user.id))
+
+        assert sorted(response.types) == [SeriesType.body_temperature.value, SeriesType.skin_temperature.value]
+        rows = (
+            db.query(SeriesTypeDefinition.code, DataPointSeries.value, DataSource.device_model)
+            .join(SeriesTypeDefinition, SeriesTypeDefinition.id == DataPointSeries.series_type_definition_id)
+            .join(DataSource, DataSource.id == DataPointSeries.data_source_id)
+            .filter(DataSource.user_id == user.id)
+            .all()
+        )
+        assert sorted((code, value, model) for code, value, model in rows) == [
+            (SeriesType.body_temperature.value, Decimal("36.8"), "iPhone15,2"),
+            (SeriesType.skin_temperature.value, Decimal("35.12"), "Watch7,5"),
+        ]
 
 
 class TestSDKImportNutrition:

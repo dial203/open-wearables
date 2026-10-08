@@ -380,7 +380,11 @@ METRIC_TYPE_TO_SERIES_TYPE: dict[SDKMetricType, SeriesType] = {
     # Wheelchair Metrics
     SDKMetricType.PUSH_COUNT: SeriesType.push_count,
     # Apple-specific Temperature
-    SDKMetricType.APPLE_SLEEPING_WRIST_TEMPERATURE: SeriesType.body_temperature,
+    # The watch's overnight wrist skin temperature, not a core reading: it sits a few degrees
+    # below body_temperature (thermometer / HKQuantityTypeIdentifierBodyTemperature), so the two
+    # cannot share a series. Rows filed under body_temperature before this mapping changed are
+    # moved by scripts/data_migrations/relabel_apple_wrist_temp_to_skin_temp.py.
+    SDKMetricType.APPLE_SLEEPING_WRIST_TEMPERATURE: SeriesType.skin_temperature,
     # Atrial Fibrillation
     SDKMetricType.ATRIAL_FIBRILLATION_BURDEN: SeriesType.atrial_fibrillation_burden,
     # Workout Metrics
