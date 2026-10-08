@@ -31,7 +31,7 @@ the React code's line counts, tests excluded.
 
 | # | Feature | React source (`frontend-react/src/`) | Lands in (`frontend/src/`) | Size |
 |---|---|---|---|---|
-| 1 | Several accounts per provider; account chip, label, classification (incl. `reference`) | `components/user/connection-card.tsx`, `add-provider-account-dialog.tsx`, `common/account-chip.tsx`, `lib/utils/account.ts` | `lib/components/users/connections/` (ConnectionCard, ConnectionMenu, ConnectionHeader) | ~630 |
+| 1 | Several accounts per provider; account chip, label, classification (incl. `reference`), device attribution | `components/user/connection-card.tsx`, `device-attribution-field.tsx`, `add-provider-account-dialog.tsx`, `common/account-chip.tsx`, `lib/utils/account.ts` | `lib/components/users/connections/` (ConnectionCard, ConnectionMenu, ConnectionHeader) | ~630 |
 | 2 | Pairing a second account | `routes/users/$userId/pair.index.tsx`, `hooks/use-oauth-connect.ts` | `routes/users/[id]/pair/`, `lib/components/pairing/` | ~220 |
 | 3 | Devices: list, timeline, linking a data source, creating a device while linking | `components/user/devices-section.tsx`, `device-timeline-dialog.tsx`, `link-data-source-dialog.tsx`, `source-activity.tsx`, `lib/api/services/device.service.ts`, `hooks/api/use-devices.ts` | new tab under `routes/(app)/users/[id]/devices/`, `lib/components/users/detail/UserTabs.svelte` | ~2,990 |
 | 4 | Source attribution on every record (device badge, "via" account, relayed writer) | `components/common/data-source-info.tsx`, `device-badge.tsx`, `device-type.tsx`, `lib/utils/device.ts` | shared component under `lib/components/` used by the sleep/workouts/activity/body tabs | ~490 |

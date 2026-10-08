@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.enums import IngestionRoute, ProviderName, RelayVisibility
+from app.schemas.enums import DeviceAttribution, IngestionRoute, ProviderName, RelayVisibility
 
 
 class DataSourceBase(BaseModel):
@@ -81,6 +81,25 @@ class DataSourceResponse(BaseModel):
         None,
         description="Login e-mail of the connected account this source arrived through.",
         example="p01.left@lab.example.edu",
+    )
+    device_attribution: DeviceAttribution | None = Field(
+        None,
+        description=(
+            "How the connected account files its data against devices: `per_record` when each "
+            "record is filed under the device its own metadata names (an aggregator such as "
+            "Strava), `single_device` when every record is the device in `sensor_label`. Null "
+            "for a source with no account (a one-time import)."
+        ),
+        example="single_device",
+    )
+    sensor_label: str | None = Field(
+        None,
+        description=(
+            "The device every record on the connected account is, when the account is "
+            "`single_device`. `device_model` then names the recorder that carried this "
+            "source's data, not the unit that sensed it."
+        ),
+        example="Polar H10",
     )
     ingestion_route: IngestionRoute = Field(
         IngestionRoute.DIRECT,
