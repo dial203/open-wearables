@@ -221,6 +221,32 @@ class DataPointSeriesRepository(
         db_session.add(creation)
         return self.try_commit(db_session, creation)
 
+    def delete_in_window(
+        self,
+        db_session: DbSession,
+        data_source_ids: set[UUID],
+        series_type: SeriesType,
+        start: datetime,
+        end: datetime,
+    ) -> int:
+        """Delete one series' samples on the given sources from start to end, inclusive.
+
+        Does not commit: it clears the way for a write that follows in the same
+        transaction, and must not stand on its own if that write fails.
+        """
+        if not data_source_ids:
+            return 0
+        return (
+            db_session.query(self.model)
+            .filter(
+                self.model.data_source_id.in_(data_source_ids),
+                self.model.series_type_definition_id == get_series_type_id(series_type),
+                self.model.recorded_at >= start,
+                self.model.recorded_at <= end,
+            )
+            .delete(synchronize_session=False)
+        )
+
     @handle_exceptions
     def bulk_create(self, db_session: DbSession, creators: list[TimeSeriesSampleCreate]) -> WriteCounts:
         """Bulk create data point samples.

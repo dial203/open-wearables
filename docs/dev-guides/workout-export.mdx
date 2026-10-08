@@ -82,7 +82,11 @@ two providers decide most of that:
   streams: Garmin `activityDetails` samples and FIT-file records, and Strava
   streams. With it off, a Garmin workout contributes only Garmin's all-day heart
   rate, which is much sparser. Turning it on is not retroactive. Workouts synced
-  before the change have no streams until they are synced again.
+  before the change have no streams until they are synced again. Inside a Garmin
+  workout that has its own heart rate, only the workout's samples are stored: the
+  all-day feed (one-minute averages every 15 s) stays outside it. Before this rule
+  the all-day value could overwrite every :00/:15/:30/:45 second of a run.
+  Workouts stored before it need their activity data delivered again to be clean.
 - **Polar** exercises are stored as RR intervals only, not as Polar's 1-s heart-rate
   sample. A Polar H10 session therefore appears in `long` and not on the 1-s grid.
   Heart rate is not derived from RR on export, because that conversion is a methods
