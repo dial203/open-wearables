@@ -47,7 +47,12 @@ from app.schemas.enums import (
     LabelSource,
     ProviderName,
 )
-from app.services.devices.identity import IdentityClaim, claims_from_data_source, relaying_host_model
+from app.services.devices.identity import (
+    IdentityClaim,
+    claims_from_data_source,
+    legacy_declared_sensor_claims,
+    relaying_host_model,
+)
 from app.utils.device_registry import is_apple_hardware_code, relayed_brand, resolve_brand
 
 log = getLogger(__name__)
@@ -58,6 +63,10 @@ log = getLogger(__name__)
 # evidence available (brand, type, session overlap) cannot distinguish "the same
 # ring by two routes" from "two identical rings worn on alternate nights".
 PROPOSAL_MIN_SCORE = 60.0
+
+# Recorded against the moves a change to an account's own settings makes. A process,
+# so the devices it touches stay detection's to rearrange on the next change.
+ACCOUNT_SETTINGS_ACTOR = "system:account-settings"
 
 # Two sessions this close are treated as the same event seen twice. Aggregator
 # relays re-timestamp and re-round, so an exact match is too strict; a wider window
@@ -122,7 +131,14 @@ class DeviceDetectionService:
             return None
 
         device, conflicts = self._resolve(
-            db_session, data_source.user_id, provider, data_source, claims, declared_sensor, reported_device_type
+            db_session,
+            data_source.user_id,
+            provider,
+            data_source,
+            claims,
+            declared_sensor,
+            reported_device_type,
+            account_scope,
         )
         if device is None:
             return None
@@ -171,6 +187,75 @@ class DeviceDetectionService:
                 reason="Auto-detected from provider identity claims",
             )
         return device
+
+    def reattribute(self, db_session: DbSession, data_source: DataSource, actor: str) -> bool:
+        """Move a source to the device its account's settings now name. True if it moved.
+
+        For a change a person made to the account itself - declaring the unit behind
+        it, or withdrawing that - which changes what every source on it should be
+        filed under. Ingest never does this: attribution is write-once for detection,
+        so a sync cannot move history between devices behind anyone's back. Here a
+        person has said what the data is, and the move is that statement applied.
+
+        Left alone: a source someone detached, and one whose device a person has
+        touched (labelled, merged, linked by hand), since that is a judgement this
+        must not overwrite. A source already on the right device does not move and
+        writes nothing.
+
+        Withdrawing a declaration puts a source back on the device it was moved off
+        when the declaration was made, if that device still exists. Resolving afresh
+        would use only what the data source stores, and on a route with a stronger
+        identifier than its model string ingest knew more than that.
+        """
+        if data_source.attribution_locked_at is not None:
+            return False
+        current = data_source.device_id
+        if current is not None and self.repo.touched_by_person(db_session, current):
+            return False
+
+        provider = getattr(data_source.provider, "value", data_source.provider)
+        account_scope, declared_sensor = self._account_context(db_session, data_source)
+        claims = claims_from_data_source(
+            provider, data_source.device_model, data_source.source, account_scope, declared_sensor
+        )
+        target: Device | None = None
+        if not declared_sensor and current is not None:
+            previous = self.repo.device_before_move(db_session, data_source.id, current, actor)
+            if previous is not None:
+                target = self.repo.get(db_session, previous)
+                claims = []
+        if target is None and claims:
+            target, _ = self._resolve(
+                db_session,
+                data_source.user_id,
+                provider,
+                data_source,
+                claims,
+                declared_sensor,
+                account_scope=account_scope,
+            )
+        if target is not None:
+            for claim in claims:
+                self.repo.add_claim(db_session, target, claim, actor=SYSTEM_ACTOR)
+
+        target_id = target.id if target is not None else None
+        if target_id == current:
+            return False
+        self.repo.attach_data_source(
+            db_session,
+            data_source,
+            target,
+            actor=actor,
+            reason="The account's device attribution changed",
+        )
+        return True
+
+    def _only_this_account(self, db_session: DbSession, device: Device, data_source: DataSource) -> bool:
+        """Whether every source on ``device`` arrived through ``data_source``'s account."""
+        return all(
+            other.user_connection_id == data_source.user_connection_id
+            for other in self.repo.data_sources_for_device(db_session, device.id)
+        )
 
     @staticmethod
     def _account_context(db_session: DbSession, data_source: DataSource) -> tuple[str | None, str | None]:
@@ -289,6 +374,7 @@ class DeviceDetectionService:
         claims: list[IdentityClaim],
         declared_sensor: str | None = None,
         reported_device_type: DeviceType | None = None,
+        account_scope: str | None = None,
     ) -> tuple[Device | None, set[UUID]]:
         """Find the device these claims name, or create one. Returns (device, conflicts)."""
         conflicts: set[UUID] = set()
@@ -329,6 +415,18 @@ class DeviceDetectionService:
             if found is not None:
                 return found, conflicts
 
+        # A declared sensor's device may predate its current key; see
+        # identity.legacy_declared_sensor_claims. The caller adds the current key to it.
+        # Only within this account: off Strava the old keys were not scoped to one, and
+        # matching another account's strap would pool two units.
+        if declared_sensor:
+            for legacy in legacy_declared_sensor_claims(
+                provider, declared_sensor, data_source.device_model, account_scope
+            ):
+                found = self.repo.find_by_claim(db_session, user_id, legacy)
+                if found is not None and self._only_this_account(db_session, found, data_source):
+                    return found, conflicts
+
         # 3. Nothing matched. Create, but only when the route said something about the
         #    hardware: a device built purely from an app bundle id would be "whatever
         #    writes as com.ouraring.oura", which is a writer, not a unit. A relayed
@@ -338,7 +436,7 @@ class DeviceDetectionService:
         if group_claim is None:
             return None, conflicts
 
-        if host_model is not None:
+        if host_model is not None or declared_sensor:
             device = self._create_relayed(
                 db_session, user_id, provider, data_source, host_model, declared_sensor, reported_device_type
             )
@@ -373,7 +471,7 @@ class DeviceDetectionService:
         user_id: UUID,
         provider: str,
         data_source: DataSource,
-        host_model: str,
+        host_model: str | None,
         declared_sensor: str | None = None,
         reported_device_type: DeviceType | None = None,
     ) -> Device:
@@ -395,6 +493,9 @@ class DeviceDetectionService:
         where the knowledge came from: the relay case is inferred from the model
         naming a phone, and this one was declared on the connection because no
         provider exposes it. The label it produces is stronger, not weaker, for that.
+
+        ``host_model`` is None only for a declared sensor on a record that named no
+        recorder at all: the sensor is then simply the unit, with nothing carrying it.
         """
         # A declared sensor plays the writer's part here: it is the instrument that
         # produced the data, and the reported model is the recorder that carried it.
@@ -428,7 +529,7 @@ class DeviceDetectionService:
             label_source=LabelSource.AUTO,
             actor=SYSTEM_ACTOR,
             reason=(
-                f"Declared sensor {writer} recorded by {host_model}"
+                f"Declared sensor {writer} recorded by {host_model or 'an unnamed recorder'}"
                 if declared_sensor
                 else f"Relayed through {provider} by {writer or 'an unnamed app'} on {host_model}"
             ),

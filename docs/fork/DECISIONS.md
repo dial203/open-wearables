@@ -863,3 +863,47 @@ those nights. Apple Watch hardware (`Watch*` codes) writing under a name that sa
 "Apple Watch" is now `direct`. An app writing from the watch ("AutoSleep") and a watch
 renamed past recognition keep the conservative answer, since nothing on the row can
 then tell the watch's own data from an app's.
+
+## An account is either one declared device or files each record under its own
+
+- **Area**: backend, frontend, docs
+- **Status**: active
+- **On conflict**: keep ours. Upstream files touched: `user_connection_service.update_account`
+  (re-apply the call to `_apply_device_attribution` after upstream's update), the account
+  schema (`device_attribution` computed field), `data_source_repository.py`
+  (`for_connection`, `retype_for_declaration`) and `schemas/enums/__init__.py`.
+- **Why**: a validation study runs a gold-standard Strava account, whose every workout was
+  recorded with an ECG strap through a watch or head unit, beside validation accounts that
+  each carry whatever devices sync to them. Strava already filed each activity under the
+  device its metadata names (`device_name`, else the upload source), and `sensor_label`
+  already declared a strap under a recorder - but only through the API, with nothing on
+  screen saying which way an account was being read. Three gaps made the declaration less
+  than "this account is one device":
+
+  - The declared sensor grouped on (sensor, recorder), as an inferred relay groups on
+    (writer, host), so one strap recorded by a watch on runs and a head unit on rides was
+    two devices. A declaration is about the whole account, so it now keys on the sensor
+    and the account alone, on every route. A device created under the old key is found
+    through it and given the new one (`legacy_declared_sensor_claims`), so no duplicate
+    appears on the next sync - but only when every source on it came through the same
+    account, because off Strava the old keys were not scoped to one.
+  - Setting or clearing it changed only future syncs. Existing rows kept the old type,
+    and attribution is write-once for detection, so they also stayed on the old device.
+    Changing `sensor_label` now re-types and re-files the account's data sources
+    (`DeviceDetectionService.reattribute`) in the same transaction as the change. It
+    leaves a source a person detached, and one whose device has a history row from
+    anyone but a process (`system:*` actors), since re-filing those would overwrite a
+    person's judgement. Withdrawing the declaration puts each source back on the device
+    it was moved off, from the history, rather than re-resolving from the stored model
+    string: ingest can attribute on stronger identifiers (an Apple device id, an Oura
+    ring) that the data source does not keep. It runs only on a change, for the same
+    reason - re-resolving an Apple account's sources on every save could move them.
+  - A declared sensor on a record that named no recorder created a device with no name.
+    It now creates the sensor's device with no host.
+
+  `device_attribution` (`per_record` | `single_device`) is derived from `sensor_label`
+  rather than stored beside it, so the two cannot disagree; the dashboard's Edit account
+  dialog sets it as a two-way choice. `/data-sources` rows carry both beside the account
+  classification they already denormalise, so a consumer naming sources - the HR validity
+  tool - can name a gold-standard source for its strap rather than the watch in
+  `device_model`. Touches upstream's `priority_service.py` and `data_source.py` schema.

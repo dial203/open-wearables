@@ -774,7 +774,7 @@
           "External: Connections"
         ],
         "summary": "Update Connection Account Endpoint",
-        "description": "Rename a connected account, or correct its e-mail or the device behind it.\n\nFields absent from the body are left alone; sending an explicit ``null``\nclears one. Setting ``device_label`` also stamps it onto this account's\nalready-ingested, device-less data sources, so history and future samples\nagree on what was worn.\n\n``device_label`` and ``sensor_label`` answer different questions and are not\nalternatives. The first names hardware the provider never reported at all, and\nis only consulted when nothing was. The second says that what the provider *did*\nreport is the recorder rather than the unit - the watch a chest strap was paired\nto - and applies whether or not a model came through.",
+        "description": "Rename a connected account, or correct its e-mail or the device behind it.\n\nFields absent from the body are left alone; sending an explicit ``null``\nclears one. Setting ``device_label`` also stamps it onto this account's\nalready-ingested, device-less data sources, so history and future samples\nagree on what was worn.\n\n``device_label`` and ``sensor_label`` answer different questions and are not\nalternatives. The first names hardware the provider never reported at all, and\nis only consulted when nothing was. The second says that what the provider *did*\nreport is the recorder rather than the unit - the watch a chest strap was paired\nto - and applies whether or not a model came through.\n\n``sensor_label`` is also the account's ``device_attribution`` switch: set, every\nrecord on the account is that one device (``single_device``); cleared, each record\nis filed under the device its own metadata names (``per_record``). Sending it\nre-types and re-files the account's existing data sources to match, leaving alone\nany source a person detached or whose device a person has edited.",
         "operationId": "update_connection_account_endpoint_api_v1_users__user_id__connections_accounts__connection_id__patch",
         "security": [
           {
@@ -14326,6 +14326,31 @@
             "description": "Login e-mail of the connected account this source arrived through.",
             "example": "p01.left@lab.example.edu"
           },
+          "device_attribution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeviceAttribution"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the connected account files its data against devices: `per_record` when each record is filed under the device its own metadata names (an aggregator such as Strava), `single_device` when every record is the device in `sensor_label`. Null for a source with no account (a one-time import).",
+            "example": "single_device"
+          },
+          "sensor_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensor Label",
+            "description": "The device every record on the connected account is, when the account is `single_device`. `device_model` then names the recorder that carried this source's data, not the unit that sensed it.",
+            "example": "Polar H10"
+          },
           "ingestion_route": {
             "$ref": "#/components/schemas/IngestionRoute",
             "description": "Whether this source came straight from the maker's API (`direct`) or was relayed through an aggregator platform such as Apple Health or Google Health (`aggregator`). When `aggregator`, `provider` names the platform and `original_source_name` names the brand that actually recorded the data.",
@@ -14559,6 +14584,15 @@
         },
         "type": "object",
         "title": "DeveloperUpdate"
+      },
+      "DeviceAttribution": {
+        "type": "string",
+        "enum": [
+          "per_record",
+          "single_device"
+        ],
+        "title": "DeviceAttribution",
+        "description": "Whether an account carries one device's data or several.\n\nDerived from ``user_connection.sensor_label`` rather than stored beside it, so\nthe two can never disagree: naming the unit is what makes an account a single\ndevice, and clearing the name is what makes it per-record again."
       },
       "DeviceCreate": {
         "properties": {
@@ -22011,7 +22045,7 @@
               }
             ],
             "title": "Sensor Label",
-            "description": "A sensor worn under the device this provider names, e.g. \"Polar H10\" on an account whose activities are recorded by a watch. Strava reports the device that uploaded and nothing about a strap paired to it, so this is declared rather than detected. When set, the reported model becomes the recorder (device.host_model_raw) and this names the unit."
+            "description": "The one device behind every record on this account, e.g. \"Polar H10\" on a gold-standard Strava account whose workouts were all recorded with a chest strap. Setting it makes the account `single_device`: each record's reported model is kept as the recorder that carried it (device.host_model_raw) and this names the unit. Clearing it makes the account `per_record`, where each record is filed under the device its own metadata names - how an aggregator carries several devices. Either change is applied to the account's existing data."
           }
         },
         "additionalProperties": false,
@@ -22255,6 +22289,11 @@
             "type": "array",
             "title": "Observed Devices"
           },
+          "device_attribution": {
+            "$ref": "#/components/schemas/DeviceAttribution",
+            "description": "How this account's data is filed against devices.\n\n``single_device`` when ``sensor_label`` names the one unit behind every record\non the account (a gold-standard chest strap); ``per_record`` when each record\nis filed under the device its own metadata names, which is how an aggregator\nsuch as Strava carries several devices on one account. Set it by setting or\nclearing ``sensor_label``.",
+            "readOnly": true
+          },
           "display_label": {
             "type": "string",
             "title": "Display Label",
@@ -22271,6 +22310,7 @@
           "last_synced_at",
           "created_at",
           "updated_at",
+          "device_attribution",
           "display_label"
         ],
         "title": "UserConnectionWithCapabilities",

@@ -177,6 +177,7 @@ export const healthService = {
       account_label?: string | null;
       account_email?: string | null;
       device_label?: string | null;
+      sensor_label?: string | null;
     }
   ): Promise<UserConnection> {
     return apiClient.patch<UserConnection>(
