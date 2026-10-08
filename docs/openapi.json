@@ -3232,6 +3232,337 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/events/workouts/export": {
+      "get": {
+        "tags": [
+          "External: Events"
+        ],
+        "summary": "Export Workouts",
+        "description": "One CSV row per workout: the same workouts, under the same filters, as the list.\n\nEvery summary metric the list carries, time-in-zone flattened to one column per zone,\nand the full source attribution. `avg_hr_origin` says whether the average came from\nthe provider or was computed by OW from the workout's own samples, because the\nprovider reported none. `overlap_group` gives workouts that overlap in time the same\nnumber, which is how the records several devices filed for one session pair up.\n`X-Export-Row-Count` holds the number of workouts.",
+        "operationId": "export_workouts_api_v1_users__user_id__events_workouts_export_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days.",
+              "examples": [
+                "2023-11-07T05:31:56Z",
+                "2023-11-07"
+              ],
+              "format": "date-time",
+              "title": "Start Date"
+            },
+            "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days."
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days.",
+              "examples": [
+                "2023-11-07T05:31:56Z",
+                "2023-11-07"
+              ],
+              "format": "date-time",
+              "title": "End Date"
+            },
+            "description": "ISO 8601 datetime (e.g. `2023-11-07T05:31:56Z`) or Unix timestamp in seconds. Date-only strings (e.g. `2023-11-07`) are also accepted and cover the whole day, so a date-only range includes both boundary days."
+          },
+          {
+            "name": "record_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Record Type"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/WorkoutType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact normalized workout type. Unlike `record_type`, does not substring-match.",
+              "title": "Type"
+            },
+            "description": "Exact normalized workout type. Unlike `record_type`, does not substring-match."
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ProviderName"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "name": "device_model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Device Model"
+            }
+          },
+          {
+            "name": "data_source_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Data Source Id"
+            }
+          },
+          {
+            "name": "include_redundant_relays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out.",
+              "default": false,
+              "title": "Include Redundant Relays"
+            },
+            "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out."
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/events/workouts/{workout_id}/export": {
+      "get": {
+        "tags": [
+          "External: Events"
+        ],
+        "summary": "Export Workout Samples",
+        "description": "CSV of every sample recorded during a workout, from every device that recorded one.\n\nThe window is the workout's own start and end. Samples are not limited to the device\nthat filed the workout: anything worn at the same time is included, each source kept\napart and named in the header (`wide`) or on every row (`long`). Data is exported at\nthe resolution it is stored at - nothing is resampled or interpolated.\n\n`X-Export-Row-Count` holds the number of samples read and `X-Export-Source-Count` the\nnumber of sources they came from; both are 0 when nothing was recorded in the window.",
+        "operationId": "export_workout_samples_api_v1_users__user_id__events_workouts__workout_id__export_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "workout_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Workout Id"
+            }
+          },
+          {
+            "name": "layout",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SampleLayout",
+              "description": "`wide`: one row per second of the workout, one column per source and metric, so devices worn together line up row by row. A sample goes to the second it was recorded in (UTC, truncated); an empty cell is a second with no sample. If a source recorded more than one sample of a metric within a second the cell is their mean and a `... n` column beside it holds the count. Beat-to-beat series (`rr_interval`, `pulse_to_pulse_interval`) are not on the grid. `long`: one row per stored sample, untouched, with its full attribution - the lossless form, and the only one carrying beat-to-beat intervals.",
+              "default": "wide"
+            },
+            "description": "`wide`: one row per second of the workout, one column per source and metric, so devices worn together line up row by row. A sample goes to the second it was recorded in (UTC, truncated); an empty cell is a second with no sample. If a source recorded more than one sample of a metric within a second the cell is their mean and a `... n` column beside it holds the count. Beat-to-beat series (`rr_interval`, `pulse_to_pulse_interval`) are not on the grid. `long`: one row per stored sample, untouched, with its full attribution - the lossless form, and the only one carrying beat-to-beat intervals."
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/SeriesType"
+              },
+              "description": "Metrics to export. Omit for every metric recorded in the window.",
+              "default": [],
+              "title": "Types"
+            },
+            "description": "Metrics to export. Omit for every metric recorded in the window."
+          },
+          {
+            "name": "pad_seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 3600,
+              "minimum": 0,
+              "description": "Widen the window by this many seconds each side, for a device started early or stopped late.",
+              "default": 0,
+              "title": "Pad Seconds"
+            },
+            "description": "Widen the window by this many seconds each side, for a device started early or stopped late."
+          },
+          {
+            "name": "include_redundant_relays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out.",
+              "default": false,
+              "title": "Include Redundant Relays"
+            },
+            "description": "Keep the aggregator's copy of a maker that is also connected directly. Off by default: data relayed through Apple Health, Google Health or Health Connect is left out for the span in which the maker's own API delivered the same data, so a device connected both ways is not counted twice. Nothing is deleted - set this to read the relayed copies back. `metadata.relay_dedup` lists what was left out."
+          },
+          {
+            "name": "X-Open-Wearables-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Open-Wearables-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/events/sleep": {
       "get": {
         "tags": [
@@ -18997,6 +19328,14 @@
         "type": "object",
         "title": "SDKTokenRequest",
         "description": "Request schema for exchanging app credentials for user token.\n\nBoth fields are optional - if not provided, admin authentication is required."
+      },
+      "SampleLayout": {
+        "type": "string",
+        "enum": [
+          "wide",
+          "long"
+        ],
+        "title": "SampleLayout"
       },
       "ScoreComponent": {
         "properties": {

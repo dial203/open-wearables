@@ -1,9 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   healthService,
+  type CsvDownload,
   type WorkoutsParams,
   type SummaryParams,
+  type WorkoutSamplesExportParams,
 } from '@/lib/api/services/health.service';
+import { saveBlob } from '@/lib/utils/download';
 import type {
   DeviceTimelineUpdate,
   TimeSeriesParams,
@@ -385,6 +388,51 @@ export function useDeleteWorkout(userId: string) {
         error instanceof Error ? error.message : 'Failed to delete workout';
       toast.error(message);
     },
+  });
+}
+
+function saveExport(download: CsvDownload, emptyMessage: string) {
+  saveBlob(download.blob, download.filename);
+  if (download.rowCount === 0) {
+    toast.warning(emptyMessage);
+  } else {
+    toast.success(`Saved ${download.filename}`);
+  }
+}
+
+function exportErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Export failed';
+}
+
+/**
+ * Download a workout's samples, from every device worn during it, as CSV.
+ */
+export function useExportWorkoutSamples(userId: string, workoutId: string) {
+  return useMutation({
+    mutationFn: (params: WorkoutSamplesExportParams) =>
+      healthService.exportWorkoutSamples(userId, workoutId, params),
+    onSuccess: (download) =>
+      saveExport(
+        download,
+        'No samples were recorded during this workout. The file has the time grid only.'
+      ),
+    onError: (error: unknown) => toast.error(exportErrorMessage(error)),
+  });
+}
+
+/**
+ * Download one row per workout in a date range as CSV.
+ */
+export function useExportWorkouts(userId: string) {
+  return useMutation({
+    mutationFn: (params: { start_date: string; end_date: string }) =>
+      healthService.exportWorkouts(userId, params),
+    onSuccess: (download) =>
+      saveExport(
+        download,
+        'No workouts in this period. The file has headers only.'
+      ),
+    onError: (error: unknown) => toast.error(exportErrorMessage(error)),
   });
 }
 
