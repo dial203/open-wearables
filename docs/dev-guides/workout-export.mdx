@@ -27,6 +27,12 @@ from. Nothing is resampled or interpolated. The one transformation is the option
 The window is the workout's own start and end, inclusive. Daily totals stamped inside
 it are left out.
 
+A device reached two ways, for example a Garmin connected directly and also relayed
+through Apple Health, exports once. The relayed copy is left out metric by metric,
+only where the direct route delivered that same metric in the window. A metric only
+the relay carries (running power, say, when Garmin sent only heart rate) is kept.
+Pass `include_redundant_relays=true` to get both copies.
+
 ### `wide`: aligned on a 1-second grid
 
 ```csv
@@ -81,8 +87,14 @@ two providers decide most of that:
   sample. A Polar H10 session therefore appears in `long` and not on the 1-s grid.
   Heart rate is not derived from RR on export, because that conversion is a methods
   choice (beat assignment, artefact handling) left to the analysis.
-- **WHOOP** publishes no intra-workout heart-rate series, only per-workout averages
-  and time in zone. A WHOOP strap appears in the per-period export and not here.
+- **WHOOP**'s own API has no intra-workout heart-rate series, so OW's direct WHOOP
+  connection holds only per-workout averages and time in zone. WHOOP's
+  second-by-second heart rate reaches OW **relayed**: when the WHOOP app writes it to
+  Health Connect or Apple Health, or uploads the workout to Strava (which, like
+  Garmin, needs `INGEST_WORKOUT_SAMPLES`). It then exports like any other device,
+  headed for example `Whoop via health_connect`. A direct WHOOP connection does not
+  hide it, because the redundant-relay rule decides per metric and the direct route
+  delivers no heart rate to duplicate it.
 - **Apple Watch** samples heart rate every few seconds during a workout rather than
   every second, so its column is sparser than a 1 Hz device's. The empty cells
   between values are its real sampling interval, not dropouts.

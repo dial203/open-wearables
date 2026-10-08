@@ -30,6 +30,15 @@ from tests.utils import api_key_headers
 
 T0 = datetime(2026, 9, 14, 13, 0, 0, tzinfo=timezone.utc)
 
+RELAY_ONLY_METRICS = {
+    SeriesType.running_power: 280,
+    SeriesType.running_speed: 3.4,
+    SeriesType.running_ground_contact_time: 240,
+    SeriesType.running_vertical_oscillation: 8.1,
+    SeriesType.cadence: 172,
+    SeriesType.power: 275,
+}
+
 
 def _series(db: Session, series_type: SeriesType) -> SeriesTypeDefinition:
     definition = db.get(SeriesTypeDefinition, get_series_type_id(series_type))
@@ -268,6 +277,100 @@ class TestRelayedCopies:
         source_column = deduplicated[0].index("data_source_id")
         assert {row[source_column] for row in deduplicated[1:]} == {str(direct.id)}
         assert {row[source_column] for row in everything[1:]} == {str(direct.id), str(relayed.id)}
+
+
+class TestRelayedMetricsTheDirectRouteLacks:
+    def test_all_metrics_keeps_a_relayed_metric_the_direct_route_never_delivers(
+        self, client: TestClient, db: Session
+    ) -> None:
+        """Only the relay's duplicate is hidden, metric by metric.
+
+        A Garmin connected directly delivers heart rate here and no running power; the
+        same watch relayed through Apple Health carries both. The relayed heart rate is a
+        second copy and goes; the relayed power is the only power there is and stays. An
+        export of "every metric" must decide this per metric too, not per brand, and so
+        must one naming more metrics than a single plan measures.
+        """
+        user = UserFactory()
+        direct = DataSourceFactory(
+            user=user, provider=ProviderName.GARMIN, source="garmin", original_source_name="Garmin"
+        )
+        relayed = DataSourceFactory(
+            user=user,
+            provider="apple",
+            source="com.garmin.connect.mobile",
+            device_model=None,
+            original_source_name="Garmin",
+        )
+        workout = EventRecordFactory(
+            data_source=direct, start_datetime=T0, end_datetime=T0 + timedelta(seconds=60), duration_seconds=60
+        )
+        for second in range(0, 61, 15):
+            _sample(db, direct, T0 + timedelta(seconds=second), 140)
+            _sample(db, relayed, T0 + timedelta(seconds=second), 140)
+            # More relay-only metrics than one dedup plan takes, so the export has to
+            # combine several plans and still keep them all.
+            for series_type, value in RELAY_ONLY_METRICS.items():
+                _sample(db, relayed, T0 + timedelta(seconds=second), value, series_type)
+        db.commit()
+
+        every_metric = _samples_csv(client, user.id, workout.id, layout="long")
+        named = _samples_csv(
+            client,
+            user.id,
+            workout.id,
+            layout="long",
+            types=",".join(["heart_rate", *(t.value for t in RELAY_ONLY_METRICS)]),
+        )
+
+        for rows in (every_metric, named):
+            column = {name: index for index, name in enumerate(rows[0])}
+            kept = {(row[column["data_source_id"]], row[column["metric"]]) for row in rows[1:]}
+            assert kept == {(str(direct.id), "heart_rate")} | {
+                (str(relayed.id), series_type.value) for series_type in RELAY_ONLY_METRICS
+            }
+
+
+class TestRelayedWhoop:
+    def test_whoop_heart_rate_relayed_through_health_connect_is_exported(self, client: TestClient, db: Session) -> None:
+        """WHOOP's own API has no intra-workout heart rate; its app writes one to Health Connect.
+
+        The relayed stream is the only second-by-second WHOOP trace OW holds, so a
+        direct WHOOP connection must not hide it: the rule hiding relays works per
+        series type, and the direct route delivers no heart_rate to cover it with.
+        """
+        user = UserFactory()
+        garmin = DataSourceFactory(user=user, provider=ProviderName.GARMIN, source="garmin")
+        direct_whoop = DataSourceFactory(
+            user=user, provider="whoop", source="whoop", device_model=None, original_source_name="Whoop"
+        )
+        relayed_whoop = DataSourceFactory(
+            user=user,
+            provider="health_connect",
+            source="com.whoop.android",
+            device_model=None,
+            original_source_name="Whoop",
+        )
+        workout = EventRecordFactory(
+            data_source=garmin, start_datetime=T0, end_datetime=T0 + timedelta(seconds=2), duration_seconds=2
+        )
+        # The direct route is live and covering this day, just not with heart rate.
+        _sample(db, direct_whoop, T0 - timedelta(hours=2), 52, SeriesType.resting_heart_rate)
+        _sample(db, direct_whoop, T0 + timedelta(hours=2), 53, SeriesType.resting_heart_rate)
+        for second in range(3):
+            _sample(db, garmin, T0 + timedelta(seconds=second), 140 + second)
+            _sample(db, relayed_whoop, T0 + timedelta(seconds=second), 138 + second)
+        db.commit()
+
+        rows = _samples_csv(client, user.id, workout.id)
+
+        assert rows[0] == [
+            "timestamp_utc",
+            f"{_label(garmin)} | heart_rate (bpm)",
+            f"{_label(relayed_whoop)} | heart_rate (bpm)",
+        ]
+        assert "whoop" in _label(relayed_whoop).lower()
+        assert [row[2] for row in rows[1:]] == ["138", "139", "140"]
 
 
 class TestLongLayout:

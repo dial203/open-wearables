@@ -48,6 +48,11 @@ BEAT_INTERVAL_TYPES = frozenset({SeriesType.rr_interval, SeriesType.pulse_to_pul
 
 MAX_PAD_SECONDS = 3600
 
+# Metrics per relay-dedup plan. The rule measures coverage per metric only while
+# metrics x direct sources stays small, and falls back to per brand past that; four
+# keeps it per metric for up to twelve direct sources with a relay to weigh.
+_RELAY_PLAN_BATCH = 4
+
 # Samples are stored to three decimals (numeric(10,3)); a mean of several gets the same.
 _MEAN_PLACES = Decimal("0.001")
 
@@ -227,11 +232,22 @@ class WorkoutExportService:
         wanted = [t for t in requested if t not in exclude_types]
         nothing_to_read = bool(requested) and not wanted
 
-        relay_plan = self._relay_plan(db_session, user_id, wanted, start, end, include_redundant_relays)
+        relay_plans = (
+            []
+            if nothing_to_read
+            else self._relay_plans(
+                db_session,
+                user_id,
+                wanted or self._types_present(db_session, user_id, start, end, exclude_types),
+                start,
+                end,
+                include_redundant_relays,
+            )
+        )
         inventory = (
             []
             if nothing_to_read
-            else self._inventory(db_session, user_id, start, end, wanted, exclude_types, relay_plan)
+            else self._inventory(db_session, user_id, start, end, wanted, exclude_types, relay_plans)
         )
         sources = self._load_sources(db_session, {row[0] for row in inventory})
         sample_count = sum(row[2] for row in inventory)
@@ -245,7 +261,7 @@ class WorkoutExportService:
         samples = (
             iter(())
             if nothing_to_read
-            else self._samples(db_session, user_id, start, end, wanted, exclude_types, relay_plan)
+            else self._samples(db_session, user_id, start, end, wanted, exclude_types, relay_plans)
         )
         if layout is SampleLayout.WIDE:
             columns = self._columns(inventory, sources, workout.data_source_id)
@@ -268,24 +284,53 @@ class WorkoutExportService:
         )
 
     @staticmethod
-    def _relay_plan(
+    def _relay_plans(
         db_session: DbSession,
         user_id: UUID,
         types: Sequence[SeriesType],
         start: datetime,
         end: datetime,
         include_redundant_relays: bool,
-    ) -> RelayDedupPlan | None:
-        """The same redundant-relay rule the timeseries read applies.
+    ) -> list[RelayDedupPlan]:
+        """The same redundant-relay rule the timeseries read applies, decided per metric.
 
         A watch connected directly and also relayed through Apple Health is one device
         reached two ways; without the rule it would export as two devices agreeing
         suspiciously well.
+
+        Per metric, always. Asked about no types, or about more than it measures one by
+        one, the rule falls back to one span per brand and hides every metric of the
+        relay the direct route was active over - a Garmin's running power from Apple
+        Health, say, when Garmin itself sent only heart rate - and with it the only copy
+        there is. So the types are always named, a few at a time; a span only ever
+        filters its own type, so the plans' conditions combine without interfering.
         """
-        if not settings.relay_dedup_enabled or include_redundant_relays:
-            return None
-        plan = build_series_plan(db_session, user_id, [get_series_type_id(t) for t in types], start, end)
-        return plan if plan.applied else None
+        if not settings.relay_dedup_enabled or include_redundant_relays or not types:
+            return []
+        type_ids = [get_series_type_id(t) for t in types]
+        plans = [
+            build_series_plan(db_session, user_id, type_ids[i : i + _RELAY_PLAN_BATCH], start, end)
+            for i in range(0, len(type_ids), _RELAY_PLAN_BATCH)
+        ]
+        return [plan for plan in plans if plan.applied]
+
+    def _types_present(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        start: datetime,
+        end: datetime,
+        exclude_types: frozenset[SeriesType],
+    ) -> list[SeriesType]:
+        """The metrics any source recorded in the window, so the relay rule can be asked per metric."""
+        rows = (
+            db_session.query(DataPointSeries.series_type_definition_id)
+            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+            .filter(*self._sample_filters(user_id, start, end, (), exclude_types, ()))
+            .distinct()
+            .all()
+        )
+        return sorted((get_series_type_from_id(type_id) for (type_id,) in rows), key=_type_sort_key)
 
     @staticmethod
     def _sample_filters(
@@ -294,7 +339,7 @@ class WorkoutExportService:
         end: datetime,
         types: Sequence[SeriesType],
         exclude_types: frozenset[SeriesType],
-        relay_plan: RelayDedupPlan | None,
+        relay_plans: Sequence[RelayDedupPlan],
     ) -> list[Any]:
         filters: list[Any] = [
             DataSource.user_id == user_id,
@@ -310,9 +355,9 @@ class WorkoutExportService:
             filters.append(
                 DataPointSeries.series_type_definition_id.notin_([get_series_type_id(t) for t in exclude_types])
             )
-        if relay_plan is not None:
+        for plan in relay_plans:
             filters.extend(
-                relay_plan.conditions(
+                plan.conditions(
                     DataPointSeries.data_source_id,
                     key_column=DataPointSeries.series_type_definition_id,
                     timestamp_column=DataPointSeries.recorded_at,
@@ -328,7 +373,7 @@ class WorkoutExportService:
         end: datetime,
         types: Sequence[SeriesType],
         exclude_types: frozenset[SeriesType],
-        relay_plan: RelayDedupPlan | None,
+        relay_plans: Sequence[RelayDedupPlan],
     ) -> list[tuple[UUID, int, int, bool]]:
         """(data source, series type, samples, any second holding several) per stream.
 
@@ -344,7 +389,7 @@ class WorkoutExportService:
                 func.count(func.distinct(second)),
             )
             .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
-            .filter(*self._sample_filters(user_id, start, end, types, exclude_types, relay_plan))
+            .filter(*self._sample_filters(user_id, start, end, types, exclude_types, relay_plans))
             .group_by(DataPointSeries.data_source_id, DataPointSeries.series_type_definition_id)
             .all()
         )
@@ -358,7 +403,7 @@ class WorkoutExportService:
         end: datetime,
         types: Sequence[SeriesType],
         exclude_types: frozenset[SeriesType],
-        relay_plan: RelayDedupPlan | None,
+        relay_plans: Sequence[RelayDedupPlan],
     ) -> Iterator[_SampleRow]:
         query = (
             db_session.query(
@@ -370,7 +415,7 @@ class WorkoutExportService:
                 DataPointSeries.provider_metadata,
             )
             .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
-            .filter(*self._sample_filters(user_id, start, end, types, exclude_types, relay_plan))
+            .filter(*self._sample_filters(user_id, start, end, types, exclude_types, relay_plans))
             .order_by(
                 DataPointSeries.recorded_at,
                 DataPointSeries.data_source_id,
