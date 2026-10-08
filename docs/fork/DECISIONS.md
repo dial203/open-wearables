@@ -968,3 +968,47 @@ then tell the watch's own data from an app's.
   They resolve data sources through the fork's per-account, dated-history resolver
   (`EventRecordRepository._resolve_values`), and the meals listing applies and reports the
   redundant-relay plan and accepts `include_redundant_relays`, like every other listing.
+
+## A Garmin workout's own heart rate is the only heart_rate inside it
+
+- **Area**: backend
+- **Status**: active; upstreamable (the collision exists upstream too)
+- **On conflict**: reconcile. Keep the two calls in `Garmin247Data.process_items_batch`
+  (`_drop_all_day_hr_inside_workouts` before the write for dailies, epochs and health
+  snapshots; `_clear_hr_under_activities` before the write for activityDetails) and the
+  filter in the three per-type `save_*` methods, whatever upstream does around them.
+  `EventRecordRepository.get_workout_spans_holding_samples_off_grid` and
+  `DataPointSeriesRepository.delete_in_window` are additions only.
+- **Why**: Garmin's all-day heart rate (dailies' `timeOffsetHeartRateSamples`, one value
+  every 15 s), the 15-minute epoch mean and the health snapshot's average carry no
+  device, so they resolve to the same data source as an activity's per-second
+  `activityDetails` samples, and the upsert key is (source, series type, second).
+  Whichever arrived last owned every second both had. Garmin re-sends dailies through
+  the day, so the all-day value usually won. A run read back from `/timeseries` or the
+  workout export then held a one-minute average on every :00/:15/:30/:45 second, plus
+  all-day values wherever the run had auto-paused. Checked against the watch's own FIT
+  export for a 5 Oct 2026 run (fēnix 9 Pro and Cirqa, both direct Garmin accounts):
+  every other second matched exactly, while 147 of the 151 grid seconds differed (SD
+  12 bpm). Agreement with a chest strap fell visibly: the Cirqa's CCC went from 0.966
+  to 0.929 and its limits of agreement widened from ±5.9 to ±8.5 bpm. Bias barely
+  moved, so a bias-only check would not have caught it.
+
+  Now, inside a workout whose own heart rate is stored, nothing else is. An
+  activityDetails write first deletes the heart_rate rows in the activity's span on the
+  sources its samples resolve to. An all-day write leaves out samples inside a workout
+  on the same account that already holds a heart_rate sample off the 15 s grid, which
+  only a workout's trace can produce: dailies offsets count from a local midnight and
+  every UTC offset is a whole number of 15-minute steps. A workout without its own heart
+  rate, an account without `INGEST_WORKOUT_SAMPLES`, or a workout whose samples have not
+  arrived yet keeps the all-day feed, because that is then the only heart rate for the
+  stretch. Another account's workout never thins this account's feed.
+
+  Rows written before this change keep the all-day values until Garmin delivers the
+  activity again. Re-run the Garmin backfill for the account
+  (`POST /api/v1/garmin/users/{user_id}/sync/historical?connection_id=…`, last 30 days)
+  to have activityDetails re-sent. Garmin may answer 409 for a range it already
+  backfilled, and then the old rows stay. The Second-by-Second HR Validity Tool drops a
+  directly connected Garmin's grid seconds inside a workout on read for that reason.
+  Known limit, not addressed here: two Garmin devices recording one workout on **one**
+  account (a watch and an Edge) still share a data source, because the samples carry no
+  device. This fork's one-account-per-device setup avoids it.

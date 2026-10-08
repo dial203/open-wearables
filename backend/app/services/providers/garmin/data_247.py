@@ -36,6 +36,7 @@ from app.services.providers.garmin.coverage import ACTIVITY_SAMPLE_SERIES, DAILI
 from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.raw_payload_storage import store_fit_file
+from app.utils.connection_context import get_active_connection_id
 from app.utils.conversion import seconds_to_minutes
 from app.utils.dates import offset_to_iso
 from app.utils.structured_logging import log_structured
@@ -48,6 +49,23 @@ from app.utils.structured_logging import log_structured
 _ACTIVITY_DETAILS_SERIES_TYPES: frozenset[SeriesType] = frozenset(st for _, st in ACTIVITY_SAMPLE_SERIES) - {
     SeriesType.air_temperature
 }
+
+# Summary types whose heart rate is all-day monitoring, not a workout's own trace:
+# dailies' timeOffsetHeartRateSamples (15 s apart; on runs checked against the
+# watch's FIT export each value was the previous clock minute's mean, held for
+# four samples), the 15-minute epoch mean, and the health snapshot's average.
+# They carry no device, so they resolve to the same data source as an activity's
+# per-second samples, and the upsert key (source, type, second) lets whichever
+# arrived last own every second both have. Garmin re-sends dailies through the
+# day, so the all-day value usually wins: a run's trace ends up with a minute
+# average on every :00/:15/:30/:45 second. Inside a workout that has its own
+# heart rate, the workout's samples are therefore the only heart_rate rows - see
+# _drop_all_day_hr_inside_workouts and _clear_hr_under_activities.
+_ALL_DAY_HR_SUMMARY_TYPES = frozenset({"dailies", "epochs", "healthSnapshot"})
+# Dailies offsets are multiples of 15 s from a local midnight, and every UTC offset
+# is a whole number of 15-minute steps, so all-day samples always fall on a UTC
+# second divisible by 15. A heart_rate row anywhere else is an activity sample.
+_ALL_DAY_HR_GRID_SECONDS = 15
 
 
 class Garmin247Data(Base247DataTemplate):
@@ -578,6 +596,7 @@ class Garmin247Data(Base247DataTemplate):
         """
         daily_data, health_scores = normalized_daily
         samples = self._build_dailies_samples(user_id, daily_data)
+        samples = self._drop_all_day_hr_inside_workouts(db, user_id, samples)
         counts: int = 0
         if samples:
             counts = self.data_point_repo.bulk_create(db, samples)
@@ -772,6 +791,7 @@ class Garmin247Data(Base247DataTemplate):
         Uses bulk_create with ON CONFLICT DO UPDATE for efficient upserts.
         """
         samples = self._build_epochs_samples(user_id, normalized_epochs)
+        samples = self._drop_all_day_hr_inside_workouts(db, user_id, samples)
         counts: int = 0
         if samples:
             counts = self.data_point_repo.bulk_create(db, samples)
@@ -1101,6 +1121,107 @@ class Garmin247Data(Base247DataTemplate):
                     )
                 )
         return result
+
+    @staticmethod
+    def _activity_span(
+        raw_activity_details: dict[str, Any],
+        samples: list[TimeSeriesSampleCreate],
+    ) -> tuple[datetime, datetime] | None:
+        """The seconds an activity covers: its summary window, widened to its own heart-rate samples."""
+        times = [s.recorded_at for s in samples if s.series_type == SeriesType.heart_rate]
+        if not times:
+            return None
+        start, end = min(times), max(times)
+        summary = raw_activity_details.get("summary", {})
+        start_ts = summary.get("startTimeInSeconds")
+        if start_ts:
+            start = min(start, datetime.fromtimestamp(start_ts, tz=timezone.utc))
+            duration = summary.get("durationInSeconds") or 0
+            end = max(end, datetime.fromtimestamp(start_ts + duration, tz=timezone.utc))
+        return start, end
+
+    def _clear_hr_under_activities(
+        self,
+        db: DbSession,
+        activity_hr: list[tuple[tuple[datetime, datetime], list[TimeSeriesSampleCreate]]],
+    ) -> None:
+        """Delete every heart_rate row an activity's own samples are about to replace.
+
+        Called just before the activity's samples are written, in the same
+        transaction. Without it, all-day samples that arrived first survive wherever
+        the activity has no sample of its own to overwrite them with - an auto-pause,
+        a dropout - and sit in the workout's trace as one-minute averages. Scoped to
+        the data sources the activity's samples resolve to, inside its span.
+        """
+        for (start, end), samples in activity_hr:
+            source_ids = {
+                sid
+                for sid in self.data_source_repo.resolve_bulk_data_sources(db, samples, lambda c: c.recorded_at)
+                if sid is not None
+            }
+            self.data_point_repo.delete_in_window(db, source_ids, SeriesType.heart_rate, start, end)
+
+    def _workout_windows_with_own_hr(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        start: datetime,
+        end: datetime,
+    ) -> list[tuple[datetime, datetime]]:
+        """Garmin workouts on this account between start and end that already hold their own heart rate.
+
+        A workout counts only once its activityDetails samples are stored - detected
+        as a heart_rate row off the all-day 15 s grid. Until then the all-day samples
+        are the only heart rate there is for that stretch, and dropping them would
+        leave a hole; if the activity's samples arrive afterwards,
+        _clear_hr_under_activities removes the all-day ones then. One account's
+        workout says nothing about another account's all-day feed.
+        """
+        return self.event_record_repo.get_workout_spans_holding_samples_off_grid(
+            db,
+            user_id,
+            ProviderName.GARMIN,
+            get_active_connection_id(),
+            SeriesType.heart_rate,
+            start,
+            end,
+            _ALL_DAY_HR_GRID_SECONDS,
+        )
+
+    def _drop_all_day_hr_inside_workouts(
+        self,
+        db: DbSession,
+        user_id: UUID,
+        samples: list[TimeSeriesSampleCreate],
+    ) -> list[TimeSeriesSampleCreate]:
+        """Leave out all-day heart rate that falls inside a workout recorded with its own.
+
+        Only heart_rate samples are affected; steps, energy and everything else in
+        the batch pass through. See _ALL_DAY_HR_SUMMARY_TYPES for why.
+        """
+        hr_times = [s.recorded_at for s in samples if s.series_type == SeriesType.heart_rate]
+        if not hr_times:
+            return samples
+        windows = self._workout_windows_with_own_hr(db, user_id, min(hr_times), max(hr_times))
+        if not windows:
+            return samples
+        kept = [
+            s
+            for s in samples
+            if s.series_type != SeriesType.heart_rate
+            or not any(start <= s.recorded_at <= end for start, end in windows)
+        ]
+        if len(kept) != len(samples):
+            log_structured(
+                self.logger,
+                "info",
+                "Left out all-day heart rate inside workouts that carry their own",
+                provider="garmin",
+                user_id=str(user_id),
+                dropped=len(samples) - len(kept),
+                workouts=len(windows),
+            )
+        return kept
 
     def save_activity_data(
         self,
@@ -1715,6 +1836,7 @@ class Garmin247Data(Base247DataTemplate):
         Uses bulk_create with ON CONFLICT DO UPDATE for efficient upserts.
         """
         samples = self._build_health_snapshot_samples(user_id, raw_snapshot)
+        samples = self._drop_all_day_hr_inside_workouts(db, user_id, samples)
         counts: int = 0
         if samples:
             counts = self.data_point_repo.bulk_create(db, samples)
@@ -1919,6 +2041,9 @@ class Garmin247Data(Base247DataTemplate):
         all_sleep_details: list[EventRecordDetailCreate] = []
         all_mct_details: list[MenstrualCycleDetailCreate] = []
         all_health_scores: list[HealthScoreCreate] = []
+        # Each activity's span and its heart_rate samples: the span is cleared of other
+        # heart_rate rows just before those samples are written.
+        activity_hr: list[tuple[tuple[datetime, datetime], list[TimeSeriesSampleCreate]]] = []
 
         for item in items:
             try:
@@ -1983,7 +2108,12 @@ class Garmin247Data(Base247DataTemplate):
                             all_workout_details.append(detail)
                         if settings.ingest_workout_samples:
                             try:
-                                all_samples.extend(self._build_activity_samples(user_id, item))
+                                activity_samples = self._build_activity_samples(user_id, item)
+                                all_samples.extend(activity_samples)
+                                if span := self._activity_span(item, activity_samples):
+                                    activity_hr.append(
+                                        (span, [s for s in activity_samples if s.series_type == SeriesType.heart_rate])
+                                    )
                             except Exception as e:
                                 activity_id = item.get("activityId") or item.get("summary", {}).get("activityId")
                                 log_structured(
@@ -2122,6 +2252,14 @@ class Garmin247Data(Base247DataTemplate):
                 )
 
         count = 0
+
+        # Inside a workout recorded with its own heart rate, that trace is the only
+        # heart_rate there is: all-day samples are left out when they arrive after
+        # it, and removed when they arrived first. See _ALL_DAY_HR_SUMMARY_TYPES.
+        if summary_type in _ALL_DAY_HR_SUMMARY_TYPES and all_samples:
+            all_samples = self._drop_all_day_hr_inside_workouts(db, user_id, all_samples)
+        if activity_hr:
+            self._clear_hr_under_activities(db, activity_hr)
 
         # Single bulk insert for DataPointSeries
         if all_samples:

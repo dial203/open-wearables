@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import UUID as SQL_UUID
 from sqlalchemy import (
+    BigInteger,
     ColumnElement,
     Date,
     Integer,
@@ -27,7 +28,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Query, selectinload
+from sqlalchemy.orm import Query, aliased, selectinload
 
 from app.database import DbSession
 from app.models import DataPointSeries, DataSource, EventRecord, SleepDetails, WorkoutDetails
@@ -1294,6 +1295,56 @@ class EventRecordRepository(
             .with_for_update()
             .first()
         )
+
+    def get_workout_spans_holding_samples_off_grid(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: ProviderName,
+        user_connection_id: UUID | None,
+        series_type: SeriesType,
+        start: datetime,
+        end: datetime,
+        grid_seconds: int,
+    ) -> list[tuple[datetime, datetime]]:
+        """Spans of an account's workouts overlapping start..end that hold a *series_type*
+        sample on a second not divisible by *grid_seconds*.
+
+        A provider whose low-resolution feed only ever lands on a fixed UTC grid (Garmin's
+        all-day heart rate, every 15 s) can be told apart from a workout's own trace that
+        way: a sample off the grid can only be the workout's. With *user_connection_id*
+        None every account of the provider is in scope, otherwise only that one, for both
+        the workout and its samples.
+        """
+        sample = aliased(DataPointSeries)
+        sample_source = aliased(DataSource)
+        holds_own = (
+            select(sample.id)
+            .join(sample_source, sample_source.id == sample.data_source_id)
+            .where(
+                sample_source.user_id == user_id,
+                sample_source.provider == provider,
+                sample.series_type_definition_id == get_series_type_id(series_type),
+                sample.recorded_at >= self.model.start_datetime,
+                sample.recorded_at <= self.model.end_datetime,
+                func.mod(cast(func.extract("epoch", sample.recorded_at), BigInteger), grid_seconds) != 0,
+            )
+        )
+        query = (
+            select(self.model.start_datetime, self.model.end_datetime)
+            .join(DataSource, DataSource.id == self.model.data_source_id)
+            .where(
+                DataSource.user_id == user_id,
+                DataSource.provider == provider,
+                self.model.category == "workout",
+                self.model.start_datetime <= end,
+                self.model.end_datetime >= start,
+            )
+        )
+        if user_connection_id is not None:
+            query = query.where(DataSource.user_connection_id == user_connection_id)
+            holds_own = holds_own.where(sample_source.user_connection_id == user_connection_id)
+        return [(row.start_datetime, row.end_datetime) for row in db_session.execute(query.where(holds_own.exists()))]
 
     def _account_scope(
         self,
