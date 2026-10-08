@@ -146,6 +146,7 @@
               "dev-guides/device-registry",
               "dev-guides/multiple-provider-accounts",
               "dev-guides/aggregator-deduplication",
+              "dev-guides/workout-export",
               "dev-guides/data-migrations",
               "dev-guides/ngrok-setup"
             ]

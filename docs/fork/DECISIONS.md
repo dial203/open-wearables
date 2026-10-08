@@ -864,6 +864,26 @@ those nights. Apple Watch hardware (`Watch*` codes) writing under a name that sa
 renamed past recognition keep the conservative answer, since nothing on the row can
 then tell the watch's own data from an app's.
 
+## Workout CSV export, and CORS exposes the export headers
+
+- **Area**: backend, frontend, docs
+- **Status**: active
+- **On conflict**: keep ours. In `app/middlewares.py` only `expose_headers` is ours, so
+  if upstream adds its own list, take the union.
+- **Why**: Researchers need a workout's samples out of OW with the devices kept apart,
+  which nothing upstream provides beyond Garmin's raw `.fit` file.
+  `app/services/workout_export_service.py` serves
+  `GET /users/{id}/events/workouts/{workout_id}/export` (every source's samples in the
+  window, `wide` on a 1-s grid or `long` untouched) and
+  `GET /users/{id}/events/workouts/export` (one row per workout). Documented in
+  `docs/dev-guides/workout-export.mdx`. The wide layout is deliberately limited to
+  `timestamp_utc` followed by data columns only, with no elapsed-time column, because the
+  Second-by-Second HR Validity Tool reads every column after the first as a device.
+  The dashboard runs on another origin than the API, so it can read
+  `Content-Disposition` and the `X-Export-*` counts only if CORS exposes them. That is
+  the one change to an otherwise upstream-identical file. `split_comma_types` in
+  `routes/v1/timeseries.py` lost its leading underscore so the export route can reuse it.
+
 ## An account is either one declared device or files each record under its own
 
 - **Area**: backend, frontend, docs

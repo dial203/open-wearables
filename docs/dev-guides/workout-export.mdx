@@ -1,0 +1,126 @@
+---
+title: "Workout CSV export"
+description: "Export the samples every device recorded during a workout, aligned second by second, or one summary row per workout."
+---
+
+## In one paragraph
+
+Two CSV exports, both on the user's **Workouts** tab and both plain API calls.
+**Per workout**: every sample stored during the workout, from *every* device that
+recorded one, not just the device that filed the workout. A Garmin, an Apple Watch
+and a chest strap worn together come out side by side. **Per period**: one row per
+workout in the selected date range, with its summary metrics and the device it came
+from. Nothing is resampled or interpolated. The one transformation is the optional
+1-second grid, and the file says where it averaged anything.
+
+## Samples during one workout
+
+`GET /api/v1/users/{user_id}/events/workouts/{workout_id}/export`
+
+| Parameter | Default | |
+|---|---|---|
+| `layout` | `wide` | `wide` or `long`, below |
+| `types` | every metric present | e.g. `heart_rate` or `heart_rate,speed,power` |
+| `pad_seconds` | `0` | widen the window on each side, up to 3600, for a device started early or stopped late |
+| `include_redundant_relays` | `false` | see [Aggregator duplicates](/dev-guides/aggregator-deduplication) |
+
+The window is the workout's own start and end, inclusive. Daily totals stamped inside
+it are left out.
+
+A device reached two ways, for example a Garmin connected directly and also relayed
+through Apple Health, exports once. The relayed copy is left out metric by metric,
+only where the direct route delivered that same metric in the window. A metric only
+the relay carries (running power, say, when Garmin sent only heart rate) is kept.
+Pass `include_redundant_relays=true` to get both copies.
+
+### `wide`: aligned on a 1-second grid
+
+```csv
+timestamp_utc,Forerunner 965 | heart_rate (bpm),Apple Watch | heart_rate (bpm)
+2026-09-14T13:00:00Z,120,
+2026-09-14T13:00:01Z,121,
+2026-09-14T13:00:02Z,122,118
+```
+
+- One row for **every** second of the window, so a dropout is a run of empty cells
+  rather than a shorter file.
+- One column per source and metric, headed `<device> | <metric> (<unit>)`. The
+  workout's own device comes first, then the rest by name.
+- A sample goes to the second it was recorded in: its UTC timestamp, **truncated**
+  to the whole second.
+- An empty cell is a second with no sample, never a zero.
+- If a source recorded more than one sample of a metric within one second, the cell
+  holds their mean and a `… n` column beside it holds the count. That column appears
+  only for streams where it happened.
+- Beat-to-beat series (`rr_interval`, `pulse_to_pulse_interval`) are **not** on the
+  grid, since a per-second mean of RR intervals is not a usable quantity. Use `long`.
+
+With `types=heart_rate` the file is exactly the aligned multi-device format the
+[Second-by-Second HR Validity Tool](https://github.com/dial203/second-by-second-hr-validity)
+reads: timestamp first, then one column per device, the first taken as the default
+criterion. To make the chest strap the criterion, export from the chest strap's
+workout.
+
+### `long`: every stored sample, untouched
+
+One row per sample, with `timestamp_utc` to the millisecond, `elapsed_s` from the
+workout's start (negative inside a pad), `metric`, `value`, `unit`,
+`interval_seconds` where the provider stated one, and the full attribution:
+`device_display_name`, `provider`, `source`, `original_source_name`,
+`ingestion_route`, `device_model`, `device_type`, `data_source_id`, `device_id`,
+`user_connection_id`, and the sample's `provider_metadata` as JSON. `series_label`
+matches the wide layout's column header, so the two files join.
+
+This is the lossless form, and the only one carrying RR intervals.
+
+### What a device contributes depends on what is stored
+
+The export contains only samples Open Wearables has stored, and two settings and
+two providers decide most of that:
+
+- **`INGEST_WORKOUT_SAMPLES`** (default `false`) gates the per-second workout
+  streams: Garmin `activityDetails` samples and FIT-file records, and Strava
+  streams. With it off, a Garmin workout contributes only Garmin's all-day heart
+  rate, which is much sparser. Turning it on is not retroactive. Workouts synced
+  before the change have no streams until they are synced again.
+- **Polar** exercises are stored as RR intervals only, not as Polar's 1-s heart-rate
+  sample. A Polar H10 session therefore appears in `long` and not on the 1-s grid.
+  Heart rate is not derived from RR on export, because that conversion is a methods
+  choice (beat assignment, artefact handling) left to the analysis.
+- **WHOOP**'s own API has no intra-workout heart-rate series, so OW's direct WHOOP
+  connection holds only per-workout averages and time in zone. WHOOP's
+  second-by-second heart rate reaches OW **relayed**: when the WHOOP app writes it to
+  Health Connect or Apple Health, or uploads the workout to Strava (which, like
+  Garmin, needs `INGEST_WORKOUT_SAMPLES`). It then exports like any other device,
+  headed for example `Whoop via health_connect`. A direct WHOOP connection does not
+  hide it, because the redundant-relay rule decides per metric and the direct route
+  delivers no heart rate to duplicate it.
+- **Apple Watch** samples heart rate every few seconds during a workout rather than
+  every second, so its column is sparser than a 1 Hz device's. The empty cells
+  between values are its real sampling interval, not dropouts.
+
+### Response headers
+
+`X-Export-Row-Count` holds the number of samples read and `X-Export-Source-Count` the
+number of sources. Both are `0` when nothing was recorded in the window. The file
+still exports in that case, with the time grid only.
+
+## One row per workout
+
+`GET /api/v1/users/{user_id}/events/workouts/export?start_date=…&end_date=…`
+
+It takes the same filters as the workout list and returns the same workouts. Columns
+cover the summary metrics (duration, moving time, distance, energy, HR, pace, speed,
+cadence, power, elevation, steps), time in each HR and power zone as
+`hr_zone_<n>_s` and `power_zone_<n>_s`, the provider's `external_id`, and the source
+attribution columns of the `long` layout.
+
+Two columns exist for multi-device work:
+
+- **`overlap_group`**: workouts that overlap in time share a number. Overlap is
+  transitive, and spans that only touch end-to-start are separate. This pairs up the
+  records several devices filed for one session.
+- **`avg_hr_origin`**: `provider` when the average heart rate is the provider's own
+  figure (exported unrounded). `computed_from_samples` when the provider reported
+  none and Open Wearables averaged the workout's own heart-rate samples. Empty when
+  neither exists.
