@@ -16,7 +16,7 @@ from app.utils.pagination import DEFAULT_PAGE_SIZE, PageLimitQueryParam
 router = APIRouter()
 
 
-def _split_comma_types(value: object) -> object:
+def split_comma_types(value: object) -> object:
     """Accept ``types=a,b`` as well as the repeated ``types=a&types=b``.
 
     FastAPI only understands the repeated form; a comma-joined value reaches the enum as
@@ -36,7 +36,7 @@ def get_timeseries(
     end_time: DateTimeQueryParam,
     db: DbSession,
     _api_key: ApiKeyDep,
-    types: Annotated[list[SeriesType], Query(), BeforeValidator(_split_comma_types)] = [],
+    types: Annotated[list[SeriesType], Query(), BeforeValidator(split_comma_types)] = [],
     resolution: Resolution = Resolution.RAW,
     cursor: str | None = None,
     limit: PageLimitQueryParam = DEFAULT_PAGE_SIZE,

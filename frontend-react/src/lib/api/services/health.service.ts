@@ -1,5 +1,7 @@
 import { apiClient } from '../client';
 import { API_ENDPOINTS } from '../config';
+import { ApiError } from '../../errors/api-error';
+import { filenameFromDisposition } from '../../utils/download';
 import type {
   DeviceDetectResult,
   DeviceRefileResult,
@@ -88,6 +90,63 @@ async function fetchAllPages<T>(
   }
   // Failing beats silently rendering partial history as complete
   throw new Error(`Pagination for ${endpoint} exceeded 50 pages`);
+}
+
+export type WorkoutSamplesLayout = 'wide' | 'long';
+
+export interface WorkoutSamplesExportParams {
+  layout: WorkoutSamplesLayout;
+  /** Series types to export; omit for every metric recorded in the window. */
+  types?: string[];
+  pad_seconds?: number;
+}
+
+export interface CsvDownload {
+  blob: Blob;
+  filename: string;
+  /** Samples (or workouts) in the file; null when the header was not readable. */
+  rowCount: number | null;
+  /** Sources the rows came from; null when the header was not readable. */
+  sourceCount: number | null;
+}
+
+function countHeader(response: Response, name: string): number | null {
+  const value = response.headers.get(name);
+  if (value === null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * GET a CSV export through the authenticated client and keep it as a blob.
+ * The row counts come back in headers so an empty export can be reported
+ * rather than saved silently.
+ */
+async function fetchCsv(
+  endpoint: string,
+  params: Record<string, string | number | undefined>,
+  fallbackName: string
+): Promise<CsvDownload> {
+  const response = await apiClient.fetchRaw(endpoint, { params });
+  if (!response.ok) {
+    const text = await response.text();
+    let data: unknown = undefined;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { message: text || undefined };
+    }
+    throw ApiError.fromResponse(response, data);
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(
+      response.headers.get('content-disposition'),
+      fallbackName
+    ),
+    rowCount: countHeader(response, 'x-export-row-count'),
+    sourceCount: countHeader(response, 'x-export-source-count'),
+  };
 }
 
 export const healthService = {
@@ -455,6 +514,40 @@ export const healthService = {
   async deleteMenstrualCycle(userId: string, cycleId: string): Promise<void> {
     return apiClient.delete<void>(
       API_ENDPOINTS.userMenstrualCycleDetail(userId, cycleId)
+    );
+  },
+
+  /**
+   * Every sample recorded during a workout, from every device worn, as CSV.
+   * `wide` lines devices up on a 1-s grid; `long` is one row per stored sample.
+   */
+  async exportWorkoutSamples(
+    userId: string,
+    workoutId: string,
+    params: WorkoutSamplesExportParams
+  ): Promise<CsvDownload> {
+    return fetchCsv(
+      API_ENDPOINTS.userWorkoutSamplesExport(userId, workoutId),
+      {
+        layout: params.layout,
+        types: params.types?.length ? params.types.join(',') : undefined,
+        pad_seconds: params.pad_seconds,
+      },
+      `workout-${workoutId}-${params.layout}.csv`
+    );
+  },
+
+  /**
+   * One CSV row per workout in a date range, with source attribution.
+   */
+  async exportWorkouts(
+    userId: string,
+    params: { start_date: string; end_date: string }
+  ): Promise<CsvDownload> {
+    return fetchCsv(
+      API_ENDPOINTS.userWorkoutsExport(userId),
+      params,
+      'workouts.csv'
     );
   },
 
