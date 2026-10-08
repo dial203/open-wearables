@@ -13,6 +13,7 @@ from app.schemas.model_crud.user_management import (
     UserConnectionUpdate,
 )
 from app.schemas.responses.upload import ConnectionsCoverage, ProviderConnectionCount
+from app.services.devices.detection import ACCOUNT_SETTINGS_ACTOR, DeviceDetectionService
 from app.services.outgoing_webhooks.events import on_connection_created, on_connection_revoked
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.services import AppService
@@ -147,6 +148,8 @@ class UserConnectionService(
         connection = self.crud.get_by_id_for_user(db_session, user_id, connection_id)
         if connection is None:
             return None
+        previous_sensor = connection.sensor_label
+        sensor_changed = "sensor_label" in fields_set and payload.sensor_label != previous_sensor
         if "device_label" in fields_set and payload.device_label != connection.device_label:
             self._refuse_if_dated(db_session, connection)
 
@@ -156,6 +159,16 @@ class UserConnectionService(
                 raise ResourceAlreadyExistsError(
                     f"Another {connection.provider} account for this user already uses that e-mail",
                 )
+
+        # Whether the account is one declared device or files each record under its
+        # own, applied to what is already stored and not only to the next sync. Done
+        # before the save below commits, so the setting and the data it describes
+        # change together or not at all. Only on a change: re-filing re-resolves from
+        # what the data sources store, which on a route with stronger identifiers
+        # (Apple's device id, Oura's ring) is less than ingest had.
+        if sensor_changed:
+            connection.sensor_label = payload.sensor_label
+            self._apply_device_attribution(db_session, connection, previous_sensor)
 
         updated = self.crud.update_account_metadata(
             db_session,
@@ -189,6 +202,35 @@ class UserConnectionService(
             db_session.commit()
 
         return updated
+
+    def _apply_device_attribution(
+        self,
+        db_session: DbSession,
+        connection: UserConnection,
+        previous_sensor: str | None,
+    ) -> None:
+        """Re-type and re-file this account's data sources for its current declaration.
+
+        Flushes and never commits; the caller's save does.
+        """
+        detection = DeviceDetectionService()
+        retyped = moved = 0
+        for source in self.data_source_crud.for_connection(db_session, connection.id):
+            retyped += self.data_source_crud.retype_for_declaration(
+                db_session, source, previous_sensor, connection.sensor_label
+            )
+            moved += detection.reattribute(db_session, source, ACCOUNT_SETTINGS_ACTOR)
+        log_structured(
+            self.logger,
+            "info",
+            "Applied account device attribution to existing data",
+            action="device_attribution_applied",
+            connection_id=str(connection.id),
+            provider=connection.provider,
+            single_device=connection.sensor_label is not None,
+            data_sources_retyped=retyped,
+            data_sources_refiled=moved,
+        )
 
     def get_active_count_in_range(self, db_session: DbSession, start_date: datetime, end_date: datetime) -> int:
         """Get count of active connections created within a date range."""

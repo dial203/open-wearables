@@ -302,14 +302,24 @@ class TestDeclaredSensor:
     def test_a_declaration_needs_something_to_have_been_reported(self) -> None:
         assert relaying_host_model(ProviderName.STRAVA, None, "Polar H10", True) is None
 
-    def test_the_grouping_key_pairs_sensor_with_recorder(self) -> None:
+    def test_the_grouping_key_is_the_sensor_on_its_account_not_the_recorder(self) -> None:
+        """One strap recorded by a watch and by a head unit is still one strap."""
         claims = claims_from_data_source(
             ProviderName.STRAVA, "Garmin Forerunner 965", "Garmin Connect", "athlete_1", "Polar H10"
         )
-        claim = _by_kind(claims, DeviceIdentityKind.AGGREGATOR_WRITER_MODEL)
 
+        assert _by_kind(claims, DeviceIdentityKind.AGGREGATOR_WRITER_MODEL) is None
+        claim = _by_kind(claims, DeviceIdentityKind.MODEL_STRING)
         assert claim is not None
-        assert claim.value.startswith("Polar H10||Garmin Forerunner 965")
+        assert claim.value == "Polar H10||athlete_1"
+
+    def test_the_sensor_key_is_scoped_to_the_account_on_any_route(self) -> None:
+        """A declaration is about one account; two Garmin accounts declaring an H10 are two."""
+        claims = claims_from_data_source(ProviderName.GARMIN, "fenix 8", "garmin", "garmin_user_1", "Polar H10")
+
+        claim = _by_kind(claims, DeviceIdentityKind.MODEL_STRING)
+        assert claim is not None
+        assert claim.value == "Polar H10||garmin_user_1"
 
     def test_a_sensor_with_no_recorder_is_simply_the_unit(self) -> None:
         """Nothing was reported to be the recorder, so there is no host to record."""
@@ -324,9 +334,9 @@ class TestDeclaredSensor:
         claims = claims_from_data_source(ProviderName.APPLE, "iPhone15,3", "com.ouraring.oura", None, "Polar H10")
 
         assert _by_kind(claims, DeviceIdentityKind.HEALTHKIT_BUNDLE) is None
-        claim = _by_kind(claims, DeviceIdentityKind.AGGREGATOR_WRITER_MODEL)
+        claim = _by_kind(claims, DeviceIdentityKind.MODEL_STRING)
         assert claim is not None
-        assert claim.value == "Polar H10||iPhone15,3"
+        assert claim.value == "Polar H10"
 
     def test_every_claim_stays_weak(self) -> None:
         claims = claims_from_data_source(

@@ -884,6 +884,91 @@ then tell the watch's own data from an app's.
   the one change to an otherwise upstream-identical file. `split_comma_types` in
   `routes/v1/timeseries.py` lost its leading underscore so the export route can reuse it.
 
+## An account is either one declared device or files each record under its own
+
+- **Area**: backend, frontend, docs
+- **Status**: active
+- **On conflict**: keep ours. Upstream files touched: `user_connection_service.update_account`
+  (re-apply the call to `_apply_device_attribution` after upstream's update), the account
+  schema (`device_attribution` computed field), `data_source_repository.py`
+  (`for_connection`, `retype_for_declaration`) and `schemas/enums/__init__.py`.
+- **Why**: a validation study runs a gold-standard Strava account, whose every workout was
+  recorded with an ECG strap through a watch or head unit, beside validation accounts that
+  each carry whatever devices sync to them. Strava already filed each activity under the
+  device its metadata names (`device_name`, else the upload source), and `sensor_label`
+  already declared a strap under a recorder - but only through the API, with nothing on
+  screen saying which way an account was being read. Three gaps made the declaration less
+  than "this account is one device":
+
+  - The declared sensor grouped on (sensor, recorder), as an inferred relay groups on
+    (writer, host), so one strap recorded by a watch on runs and a head unit on rides was
+    two devices. A declaration is about the whole account, so it now keys on the sensor
+    and the account alone, on every route. A device created under the old key is found
+    through it and given the new one (`legacy_declared_sensor_claims`), so no duplicate
+    appears on the next sync - but only when every source on it came through the same
+    account, because off Strava the old keys were not scoped to one.
+  - Setting or clearing it changed only future syncs. Existing rows kept the old type,
+    and attribution is write-once for detection, so they also stayed on the old device.
+    Changing `sensor_label` now re-types and re-files the account's data sources
+    (`DeviceDetectionService.reattribute`) in the same transaction as the change. It
+    leaves a source a person detached, and one whose device has a history row from
+    anyone but a process (`system:*` actors), since re-filing those would overwrite a
+    person's judgement. Withdrawing the declaration puts each source back on the device
+    it was moved off, from the history, rather than re-resolving from the stored model
+    string: ingest can attribute on stronger identifiers (an Apple device id, an Oura
+    ring) that the data source does not keep. It runs only on a change, for the same
+    reason - re-resolving an Apple account's sources on every save could move them.
+  - A declared sensor on a record that named no recorder created a device with no name.
+    It now creates the sensor's device with no host.
+
+  `device_attribution` (`per_record` | `single_device`) is derived from `sensor_label`
+  rather than stored beside it, so the two cannot disagree; the dashboard's Edit account
+  dialog sets it as a two-way choice. `/data-sources` rows carry both beside the account
+  classification they already denormalise, so a consumer naming sources - the HR validity
+  tool - can name a gold-standard source for its strap rather than the watch in
+  `device_model`. Touches upstream's `priority_service.py` and `data_source.py` schema.
+
+## Polar intraday steps are placed at true UTC with the day's sleep-record offset
+
+- **Area**: backend
+- **Status**: active, upstreamable
+- **On conflict**: reconcile (keep `sleep_starts` placement and `_clear_of_daily_totals` in
+  `polar/data_247.py`; take any new upstream sample handling)
+- **Why**: upstream (#1746) writes the intraday step samples Polar's daily-activity row
+  carries. Their timestamps are a zoneless local clock ("2024-01-15T07:10") and the row has
+  no offset, so read as UTC every bout lands off by the wearer's offset - a 07:10 walk in
+  Ohio in summer stored at 03:10. The same failure the fork already fixed for exercises and
+  v4 PPI. Each day is now placed with the offset Polar stated on that day's sleep record
+  (the night ending that morning, else the night starting that evening); a day with
+  neither gets its totals and no intraday samples, as Nightly Recharge HRV does. The
+  webhook path fetches that day's sleep for the same purpose. Daily totals keep upstream's
+  stamp (local midnight read as UTC) so existing rows still match; because the series key
+  has no is_daily_total, an intraday sample landing exactly on a UTC midnight - one bin a
+  day at most - is stamped one second later rather than overwriting a total or being
+  dropped. A day spent travelling across zones is still placed with one offset.
+
+## Withings sleep HRV records which Withings field each value came from
+
+- **Area**: backend
+- **Status**: active, until Withings' window for `sdnn_1` is confirmed
+- **On conflict**: keep ours (`provider_metadata["withings_field"]`)
+- **Why**: upstream (#1756) maps Withings `/v2/sleep` `rmssd` and `sdnn_1` onto the shared
+  RMSSD and SDNN series. The payload states no window, and `sdnn_1` reads as a 1-minute
+  SDNN, not comparable with Apple's or a 5-minute SDNN. The window could not be confirmed
+  from Withings' reference (rendered client-side, unfetchable here), so no
+  `interval_seconds` is invented; each value instead carries the field it came from, so an
+  analysis can set these apart. Add `interval_seconds` once the window is known.
+
+## Meals follow the record listings' rules
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: reconcile
+- **Why**: upstream's nutrition (#1674) added meals as event records with their own upsert.
+  They resolve data sources through the fork's per-account, dated-history resolver
+  (`EventRecordRepository._resolve_values`), and the meals listing applies and reports the
+  redundant-relay plan and accepts `include_redundant_relays`, like every other listing.
+
 ## A Garmin workout's own heart rate is the only heart_rate inside it
 
 - **Area**: backend

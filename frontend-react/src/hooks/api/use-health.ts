@@ -98,11 +98,20 @@ export function useUpdateConnectionAccount(
       account_label?: string | null;
       account_email?: string | null;
       device_label?: string | null;
+      sensor_label?: string | null;
     }) => healthService.updateConnectionAccount(userId, connectionId, patch),
-    onSuccess: () => {
+    onSuccess: (_data, patch) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.connections.all(userId),
       });
+      // A change of device attribution re-files the account's sources onto
+      // other devices and re-types them.
+      if ('sensor_label' in patch) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.devices.all });
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.priorities.dataSources(userId),
+        });
+      }
       toast.success('Account updated');
     },
     onError: (error: unknown) => {

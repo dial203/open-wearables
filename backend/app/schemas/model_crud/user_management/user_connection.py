@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
 from app.schemas.auth import ConnectionStatus, LiveSyncMode
-from app.schemas.enums import AccountType
+from app.schemas.enums import AccountType, DeviceAttribution
 
 
 class UserConnectionBase(BaseModel):
@@ -71,6 +71,19 @@ class UserConnectionRead(UserConnectionBase):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def device_attribution(self) -> DeviceAttribution:
+        """How this account's data is filed against devices.
+
+        ``single_device`` when ``sensor_label`` names the one unit behind every record
+        on the account (a gold-standard chest strap); ``per_record`` when each record
+        is filed under the device its own metadata names, which is how an aggregator
+        such as Strava carries several devices on one account. Set it by setting or
+        clearing ``sensor_label``.
+        """
+        return DeviceAttribution.SINGLE_DEVICE if self.sensor_label else DeviceAttribution.PER_RECORD
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def display_label(self) -> str:
         """A name for this account that is never empty.
 
@@ -125,10 +138,12 @@ class UserConnectionAccountUpdate(BaseModel):
         None,
         max_length=100,
         description=(
-            'A sensor worn under the device this provider names, e.g. "Polar H10" on an account whose '
-            "activities are recorded by a watch. Strava reports the device that uploaded and nothing about "
-            "a strap paired to it, so this is declared rather than detected. When set, the reported model "
-            "becomes the recorder (device.host_model_raw) and this names the unit."
+            'The one device behind every record on this account, e.g. "Polar H10" on a gold-standard '
+            "Strava account whose workouts were all recorded with a chest strap. Setting it makes the "
+            "account `single_device`: each record's reported model is kept as the recorder that carried "
+            "it (device.host_model_raw) and this names the unit. Clearing it makes the account "
+            "`per_record`, where each record is filed under the device its own metadata names - how an "
+            "aggregator carries several devices. Either change is applied to the account's existing data."
         ),
     )
 

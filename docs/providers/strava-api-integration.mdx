@@ -73,39 +73,65 @@ validation study.
 - When nothing names the hardware, `device_model` is left null so it falls back to
   the connection's `device_label` — see below.
 
-### Naming the device behind an account
+### Aggregator or single device
 
-Two fields, answering different questions. They are not alternatives, and which one
-you need depends on what Strava reported.
+Each Strava account is one of two things, and the account's **device attribution**
+says which. It is reported on every connection as `device_attribution`, and set from
+the dashboard (account menu → **Edit account** → **Device attribution**) or through
+the API.
 
-`device_label` — **Strava reported no device.** The label fills in for it, on future
-syncs and on already-ingested device-less rows:
+| `device_attribution` | Meaning | Typical account |
+|---|---|---|
+| `per_record` (default) | Each activity is filed under the device its own metadata names — the watch, head unit or app above. One account can carry several devices. | A validation account that one or more test devices sync to |
+| `single_device` | Every activity is one declared device, whatever recorded it. The recorder each activity names is kept as provenance. | A gold-standard account whose workouts were all recorded with a chest strap |
+
+There is no separate mode field: `sensor_label` is the switch. Naming the device makes
+the account `single_device`; clearing it (`null`) makes it `per_record` again.
 
 ```bash
+# Gold standard: every workout on this account is the H10, whatever uploaded it
 PATCH /api/v1/users/{user_id}/connections/accounts/{connection_id}
-{"device_label": "COROS PACE 3", "account_label": "P01 arm B", "account_type": "validation"}
+{"sensor_label": "Polar H10", "account_label": "Gold standard HR", "account_type": "reference"}
+
+# Validation: file each workout under the device or app its metadata names
+PATCH /api/v1/users/{user_id}/connections/accounts/{connection_id}
+{"sensor_label": null, "account_label": "P01 arm B", "account_type": "validation"}
 ```
 
-`sensor_label` — **Strava reported the wrong thing.** `device_name` is the device that
+**Why a gold-standard strap has to be declared.** `device_name` is the device that
 *uploaded*; a chest strap paired to that watch appears in no field Strava exposes
 (`gear` covers bikes and shoes only), and an activity with `has_heartrate` looks
-identical whether a strap or a wrist optical sensor produced it. So for the usual
-validation arrangement — an ECG strap as the reference, recorded through a watch — the
-reference instrument is invisible and its data arrives attributed to the wrist:
+identical whether a strap or a wrist optical sensor produced it. Left to the metadata,
+the reference instrument is invisible and its data arrives attributed to the wrist.
+
+On a `single_device` account:
+
+- The strap is the device in the registry, typed from its name (`chest_strap` for an
+  H10), which is what ranks it above wrist optical sensors when priority resolves
+  overlapping data.
+- It is **one** device across recorders: runs recorded by a watch and rides recorded by
+  a head unit are the same strap. Each recorder stays on its own data source, and the
+  first one seen is kept on the device as `host_model_raw`.
+- Nothing is destroyed: `data_source.device_model` still holds Strava's report verbatim.
+- `GET /api/v1/users/{user_id}/data-sources` carries `device_attribution` and
+  `sensor_label` on each row, so a consumer can tell that a source's `device_model` is the
+  recorder and name it for the strap instead.
+
+**Switching applies to stored data.** Changing the attribution re-types the account's
+existing data sources and re-files them onto the device the new setting names, not
+only the next sync. Switching back puts each recorder back on the device it had
+before. Two kinds of source are left where they are: one a person detached from its
+device, and one whose device a person has edited (labelled, merged, linked by hand) —
+those keep their device and only take the new type.
+
+`device_label` is separate and still applies on a `per_record` account: it names the
+device for activities that report none, on future syncs and on already-ingested
+device-less rows.
 
 ```bash
 PATCH /api/v1/users/{user_id}/connections/accounts/{connection_id}
-{"sensor_label": "Polar H10", "account_label": "Gold standard HR", "account_type": "personal"}
+{"device_label": "COROS PACE 3"}
 ```
-
-With that set, the watch becomes the *recorder*: it moves to `device.host_model_raw`,
-the same place an aggregator's relaying handset goes, and the strap becomes the device
-— correctly typed as `chest_strap`, which is what ranks it above wrist optical sensors
-when priority resolves overlapping data. Nothing is destroyed: `data_source.device_model`
-still holds Strava's report verbatim.
-
-This is a declaration, not a detection. Nothing in the payload can be read to infer it,
-which is why it is a field a person fills.
 
 ### One account per device
 
@@ -219,10 +245,13 @@ Self-upgrade to Standard Tier (up to 10 athletes) directly from your [API Settin
     Add the following to your `.env` file:
 
 ```bash
+# Public base URL of your API. The OAuth redirect URI is derived from this as
+# {API_BASE_URL}/api/v1/oauth/strava/callback.
+API_BASE_URL=http://localhost:8000
+
 #--- Strava ---#
 STRAVA_CLIENT_ID=your-strava-client-id
 STRAVA_CLIENT_SECRET=your-strava-client-secret
-STRAVA_REDIRECT_URI=http://localhost:8000/api/v1/oauth/strava/callback
 STRAVA_DEFAULT_SCOPE=activity:read_all,profile:read_all
 STRAVA_WEBHOOK_VERIFY_TOKEN=your-secret-verify-token
 STRAVA_ENRICH_ACTIVITY_DETAIL=true
@@ -232,9 +261,9 @@ STRAVA_ENRICH_ACTIVITY_DETAIL=true
 
     | Variable | Description |
     |----------|-------------|
+    | `API_BASE_URL` | Public base URL of your API. The OAuth redirect URI is derived from it as `{API_BASE_URL}/api/v1/oauth/strava/callback`. Its domain must match the Authorization Callback Domain you set in Strava |
     | `STRAVA_CLIENT_ID` | Client ID from the Strava API settings page |
     | `STRAVA_CLIENT_SECRET` | Client Secret from the Strava API settings page |
-    | `STRAVA_REDIRECT_URI` | Must match the callback domain you set in Strava. For local dev: `http://localhost:8000/api/v1/oauth/strava/callback` |
     | `STRAVA_DEFAULT_SCOPE` | OAuth scopes requested during authorization. Default `activity:read_all,profile:read_all` covers all activity data and athlete profile |
     | `STRAVA_WEBHOOK_VERIFY_TOKEN` | A secret string you choose. Strava will send this back during webhook subscription verification to confirm ownership. Pick something unique and hard to guess |
 | `STRAVA_ENRICH_ACTIVITY_DETAIL` | Re-fetch each backfilled activity from the detail endpoint so device metadata is available. Default `true`. Costs one extra request per activity against the per-application rate limit — see [Which device recorded the activity](#which-device-recorded-the-activity) |

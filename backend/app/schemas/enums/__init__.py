@@ -14,6 +14,7 @@ from .data_granularity import (
     DataGranularity,
     Resolution,
 )
+from .device_attribution import DeviceAttribution
 from .device_registry import (
     STRONG_IDENTITY_KINDS,
     WRITER_IDENTITY_KINDS,
@@ -59,6 +60,7 @@ from .workout_types import (
 
 __all__ = [
     "AccountType",
+    "DeviceAttribution",
     "ACCOUNT_TYPE_ORDER",
     "ACCOUNT_TYPE_DESCRIPTIONS",
     "DeviceType",

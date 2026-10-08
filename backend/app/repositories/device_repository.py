@@ -26,6 +26,8 @@ from app.schemas.enums import (
 from app.services.devices.identity import IdentityClaim
 
 SYSTEM_ACTOR = "system:detection"
+# Every actor that is a process rather than a person starts with this.
+MACHINE_ACTOR_PREFIX = "system:"
 
 
 class DeviceRepository:
@@ -60,6 +62,43 @@ class DeviceRepository:
         )
         db_session.add(entry)
         return entry
+
+    def touched_by_person(self, db_session: DbSession, device_id: UUID) -> bool:
+        """Whether anyone but a process has changed this device or what is linked to it.
+
+        A label, a merge, a hand link or an accepted proposal all leave a history row
+        under the person's name, so their absence is what makes a device detection's
+        own work - safe for detection to rearrange.
+        """
+        stmt = (
+            select(DeviceHistory.id)
+            .where(
+                DeviceHistory.device_id == device_id,
+                DeviceHistory.actor.is_not(None),
+                ~DeviceHistory.actor.startswith(MACHINE_ACTOR_PREFIX),
+            )
+            .limit(1)
+        )
+        return db_session.scalars(stmt).first() is not None
+
+    def device_before_move(
+        self, db_session: DbSession, data_source_id: UUID, device_id: UUID, actor: str
+    ) -> UUID | None:
+        """The device ``actor`` last moved this source off onto ``device_id``, if any."""
+        stmt = (
+            select(DeviceHistory.old_value)
+            .where(
+                DeviceHistory.data_source_id == data_source_id,
+                DeviceHistory.action == DeviceHistoryAction.LINKED.value,
+                DeviceHistory.actor == actor,
+                DeviceHistory.new_value == str(device_id),
+                DeviceHistory.old_value.is_not(None),
+            )
+            .order_by(DeviceHistory.created_at.desc())
+            .limit(1)
+        )
+        previous = db_session.scalars(stmt).first()
+        return UUID(previous) if previous else None
 
     def history_for_user(
         self,

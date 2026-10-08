@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e -x
 
+scripts/start/install_extensions.sh
+
 # Ensure svix database exists (idempotent)
 echo 'Ensuring svix database...'
 uv run python scripts/init/create_svix_db.py
@@ -55,6 +57,14 @@ uv run python scripts/data_migrations/relabel_ultrahuman_body_temp_to_skin_temp.
 echo 'Running Ultrahuman HRV SDNN->RMSSD relabel...'
 uv run python scripts/data_migrations/relabel_ultrahuman_hrv_sdnn_to_rmssd.py \
     || echo "Warning: Ultrahuman HRV relabel failed — will retry on next startup."
+
+
+# TODO: Remove this after ~2027-01-01 once all deployments have migrated.
+# Relabels Ultrahuman active minutes stored as active_time (id=88) to exercise_time
+# (id=84). Scoped to provider='ultrahuman', no-op once corrected.
+echo 'Running Ultrahuman active_time->exercise_time relabel...'
+uv run python scripts/data_migrations/relabel_ultrahuman_active_time_to_exercise_time.py \
+    || echo "Warning: Ultrahuman active time relabel failed — will retry on next startup."
 
 
 # TODO: Remove this after ~2026-12-01 once all deployments have migrated.

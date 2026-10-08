@@ -638,6 +638,58 @@ class DataSourceRepository(
             return from_source
         return infer_device_type_from_source_name(original_source_name)
 
+    def for_connection(self, db_session: DbSession, user_connection_id: UUID) -> list[DataSource]:
+        """Every data source that arrived through one account."""
+        return (
+            db_session.query(self.model)
+            .filter(self.model.user_connection_id == user_connection_id)
+            .order_by(self.model.id)
+            .all()
+        )
+
+    def retype_for_declaration(
+        self,
+        db_session: DbSession,
+        data_source: DataSource,
+        previous_sensor: str | None,
+        declared_sensor: str | None,
+    ) -> bool:
+        """Re-classify a source after its account's declared sensor changed. True if it did.
+
+        A sync applies a declaration only to the rows it touches, and on the SDK routes
+        only as an upgrade, so changing the declaration would otherwise leave every
+        existing row typed by the old one until it happened to sync again - the
+        reference strap still ranked as a watch, or a withdrawn strap still ranked as
+        one. A recognisable declaration wins outright, as it does at ingest. When it is
+        withdrawn, a row whose type came from it is inferred afresh; any other row keeps
+        what it has unless inference now says something better.
+        """
+        provider = ProviderName(getattr(data_source.provider, "value", data_source.provider))
+        resolved = self._infer_device_type(
+            data_source.device_model,
+            data_source.original_source_name,
+            data_source.source,
+            declared_sensor,
+            provider=provider,
+        )
+        declared_type = infer_device_type_from_source_name(declared_sensor) if declared_sensor else None
+        previous_type = infer_device_type_from_source_name(previous_sensor) if previous_sensor else None
+        if declared_type is not None and declared_type is not DeviceType.UNKNOWN:
+            new_type = declared_type.value
+        elif (
+            previous_type is not None
+            and previous_type is not DeviceType.UNKNOWN
+            and data_source.device_type == previous_type.value
+        ):
+            new_type = resolved.value
+        else:
+            new_type = self.next_device_type(provider, data_source.device_type, resolved)
+        if new_type == data_source.device_type:
+            return False
+        object.__setattr__(data_source, "device_type", new_type)
+        db_session.flush()
+        return True
+
     @staticmethod
     def next_device_type(provider: ProviderName, current: str | None, resolved: DeviceType) -> str:
         """The type an existing row should carry after a sync resolved ``resolved``.

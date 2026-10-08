@@ -134,6 +134,11 @@ class TestPolar247SleepNormalization:
 
 
 class TestPolar247DailyActivityNormalization:
+    # The night ending that morning, as its sleep record states it. UTC+0 here, so the
+    # clock times below read the same in UTC; the placement tests use other offsets.
+    UTC_NIGHT = {"2024-01-15": datetime(2024, 1, 14, 23, 0, tzinfo=timezone.utc)}
+    EDT_NIGHT = {"2024-01-15": datetime(2024, 1, 14, 23, 0, tzinfo=timezone(timedelta(hours=-4)))}
+
     @pytest.fixture
     def sample_activity(self) -> dict:
         return {
@@ -184,8 +189,294 @@ class TestPolar247DailyActivityNormalization:
         user_id = uuid4()
         assert data_247.normalize_daily_activity([sample_activity], user_id) == []
 
+    def test_step_samples_ride_along_with_the_daily_total(self, data_247: Polar247Data, sample_activity: dict) -> None:
+        # The row is requested with steps=true, so the intraday samples arrive with it.
+        sample_activity["samples"] = {
+            "steps": {
+                "interval_ms": 600_000,
+                "total_steps": 9500,
+                "samples": [
+                    {"steps": 120, "timestamp": "2024-01-15T07:10"},
+                    {"steps": 0, "timestamp": "2024-01-15T07:20"},
+                ],
+            }
+        }
+
+        samples = data_247.normalize_daily_activity([sample_activity], uuid4(), self.EDT_NIGHT)
+
+        step_samples = [s for s in samples if s.series_type == SeriesType.steps]
+        # Flagging both the same way would let the aggregation add a day to its own parts.
+        assert [s.value for s in step_samples if s.is_daily_total] == [9500]
+        # Fork: a 07:10 local bout in UTC-4 is 11:10 UTC, and says so.
+        assert [
+            (s.recorded_at.isoformat(), s.zone_offset, int(s.value)) for s in step_samples if not s.is_daily_total
+        ] == [
+            ("2024-01-15T11:10:00+00:00", "-04:00", 120),
+            ("2024-01-15T11:20:00+00:00", "-04:00", 0),
+        ]
+
+    def test_step_sample_does_not_overwrite_the_daily_total(
+        self, data_247: Polar247Data, sample_activity: dict
+    ) -> None:
+        # Polar's first sample always repeats start_time. The day's total is stored there
+        # read as UTC, and a series row is keyed by its instant alone, so a sample on the
+        # same instant would replace the total. In UTC+0 the two coincide; the sample is
+        # kept one second later rather than dropped (fork).
+        sample_activity["samples"] = {
+            "steps": {
+                "interval_ms": 60_000,
+                "total_steps": 9500,
+                "samples": [
+                    {"steps": 0, "timestamp": "2024-01-15T00:00:00"},
+                    {"steps": 120, "timestamp": "2024-01-15T07:10"},
+                ],
+            }
+        }
+
+        samples = data_247.normalize_daily_activity([sample_activity], uuid4(), self.UTC_NIGHT)
+
+        step_samples = [s for s in samples if s.series_type == SeriesType.steps]
+        assert [s.value for s in step_samples if s.recorded_at == datetime(2024, 1, 15)] == [9500]
+        assert [(s.recorded_at.isoformat(), int(s.value)) for s in step_samples if not s.is_daily_total] == [
+            ("2024-01-15T00:00:01+00:00", 0),
+            ("2024-01-15T07:10:00+00:00", 120),
+        ]
+
+    def test_a_local_evening_landing_on_utc_midnight_does_not_overwrite_the_next_total(
+        self, data_247: Polar247Data, sample_activity: dict
+    ) -> None:
+        # 20:00 in UTC-4 is the next day's 00:00 UTC, where that day's total sits.
+        sample_activity["samples"] = {
+            "steps": {
+                "interval_ms": 60_000,
+                "total_steps": 9500,
+                "samples": [{"steps": 40, "timestamp": "2024-01-15T20:00"}],
+            }
+        }
+
+        samples = data_247.normalize_daily_activity([sample_activity], uuid4(), self.EDT_NIGHT)
+
+        (evening,) = [s for s in samples if s.series_type == SeriesType.steps and not s.is_daily_total]
+        assert evening.recorded_at == datetime(2024, 1, 16, 0, 0, 1, tzinfo=timezone.utc)
+
+    def test_a_day_with_no_sleep_record_gets_its_totals_but_no_intraday_steps(
+        self, data_247: Polar247Data, sample_activity: dict
+    ) -> None:
+        # The clock times carry no offset and the row none either; a guessed zone would
+        # misplace every bout, so none are written.
+        sample_activity["samples"] = {
+            "steps": {
+                "interval_ms": 60_000,
+                "total_steps": 9500,
+                "samples": [{"steps": 120, "timestamp": "2024-01-15T07:10"}],
+            }
+        }
+
+        samples = data_247.normalize_daily_activity([sample_activity], uuid4())
+
+        step_samples = [s for s in samples if s.series_type == SeriesType.steps]
+        assert [(s.is_daily_total, int(s.value)) for s in step_samples] == [(True, 9500)]
+
+    def test_the_night_starting_that_evening_places_the_day_when_the_morning_has_none(
+        self, data_247: Polar247Data, sample_activity: dict
+    ) -> None:
+        sample_activity["samples"] = {
+            "steps": {
+                "interval_ms": 60_000,
+                "total_steps": 9500,
+                "samples": [{"steps": 120, "timestamp": "2024-01-15T07:10"}],
+            }
+        }
+        evening = {"2024-01-16": datetime(2024, 1, 15, 23, 0, tzinfo=timezone(timedelta(hours=2)))}
+
+        samples = data_247.normalize_daily_activity([sample_activity], uuid4(), evening)
+
+        (bout,) = [s for s in samples if s.series_type == SeriesType.steps and not s.is_daily_total]
+        assert bout.recorded_at == datetime(2024, 1, 15, 5, 10, tzinfo=timezone.utc)
+        assert bout.zone_offset == "+02:00"
+
+    @staticmethod
+    def _intraday_steps(data_247: Polar247Data, activity: dict, total: int, points: list[tuple[str, int]]) -> list:
+        activity["samples"] = {
+            "steps": {
+                "interval_ms": 60_000,
+                "total_steps": total,
+                "samples": [{"steps": steps, "timestamp": at} for at, steps in points],
+            }
+        }
+        samples = data_247.normalize_daily_activity(
+            [activity], uuid4(), TestPolar247DailyActivityNormalization.UTC_NIGHT
+        )
+        return [
+            (s.recorded_at.strftime("%H:%M"), int(s.value))
+            for s in samples
+            if s.series_type == SeriesType.steps and not s.is_daily_total
+        ]
+
+    def test_steps_omitted_as_repeats_are_restored(self, data_247: Polar247Data, sample_activity: dict) -> None:
+        # Polar drops a sample that repeats the previous count: 07:11 and 07:12 walked 100 too.
+        steps = self._intraday_steps(
+            data_247, sample_activity, 9500, [("2024-01-15T07:10", 100), ("2024-01-15T07:13", 0)]
+        )
+
+        assert steps == [("07:10", 100), ("07:11", 100), ("07:12", 100), ("07:13", 0)]
+
+    def test_a_gap_after_zero_steps_stays_one_sample(self, data_247: Polar247Data, sample_activity: dict) -> None:
+        steps = self._intraday_steps(
+            data_247, sample_activity, 9500, [("2024-01-15T01:00", 0), ("2024-01-15T07:00", 50)]
+        )
+
+        assert steps == [("01:00", 0), ("07:00", 50)]
+
+    def test_steps_are_kept_as_sent_when_restoring_would_exceed_the_total(
+        self, data_247: Polar247Data, sample_activity: dict
+    ) -> None:
+        # Five hours of 100 steps a minute cannot fit a 600-step day: that gap was no run of repeats.
+        steps = self._intraday_steps(
+            data_247, sample_activity, 600, [("2024-01-15T07:00", 100), ("2024-01-15T12:00", 0)]
+        )
+
+        assert steps == [("07:00", 100), ("12:00", 0)]
+
+    def test_unreadable_step_sample_timestamp_skipped(self, data_247: Polar247Data, sample_activity: dict) -> None:
+        sample_activity["samples"] = {
+            "steps": {
+                "interval_ms": 600_000,
+                "total_steps": 9500,
+                "samples": [
+                    {"steps": 120, "timestamp": "not-a-timestamp"},
+                    {"steps": 80, "timestamp": "2024-01-15T07:20"},
+                ],
+            }
+        }
+
+        samples = data_247.normalize_daily_activity([sample_activity], uuid4(), self.UTC_NIGHT)
+
+        intraday = [s for s in samples if s.series_type == SeriesType.steps and not s.is_daily_total]
+        assert [int(s.value) for s in intraday] == [80]
+
     def test_empty_input(self, data_247: Polar247Data) -> None:
         assert data_247.normalize_daily_activity([], uuid4()) == []
+
+    def test_a_webhook_day_is_placed_by_its_own_sleep_records(self, data_247: Polar247Data) -> None:
+        night = {"date": "2024-01-15", "sleep_start_time": "2024-01-14T23:00:00-04:00"}
+        with patch.object(data_247, "get_sleep_data", return_value=[night]) as fetch:
+            starts = data_247._activity_sleep_starts(MagicMock(), uuid4(), {"start_time": "2024-01-15T00:00:00"})
+
+        assert starts == {"2024-01-15": datetime(2024, 1, 14, 23, 0, tzinfo=timezone(timedelta(hours=-4)))}
+        # That night and the next: the morning's record, else the evening's.
+        assert fetch.call_args.args[2:] == (
+            datetime(2024, 1, 15, tzinfo=timezone.utc),
+            datetime(2024, 1, 16, tzinfo=timezone.utc),
+        )
+
+    def test_a_failed_sleep_fetch_leaves_the_webhook_day_unplaced_not_unsaved(self, data_247: Polar247Data) -> None:
+        with patch.object(data_247, "get_sleep_data", side_effect=RuntimeError("polar down")):
+            starts = data_247._activity_sleep_starts(MagicMock(), uuid4(), {"start_time": "2024-01-15T00:00:00"})
+
+        assert starts == {}
+
+    @staticmethod
+    def _with_zones(activity: dict, zones: list[tuple[str, str]]) -> dict:
+        activity["end_time"] = "2024-01-15T23:59:59"
+        activity["samples"] = {"activity_zones": {"samples": [{"zone": z, "timestamp": t} for z, t in zones]}}
+        return activity
+
+    def test_exercise_time_from_moderate_and_vigorous_zones(
+        self, data_247: Polar247Data, sample_activity: dict
+    ) -> None:
+        activity = self._with_zones(
+            sample_activity,
+            [
+                ("SEDENTARY", "2024-01-15T00:00:00"),
+                ("MODERATE", "2024-01-15T08:00:00"),  # 20.5 min
+                ("VIGOROUS", "2024-01-15T08:20:30"),  # 24.5 min
+                ("LIGHT", "2024-01-15T08:45:00"),
+                ("MODERATE", "2024-01-15T23:50:00"),  # until end_time: 9 min 59 s
+            ],
+        )
+
+        samples = data_247.normalize_daily_activity([activity], uuid4())
+
+        exercise = [s for s in samples if s.series_type == SeriesType.exercise_time]
+        assert [s.value for s in exercise] == [54]
+        assert exercise[0].is_daily_total is True
+
+    def test_exercise_time_zero_without_moderate_or_vigorous(
+        self, data_247: Polar247Data, sample_activity: dict
+    ) -> None:
+        activity = self._with_zones(
+            sample_activity, [("SEDENTARY", "2024-01-15T00:00:00"), ("LIGHT", "2024-01-15T09:00:00")]
+        )
+
+        samples = data_247.normalize_daily_activity([activity], uuid4())
+
+        assert [s.value for s in samples if s.series_type == SeriesType.exercise_time] == [0]
+
+    @pytest.mark.parametrize(
+        "zones",
+        [
+            None,
+            {"samples": None},
+            {
+                "samples": [
+                    {"zone": "MODERATE", "timestamp": "2024-01-15T08:00:00"},
+                    {"zone": "LIGHT", "timestamp": "x"},
+                ]
+            },
+            {
+                "samples": [
+                    {"zone": "MODERATE", "timestamp": "2024-01-15T08:00:00"},
+                    {"zone": "LIGHT", "timestamp": None},
+                ]
+            },
+            {
+                "samples": [
+                    {"zone": "MODERATE", "timestamp": "2024-01-15T08:00:00"},
+                    {"zone": None, "timestamp": "2024-01-15T09:00:00"},
+                ]
+            },
+        ],
+        ids=["no_zones", "null_samples", "unreadable_timestamp", "null_timestamp", "null_zone"],
+    )
+    def test_unusable_zones_give_no_exercise_time(
+        self, data_247: Polar247Data, sample_activity: dict, zones: dict | None
+    ) -> None:
+        sample_activity["end_time"] = "2024-01-15T23:59:59"
+        if zones is not None:
+            sample_activity["samples"] = {"activity_zones": zones}
+
+        samples = data_247.normalize_daily_activity([sample_activity], uuid4())
+
+        assert not any(s.series_type == SeriesType.exercise_time for s in samples)
+        assert any(s.series_type == SeriesType.steps for s in samples)
+
+    def test_exercise_time_from_unsorted_zone_samples(self, data_247: Polar247Data, sample_activity: dict) -> None:
+        activity = self._with_zones(
+            sample_activity,
+            [
+                ("MODERATE", "2024-01-15T23:50:00"),
+                ("LIGHT", "2024-01-15T08:45:00"),
+                ("SEDENTARY", "2024-01-15T00:00:00"),
+                ("VIGOROUS", "2024-01-15T08:20:30"),
+                ("MODERATE", "2024-01-15T08:00:00"),
+            ],
+        )
+
+        samples = data_247.normalize_daily_activity([activity], uuid4())
+
+        assert [s.value for s in samples if s.series_type == SeriesType.exercise_time] == [54]
+
+    def test_requests_activity_zones(self, data_247: Polar247Data) -> None:
+        with patch.object(data_247, "_make_api_request", return_value=[]) as request:
+            data_247.get_daily_activity_statistics(
+                MagicMock(),
+                uuid4(),
+                datetime(2024, 1, 1, tzinfo=timezone.utc),
+                datetime(2024, 1, 2, tzinfo=timezone.utc),
+            )
+
+        assert request.call_args.kwargs["params"]["activity_zones"] == "true"
 
 
 # ---------------------------------------------------------------------------

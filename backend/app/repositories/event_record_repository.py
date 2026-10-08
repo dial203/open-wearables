@@ -20,6 +20,7 @@ from sqlalchemy import (
     func,
     lateral,
     literal,
+    literal_column,
     select,
     text,
     true,
@@ -137,6 +138,7 @@ class EventRecordRepository(
             db_session.query(self.model)
             .filter(
                 self.model.data_source_id == data_source_id,
+                self.model.category != "meal",
                 self.model.start_datetime == creation.start_datetime,
                 self.model.end_datetime == creation.end_datetime,
             )
@@ -225,17 +227,14 @@ class EventRecordRepository(
                 return existing
             raise
 
-    @handle_exceptions
-    def bulk_create(
-        self,
-        db_session: DbSession,
-        creators: list[EventRecordCreate],
-    ) -> list[UUID]:
-        if not creators:
-            return []
+    def _resolve_values(self, db_session: DbSession, creators: list[EventRecordCreate]) -> list[dict]:
+        """Resolve data sources in batch and build event_record row values.
 
-        # Every record's data source in one pass, by the record's own start where the
-        # account has a dated device history.
+        Fork: through ``resolve_bulk_data_sources``, per record rather than per identity, so
+        two accounts with one provider never share a source and a record with no device
+        takes the account's dated device history at its own start. Meals (upstream) go
+        through the same resolver.
+        """
         source_ids = self.data_source_repo.resolve_bulk_data_sources(db_session, creators, lambda c: c.start_datetime)
 
         values_list = []
@@ -257,11 +256,23 @@ class EventRecordRepository(
                     "zone_offset": creator.zone_offset,
                 }
             )
+        return values_list
 
+    @handle_exceptions
+    def bulk_create(
+        self,
+        db_session: DbSession,
+        creators: list[EventRecordCreate],
+    ) -> list[UUID]:
+        """Insert non-meal records, skipping existing ones. Meals go through bulk_upsert_meals."""
+        if not creators:
+            return []
+
+        values_list = self._resolve_values(db_session, creators)
         if not values_list:
             return []
 
-        # 3. Batch insert with ON CONFLICT DO NOTHING
+        # Batch insert with ON CONFLICT DO NOTHING
         # Chunk to stay under PostgreSQL's 65535 parameter limit (10 params/row → max ~6553 rows)
         chunk_size = 6_500
         inserted_ids: set[UUID] = set()
@@ -270,13 +281,66 @@ class EventRecordRepository(
             stmt = (
                 insert(self.model)
                 .values(chunk)
-                .on_conflict_do_nothing(index_elements=["data_source_id", "start_datetime", "end_datetime"])
+                .on_conflict_do_nothing(
+                    index_elements=["data_source_id", "start_datetime", "end_datetime"],
+                    index_where=text("category <> 'meal'"),
+                )
             )
             result = db_session.execute(stmt.returning(self.model.id))
             inserted_ids.update(row[0] for row in result.fetchall())
         # NOTE: Caller should commit - allows batching multiple operations
 
         return list(inserted_ids)
+
+    @handle_exceptions
+    def bulk_upsert_meals(
+        self,
+        db_session: DbSession,
+        creators: list[EventRecordCreate],
+    ) -> dict[UUID, tuple[UUID, bool]]:
+        """Insert or update meals by (data source, external_id). Returns {creator id: (record id, is_inserted)}."""
+        values_by_key: dict[tuple[UUID, str], tuple[EventRecordCreate, dict]] = {}
+        resolved = self._resolve_values(db_session, [c for c in creators if c.external_id])
+        creators_by_id = {c.id: c for c in creators}
+        for values in resolved:
+            values_by_key[(values["data_source_id"], values["external_id"])] = (creators_by_id[values["id"]], values)
+        if not values_by_key:
+            return {}
+
+        result: dict[UUID, tuple[UUID, bool]] = {}
+        entries = list(values_by_key.values())
+        chunk_size = 6_500
+        for i in range(0, len(entries), chunk_size):
+            chunk = entries[i : i + chunk_size]
+            stmt = insert(self.model).values([values for _, values in chunk])
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["data_source_id", "external_id"],
+                index_where=text("category = 'meal'"),
+                set_={
+                    column: stmt.excluded[column]
+                    for column in (
+                        "type",
+                        "source_name",
+                        "duration_seconds",
+                        "start_datetime",
+                        "end_datetime",
+                        "zone_offset",
+                    )
+                },
+            ).returning(
+                self.model.id,
+                self.model.data_source_id,
+                self.model.external_id,
+                literal_column("xmax = 0").label("is_inserted"),
+            )
+            stored = {
+                (row.data_source_id, row.external_id): (row.id, row.is_inserted)
+                for row in db_session.execute(stmt).fetchall()
+            }
+            for creator, values in chunk:
+                result[creator.id] = stored[(values["data_source_id"], values["external_id"])]
+        db_session.flush()
+        return result
 
     def get_record_with_details(
         self,

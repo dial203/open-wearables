@@ -188,6 +188,12 @@ def update_connection_account_endpoint(
     is only consulted when nothing was. The second says that what the provider *did*
     report is the recorder rather than the unit - the watch a chest strap was paired
     to - and applies whether or not a model came through.
+
+    ``sensor_label`` is also the account's ``device_attribution`` switch: set, every
+    record on the account is that one device (``single_device``); cleared, each record
+    is filed under the device its own metadata names (``per_record``). Sending it
+    re-types and re-files the account's existing data sources to match, leaving alone
+    any source a person detached or whose device a person has edited.
     """
     _account_or_404(db, user_id, connection_id)
     updated = user_connection_service.update_account(db, user_id, connection_id, body, set(body.model_fields_set))

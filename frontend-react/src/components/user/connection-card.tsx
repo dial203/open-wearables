@@ -28,6 +28,7 @@ import {
   ACCOUNT_TYPES,
   accountTypeLabel,
   type AccountType,
+  type DeviceAttribution,
   type UserConnection,
 } from '@/lib/api/types';
 import {
@@ -78,6 +79,11 @@ import {
   formatRelative,
 } from '@/lib/utils/sync-format';
 import { DeviceTimelineDialog } from '@/components/user/device-timeline-dialog';
+import {
+  DeviceAttributionField,
+  isAttributionComplete,
+  sensorLabelFor,
+} from '@/components/user/device-attribution-field';
 import {
   useDeviceTimeline,
   useDisconnectConnectionAccount,
@@ -271,6 +277,14 @@ function formatScopeChip(scope: string): string {
     .replace(/^./, (c) => c.toUpperCase());
 }
 
+/** The account's attribution, from a server that may predate the field. */
+function attributionOf(connection: UserConnection): DeviceAttribution {
+  return (
+    connection.device_attribution ??
+    (connection.sensor_label ? 'single_device' : 'per_record')
+  );
+}
+
 function ConnectionCardComponent({
   connection,
   className,
@@ -288,6 +302,10 @@ function ConnectionCardComponent({
   const [typeInput, setTypeInput] = useState<AccountType | ''>(
     connection.account_type ?? ''
   );
+  const [attributionInput, setAttributionInput] = useState<DeviceAttribution>(
+    attributionOf(connection)
+  );
+  const [sensorInput, setSensorInput] = useState(connection.sensor_label ?? '');
   const [imageError, setImageError] = useState(false);
 
   const iconUrl = connection.icon_url
@@ -300,6 +318,9 @@ function ConnectionCardComponent({
   // client that predates it, or a provider with one account, reads as 1.
   const accountCount = connection.account_count ?? 1;
   const hasSiblings = accountCount > 1;
+  // A single-device account names its one unit; the devices its records report
+  // are only the recorders that carried it.
+  const singleDevice = attributionOf(connection) === 'single_device';
   // Providers that report device metadata label themselves; the manual label is
   // the fallback for the ones that report none (Whoop).
   const observedDevices =
@@ -487,9 +508,30 @@ function ConnectionCardComponent({
                     })
                   : 'Never'}
               </p>
+              {singleDevice && (
+                <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                  <Watch className="h-3 w-3 shrink-0" />
+                  <span className="truncate font-medium text-foreground/80">
+                    {connection.sensor_label}
+                  </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="shrink-0 rounded border border-border/60 px-1 text-[10px] text-muted-foreground">
+                        single device
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      Every record on this account is filed under{' '}
+                      {connection.sensor_label}, whatever recorded it.
+                      {observedDevices.length > 0 &&
+                        ` Recorded by: ${observedDevices.join(', ')}.`}
+                    </TooltipContent>
+                  </Tooltip>
+                </p>
+              )}
               {/* Devices this account reports, straight from the provider's own
                   metadata; the manually-set label only when it reports none. */}
-              {observedDevices.length > 0 && (
+              {!singleDevice && observedDevices.length > 0 && (
                 <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
                   <Watch className="h-3 w-3 shrink-0" />
                   <span className="truncate" title={observedDevices.join(', ')}>
@@ -612,6 +654,8 @@ function ConnectionCardComponent({
                     setLabelInput(connection.account_label ?? '');
                     setEmailInput(connection.account_email ?? '');
                     setTypeInput(connection.account_type ?? '');
+                    setAttributionInput(attributionOf(connection));
+                    setSensorInput(connection.sensor_label ?? '');
                     setShowAccountDialog(true);
                   }}
                 >
@@ -764,6 +808,14 @@ function ConnectionCardComponent({
                         : "For providers that report no device. Applies to this account's existing and future data. If the device changed partway, use Device history instead."}
                     </p>
                   </div>
+                  <DeviceAttributionField
+                    id={`device-attribution-${connection.id}`}
+                    providerName={providerName}
+                    mode={attributionInput}
+                    sensor={sensorInput}
+                    onModeChange={setAttributionInput}
+                    onSensorChange={setSensorInput}
+                  />
                 </div>
                 <DialogFooter>
                   <Button
@@ -773,13 +825,20 @@ function ConnectionCardComponent({
                     Cancel
                   </Button>
                   <Button
-                    disabled={isSavingAccount}
+                    disabled={
+                      isSavingAccount ||
+                      !isAttributionComplete(attributionInput, sensorInput)
+                    }
                     onClick={() =>
                       updateAccount(
                         {
                           account_type: typeInput || null,
                           account_label: labelInput.trim() || null,
                           account_email: emailInput.trim() || null,
+                          sensor_label: sensorLabelFor(
+                            attributionInput,
+                            sensorInput
+                          ),
                           // Omitted when dated: the history owns it, and the API
                           // refuses an undated change.
                           ...(deviceIsDated
