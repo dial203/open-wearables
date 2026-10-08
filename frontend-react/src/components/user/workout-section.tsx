@@ -4,6 +4,7 @@ import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 import {
   ChevronDown,
   ChevronUp,
+  Download,
   Dumbbell,
   Flame,
   Heart,
@@ -16,13 +17,28 @@ import {
   useWorkouts,
   useTimeSeries,
   useDeleteWorkout,
+  useExportWorkoutSamples,
+  useExportWorkouts,
 } from '@/hooks/api/use-health';
 import { useCursorPagination } from '@/hooks/use-cursor-pagination';
 import {
   useDateRangeDates,
   useAllTimeRangeTimestamp,
 } from '@/hooks/use-date-range';
-import type { DateRangeValue } from '@/components/ui/date-range-selector';
+import {
+  DateRangeSelector,
+  type DateRangeValue,
+} from '@/components/ui/date-range-selector';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import type { WorkoutSamplesExportParams } from '@/lib/api/services/health.service';
 import { CursorPagination } from '@/components/common/cursor-pagination';
 import { SectionHeader } from '@/components/common/section-header';
 import {
@@ -48,6 +64,68 @@ interface WorkoutSectionProps {
   userId: string;
   dateRange: DateRangeValue;
   onDateRangeChange: (value: DateRangeValue) => void;
+}
+
+const SAMPLE_EXPORTS: {
+  label: string;
+  hint: string;
+  params: WorkoutSamplesExportParams;
+}[] = [
+  {
+    label: 'All metrics, 1-s grid',
+    hint: 'One row per second, one column per device and metric',
+    params: { layout: 'wide' },
+  },
+  {
+    label: 'Heart rate only, 1-s grid',
+    hint: 'Opens in the HR validity tool as an aligned file',
+    params: { layout: 'wide', types: ['heart_rate'] },
+  },
+  {
+    label: 'Raw samples',
+    hint: 'One row per stored sample, untouched; includes RR intervals',
+    params: { layout: 'long' },
+  },
+];
+
+// Export of every sample recorded during a workout, from every device worn
+function WorkoutExportMenu({
+  userId,
+  workoutId,
+}: {
+  userId: string;
+  workoutId: string;
+}) {
+  const exportSamples = useExportWorkoutSamples(userId, workoutId);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          disabled={exportSamples.isPending}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+        >
+          <Download className="h-3.5 w-3.5" />
+          {exportSamples.isPending ? 'Exporting...' : 'Export CSV'}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-72">
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+          Every device worn during this workout, at the resolution it was stored
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {SAMPLE_EXPORTS.map((option) => (
+          <DropdownMenuItem
+            key={option.label}
+            className="cursor-pointer flex-col items-start gap-0.5"
+            onClick={() => exportSamples.mutate(option.params)}
+          >
+            <span className="text-sm">{option.label}</span>
+            <span className="text-xs text-muted-foreground">{option.hint}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 // Expandable workout row with HR time series
@@ -280,8 +358,9 @@ function WorkoutRow({
             </div>
           )}
 
-          {/* Delete button */}
-          <div className="flex justify-end pt-2 border-t border-border/40">
+          {/* Export and delete */}
+          <div className="flex justify-between pt-2 border-t border-border/40">
+            <WorkoutExportMenu userId={userId} workoutId={workout.id} />
             <button
               onClick={() => setShowDelete(true)}
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive-muted transition-colors"
@@ -396,14 +475,37 @@ export function WorkoutSection({
   const workouts = workoutsResponse?.data || [];
   const hasData = workouts.length > 0 || (stats?.count ?? 0) > 0;
 
+  const exportWorkouts = useExportWorkouts(userId);
+
   return (
     <div className="space-y-6">
       {/* Summary Section */}
       <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-xl overflow-hidden">
         <SectionHeader
           title="Summary"
-          dateRange={dateRange}
-          onDateRangeChange={onDateRangeChange}
+          rightContent={
+            <div className="flex items-center gap-3">
+              <DateRangeSelector
+                value={dateRange}
+                onChange={onDateRangeChange}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={exportWorkouts.isPending}
+                title="One row per workout in this period, with the device that recorded it"
+                onClick={() =>
+                  exportWorkouts.mutate({
+                    start_date: dateToTimestamp(startDate),
+                    end_date: dateToTimestamp(endDate),
+                  })
+                }
+              >
+                <Download className="h-4 w-4" />
+                {exportWorkouts.isPending ? 'Exporting...' : 'Export CSV'}
+              </Button>
+            </div>
+          }
         />
 
         <div className="p-6">

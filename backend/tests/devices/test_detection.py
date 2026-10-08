@@ -492,6 +492,113 @@ class TestDeclaredSensor:
         assert gold.device_type == DeviceType.CHEST_STRAP
         assert other.device_type == DeviceType.WATCH
 
+    def test_one_sensor_recorded_by_two_devices_is_one_device(self, db: Session, user: User) -> None:
+        """The reference strap on runs (watch) and on rides (head unit) is one strap."""
+        connection = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_1", sensor_label="Polar H10")
+
+        runs = _ensure_for(db, user, ProviderName.STRAVA, connection, "Garmin Forerunner 965", "Garmin Connect")
+        rides = _ensure_for(db, user, ProviderName.STRAVA, connection, "Wahoo ELEMNT BOLT", "Wahoo")
+
+        assert runs.device_id is not None
+        assert runs.device_id == rides.device_id
+        # Each recorder's report is still on its own data source.
+        assert {runs.device_model, rides.device_model} == {"Garmin Forerunner 965", "Wahoo ELEMNT BOLT"}
+
+    def test_the_same_sensor_declared_on_two_accounts_is_two_devices(self, db: Session, user: User) -> None:
+        first = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_1", sensor_label="Polar H10")
+        second = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_2", sensor_label="Polar H10")
+
+        a = _ensure_for(db, user, ProviderName.STRAVA, first, "Garmin Forerunner 965", "Garmin Connect")
+        b = _ensure_for(db, user, ProviderName.STRAVA, second, "Garmin Forerunner 965", "Garmin Connect")
+
+        assert a.device_id != b.device_id
+
+    def test_a_device_keyed_per_recorder_is_reused_not_duplicated(self, db: Session, user: User) -> None:
+        """A sensor's device created under the old (sensor, recorder) key keeps its data.
+
+        Without the legacy lookup the next sync would create a second "Polar H10" beside
+        it and raise a proposal to merge the two.
+        """
+        connection = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_1", sensor_label="Polar H10")
+        repo = DeviceRepository()
+        existing = repo.create(
+            db,
+            user_id=user.id,
+            device_type=DeviceType.CHEST_STRAP.value,
+            brand="Polar",
+            model_raw=None,
+            model_display=None,
+            host_model_raw="Garmin Forerunner 965",
+            label="Polar H10",
+            label_source=LabelSource.AUTO,
+            actor="system",
+            reason="created under the per-recorder key",
+            detected=True,
+        )
+        repo.add_claim(
+            db,
+            existing,
+            IdentityClaim(
+                route=ProviderName.STRAVA.value,
+                kind=DeviceIdentityKind.AGGREGATOR_WRITER_MODEL,
+                value="Polar H10||Garmin Forerunner 965||athlete_1",
+                confidence=IdentityConfidence.WEAK,
+            ),
+        )
+
+        runs = _ensure_for(db, user, ProviderName.STRAVA, connection, "Garmin Forerunner 965", "Garmin Connect")
+        rides = _ensure_for(db, user, ProviderName.STRAVA, connection, "Wahoo ELEMNT BOLT", "Wahoo")
+
+        assert runs.device_id == existing.id
+        assert rides.device_id == existing.id
+        assert len(_devices(db, user)) == 1
+
+    def test_a_record_that_names_no_recorder_is_still_the_declared_sensor(self, db: Session, user: User) -> None:
+        """A manual entry or a bare upload names nothing; the account still says what it is."""
+        connection = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_1", sensor_label="Polar H10")
+
+        bare = _ensure_for(db, user, ProviderName.STRAVA, connection, None, "strava")
+        named = _ensure_for(db, user, ProviderName.STRAVA, connection, "Garmin Forerunner 965", "Garmin Connect")
+
+        device = DeviceRepository().get(db, bare.device_id)
+        assert device is not None
+        assert device.label == "Polar H10"
+        assert device.host_model_raw is None
+        assert device.device_type == DeviceType.CHEST_STRAP
+        assert named.device_id == bare.device_id
+
+    def test_an_old_key_never_reaches_into_another_account(self, db: Session, user: User) -> None:
+        """Off Strava the old keys were unscoped: matching one would pool two accounts' straps."""
+        first = _connection(db, user, ProviderName.GARMIN, athlete_id="garmin_1", sensor_label="Polar H10")
+        second = _connection(db, user, ProviderName.GARMIN, athlete_id="garmin_2", sensor_label="Polar H10")
+        repo = DeviceRepository()
+        theirs = repo.create(
+            db,
+            user_id=user.id,
+            device_type=DeviceType.CHEST_STRAP.value,
+            label="Polar H10",
+            host_model_raw="fenix 8",
+            actor="system",
+            detected=True,
+        )
+        repo.add_claim(
+            db,
+            theirs,
+            IdentityClaim(
+                route=ProviderName.GARMIN.value,
+                kind=DeviceIdentityKind.AGGREGATOR_WRITER_MODEL,
+                value="Polar H10||fenix 8",
+                confidence=IdentityConfidence.WEAK,
+            ),
+        )
+        held = _ensure_for(db, user, ProviderName.GARMIN, first, "fenix 8", "garmin")
+        assert held.device_id == theirs.id
+
+        mine = _ensure_for(db, user, ProviderName.GARMIN, second, "fenix 8", "garmin")
+
+        assert mine.device_id is not None
+        assert mine.device_id != theirs.id
+
     def test_a_declaration_the_type_tables_do_not_recognise_falls_through(self, db: Session, user: User) -> None:
         """A free-text note must not flatten a perfectly good model string to unknown."""
         connection = _connection(db, user, ProviderName.STRAVA, athlete_id="athlete_3", sensor_label="reference strap")

@@ -6,7 +6,7 @@ from app.database import DbSession
 from app.models import DataSource, ProviderPriority, UserConnection
 from app.repositories import DataSourceRepository, ProviderPriorityRepository
 from app.repositories.device_type_priority_repository import DeviceTypePriorityRepository
-from app.schemas.enums import DeviceType, ProviderName, RelayVisibility
+from app.schemas.enums import DeviceAttribution, DeviceType, ProviderName, RelayVisibility
 from app.schemas.model_crud.data_priority import (
     DataSourceListResponse,
     DataSourceResponse,
@@ -121,6 +121,8 @@ class PriorityService:
                 account_label=self._account_label(accounts.get(ds.user_connection_id)),
                 account_email=getattr(accounts.get(ds.user_connection_id), "account_email", None),
                 account_type=getattr(accounts.get(ds.user_connection_id), "account_type", None),
+                device_attribution=self._device_attribution(accounts.get(ds.user_connection_id)),
+                sensor_label=getattr(accounts.get(ds.user_connection_id), "sensor_label", None),
                 ingestion_route=resolve_ingestion_route(ds.provider, ds.original_source_name, ds.device_model),
                 relay_visibility=self._relay_visibility(ds),
                 redundant_relay=ds.id in relay_status,
@@ -129,6 +131,13 @@ class PriorityService:
             for ds in sources
         ]
         return DataSourceListResponse(items=items, total=len(items))
+
+    @staticmethod
+    def _device_attribution(connection: UserConnection | None) -> DeviceAttribution | None:
+        """The account's attribution, or None for a source that came through no account."""
+        if connection is None:
+            return None
+        return DeviceAttribution.SINGLE_DEVICE if connection.sensor_label else DeviceAttribution.PER_RECORD
 
     @staticmethod
     def _relay_visibility(data_source: DataSource) -> RelayVisibility:

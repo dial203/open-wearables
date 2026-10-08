@@ -121,6 +121,48 @@ def account_scoped_value(route: ProviderName | str, value: str, account_scope: s
     return f"{value}{WRITER_MODEL_SEPARATOR}{account_scope}"
 
 
+def declared_sensor_value(sensor: str, account_scope: str | None) -> str:
+    """The grouping value for a sensor declared on one account."""
+    return f"{sensor}{WRITER_MODEL_SEPARATOR}{account_scope}" if account_scope else sensor
+
+
+def legacy_declared_sensor_claims(
+    route: ProviderName | str,
+    sensor: str,
+    model: str | None,
+    account_scope: str | None,
+) -> list[IdentityClaim]:
+    """The keys a declared sensor grouped on before it keyed on the account alone.
+
+    A device created under one of these is found through it, and the current key is
+    then added to that device, so a sync after the change reuses the device a sensor
+    already has rather than creating a second one beside it.
+    """
+    cleaned_model = model.strip() if model else None
+    claims: list[IdentityClaim | None] = []
+    if cleaned_model:
+        # Sensor paired with the recorder that reported it.
+        pair = f"{sensor}{WRITER_MODEL_SEPARATOR}{cleaned_model}"
+        claims.append(
+            _claim(
+                route,
+                DeviceIdentityKind.AGGREGATOR_WRITER_MODEL,
+                account_scoped_value(route, pair, account_scope),
+                IdentityConfidence.WEAK,
+            )
+        )
+    # The sensor alone, scoped only on the routes that scope model strings.
+    claims.append(
+        _claim(
+            route,
+            DeviceIdentityKind.MODEL_STRING,
+            account_scoped_value(route, sensor, account_scope),
+            IdentityConfidence.WEAK,
+        )
+    )
+    return [c for c in claims if c is not None]
+
+
 def grouping_claim(
     route: ProviderName | str,
     writer_id: str | None,
@@ -150,10 +192,25 @@ def grouping_claim(
     ``account_scope`` narrows the key to one connected account on the routes that need
     it; see ACCOUNT_SCOPED_MODEL_ROUTES. ``sensor_declared`` says a person has told us
     the reported model is the recorder rather than the unit - see relaying_host_model.
+
+    A declared sensor keys on the sensor and the account alone, never on the recorder.
+    The declaration is that one unit sensed everything this account holds, so a strap
+    recorded by a watch on runs and a head unit on rides is one strap; pairing it with
+    each recorder, as an inferred relay is paired with its host, split it into a
+    device per recorder. It is scoped to the account on every route, because it is a
+    statement about that account and nothing else.
     """
     host_model = relaying_host_model(route, model, writer_id, sensor_declared)
     writer = writer_id.strip() if writer_id else None
     cleaned_model = model.strip() if model else None
+
+    if sensor_declared and writer:
+        return _claim(
+            route,
+            DeviceIdentityKind.MODEL_STRING,
+            declared_sensor_value(writer, account_scope),
+            IdentityConfidence.WEAK,
+        )
 
     if host_model is not None and writer and cleaned_model:
         return _claim(
@@ -162,9 +219,7 @@ def grouping_claim(
             account_scoped_value(route, f"{writer}{WRITER_MODEL_SEPARATOR}{cleaned_model}", account_scope),
             IdentityConfidence.WEAK,
         )
-    # A declared sensor with nothing reported alongside it: there is no recorder to
-    # record as the host, so the declared unit is simply the unit.
-    key = writer if (sensor_declared and writer and not cleaned_model) else cleaned_model
+    key = cleaned_model
     if key is None:
         return None
     return _claim(

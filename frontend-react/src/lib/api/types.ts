@@ -311,6 +311,13 @@ export interface Provider {
 export type WearableProvider =
   'fitbit' | 'garmin' | 'oura' | 'whoop' | 'strava' | 'google-fit' | 'withings';
 
+/**
+ * How an account's data is filed against devices. `per_record`: each record
+ * under the device its own metadata names (an aggregator such as Strava).
+ * `single_device`: every record is the one device in `sensor_label`.
+ */
+export type DeviceAttribution = 'per_record' | 'single_device';
+
 /** What a connected provider account is for. Mirrors backend AccountType. */
 export type AccountType =
   | 'personal'
@@ -526,6 +533,13 @@ export interface UserConnection {
   observed_devices?: string[];
   /** Manually-set device behind this connection (e.g. "Whoop 5.0"), for providers that report none. */
   device_label?: string | null;
+  /**
+   * The one device behind every record on this account (e.g. "Polar H10").
+   * Set: the account is `single_device`. Null: `per_record`.
+   */
+  sensor_label?: string | null;
+  /** Derived from `sensor_label`; change it by setting or clearing that. */
+  device_attribution?: DeviceAttribution;
   status: 'active' | 'revoked' | 'expired';
   last_synced_at?: string;
   created_at: string;

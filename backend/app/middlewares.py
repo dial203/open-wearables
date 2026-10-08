@@ -55,6 +55,10 @@ def add_cors_middleware(app: FastAPI) -> None:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # A cross-origin page can read only the response headers listed here. The CSV
+        # exports name their file and report how much they hold in headers, which the
+        # dashboard needs to save the file under its name and to say an export was empty.
+        expose_headers=["Content-Disposition", "X-Export-Row-Count", "X-Export-Source-Count"],
     )
 
 
