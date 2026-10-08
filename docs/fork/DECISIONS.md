@@ -1012,3 +1012,73 @@ then tell the watch's own data from an app's.
   Known limit, not addressed here: two Garmin devices recording one workout on **one**
   account (a watch and an Edge) still share a data source, because the samples carry no
   device. This fork's one-account-per-device setup avoids it.
+
+## Every time-series row records the feed that wrote it, and feeds are ranked
+
+- **Area**: backend, docs
+- **Status**: active; upstreamable (the collision is upstream's too)
+- **On conflict**: reconcile. Keep `data_point_series.route_id` and the ranking in
+  `DataPointSeriesRepository._insert_data_points`, both the batch dedup (`_replaces`) and
+  the `AND (... rank >= rank)` on the merge. Keep the `route=` argument on every sample
+  construction; `tests/schemas/test_sample_routes.py` fails on any that lacks one, so a
+  sync that adds an upstream writer surfaces here. Route ids in
+  `app/schemas/enums/sample_route.py` are stored: never renumber them.
+- **Why**: a row is keyed on (data source, series type, second), and a provider with two
+  feeds for one series resolves both to one source, so the last write owned every
+  second they shared and nothing on the row could show it. The Garmin entry above was
+  one case. A sweep of every write path found more:
+  - Oura's `/heartrate` and the 5-min sleep series share a source every night.
+  - Polar's continuous and sleep HR share one too.
+  - Google Health's and SensorBio's daily HRV sits among the per-sample values, and
+    Suunto's nightly HRV is in the same position.
+
+  Every writer now names its route, stored on the row, and raw `/timeseries` exposes
+  `route` and `route_kind`. The kind ranks the route (workout > intraday > window >
+  summary), and a lower-ranked feed never overwrites a higher-ranked one. Daily totals
+  are kept out of the ranking: a total and a sample on one instant are two measurements,
+  and ranking would only pick which to lose. Readers, and the Second-by-Second HR
+  Validity Tool, keep the workout-kind rows inside a span that has them.
+  `scripts/audit_heart_rate_feeds.py` checks the stored data against this, including
+  Garmin workouts against their own kept FIT files.
+
+## Polar continuous HR is placed at true UTC; sleep HR before midnight lands on its night
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: continuous HR came as a zoneless local clock and was read as UTC, so every
+  sample sat off by the wearer's offset. On a 5 Oct 2026 run, the samples stored at the
+  run's real instant were the wearer asleep at 02:44. It is now placed like the intraday
+  steps: with the offset of that day's sleep record, and skipped when there is none.
+  Sleep HR for a night starting at 23:5x with its first sample after midnight landed
+  24 h early; it now uses `_recharge_times`, as Nightly Recharge HRV does. Rows stored
+  before this sit at the wrong instants and carry no route. A Polar re-sync writes the
+  correct ones, and the stale rows in the re-synced window are the Polar heart-rate rows
+  still without a route.
+
+## Overlapping Strava activities on one source are filed apart
+
+- **Area**: backend
+- **Status**: active
+- **On conflict**: keep ours
+- **Why**: two activities recorded at once, such as two device-less FIT uploads or two
+  units of one model, resolved to one data source. The second one's streams overwrote
+  the first's at every shared second and filled its gaps. A device records one activity
+  at a time, so an overlap on one source means two recorders.
+  `StravaWorkouts._apart_from_overlapping_activity` files the second one under
+  `<source> (activity <id>)`. The name is deterministic, so a re-delivery lands on the
+  same source.
+
+## Apple Health XML series are keyed on the writing app
+
+- **Area**: backend
+- **Status**: active; supersedes the series half of "Apple XML source identity"
+- **On conflict**: keep ours
+- **Why**: every series row an XML import wrote carried `source="apple_health_xml"`. Each
+  writer naming no device model (Polar Flow, Oura, WHOOP), and every Apple Watch (all
+  model "Watch"), therefore shared one series, and at whole-second precision a shared
+  second kept only the last. Rows are now keyed on `sourceName`, as the SDK route keys on
+  the HKSource name, with the provider pinned to `apple`. That matters because "Oura"
+  must not read as Oura's own connection. An import made before this keeps its rows on
+  the old source, so delete those before re-importing an export, or the history is
+  stored twice.

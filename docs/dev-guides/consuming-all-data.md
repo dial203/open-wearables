@@ -132,6 +132,23 @@ GET /users/{user_id}/timeseries?start_time=…&end_time=…&types=…&resolution
 
 - No priority filtering at all. Raw samples from **every** source come through.
   Use `resolution=raw` for full fidelity (or `1min|5min|15min|1hour` to downsample).
+- Each raw sample says **which feed wrote it**: `route` (e.g. `garmin.activity_details`,
+  `garmin.dailies`, `oura.heartrate`, `oura.sleep`) and `route_kind`:
+  `workout` (a recording's own per-sample trace), `intraday` (continuous monitoring or a
+  spot reading), `window` (one value summarising a window of seconds to minutes, such as
+  Garmin's 15-s all-day one-minute averages or Oura's 5-min sleep heart rate) or
+  `summary` (one value per day, night or workout). `null` on rows stored before feeds
+  were recorded.
+
+  ⚠️ **One data source can hold several feeds of one series.** A Garmin watch's heart
+  rate during a run is the run's own 1 Hz trace, while around it the same source holds
+  the all-day feed. Oura's `/heartrate` points and its 5-min sleep series share a
+  source, and so do Polar's continuous and sleep heart rate. Treating a source as one
+  feed mixes resolutions. **Per-second work inside a workout should keep the rows whose
+  `route_kind` is `workout` wherever the source has any, and drop the rest in that span.**
+  When two feeds meet on the same second, the stored row comes from the more granular
+  one (workout > intraday > window > summary); a daily total against a sample is the
+  exception and keeps whichever arrived last.
 
 ### Workouts — all-sources
 
@@ -313,6 +330,23 @@ GET /users/{user_id}/timeseries?types=rr_interval&resolution=raw&start_time=…&
   the HRV signal.
 - High volume: an hour of RR is ~4–5k samples (an overnight recording ~20k+), so query
   bounded windows.
+
+### Auditing what is stored — `scripts/audit_heart_rate_feeds.py`
+
+A read-only check of every account's heart rate, for use after a deploy and on a
+schedule:
+
+```bash
+docker compose exec app uv run python scripts/audit_heart_rate_feeds.py --days 30
+docker compose exec app uv run python scripts/audit_heart_rate_feeds.py --days 30 --fit --json
+```
+
+It fails (exit 1) when a workout's span holds another feed beside the workout's own
+trace, when two workouts overlap on one data source, or, with `--fit`, when a Garmin
+workout's stored heart rate differs from its kept FIT file at any second. The last check
+needs `STORE_FIT_FILES=true`. It also lists rows stored before feeds were recorded,
+which clear once the provider delivers that data again, and the sources whose series
+holds more than one feed. The script's docstring documents each check.
 
 ## Rule of thumb for a downstream app
 
