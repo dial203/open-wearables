@@ -180,7 +180,11 @@ CLAUDE.local.md
 
 # Exception: AI tool configs that should be tracked
 !.gemini/settings.json
+# Locally checked-out extensions
+extensions/*
+!extensions/.gitkeep
 
 # Exception: the fork's version stamp is rendered in the UI, so it has to ship
-# inside the frontend Docker build context (which has no .git to read).
-!frontend/fork-version.json
+# inside the frontend Docker build context (which has no .git to read). It lives with the React
+# dashboard that renders it.
+!frontend-react/fork-version.json

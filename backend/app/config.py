@@ -185,6 +185,9 @@ class Settings(BaseSettings):
     # How often accounts' dated device histories are re-read from their workouts, so a
     # new watch is picked up without anyone opening the dashboard (default: 15 min).
     device_switch_detect_interval_seconds: int = Field(900, ge=60)
+    # A user's sync.completed events within this window reach extensions as one task.
+    extension_event_debounce_seconds: int = Field(300, ge=0)
+    extension_event_sweep_interval_seconds: int = Field(60, ge=10)
 
     # API SETTINGS
     api_base_url: str = "http://localhost:8000"

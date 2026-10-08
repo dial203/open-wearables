@@ -1,14 +1,18 @@
 """Withings payload normalization for measures, activity, sleep and workouts."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import pytest
+
+from app.constants.withings_requests import ACTIVITY
 from app.schemas.enums import SeriesType
 from app.schemas.enums.workout_types import WorkoutType
 from app.schemas.providers.withings import WithingsWorkout
 from app.services.providers.withings.data_247 import Withings247Data
+from app.services.providers.withings.handlers.rpc_client import WithingsAPIError
 from app.services.providers.withings.workouts import WithingsWorkouts
 
 
@@ -106,6 +110,216 @@ def test_externally_sourced_activity_is_dropped() -> None:
     assert _data_247().normalize_activity(rows, uuid4()) == []
 
 
+def test_activity_active_seconds_become_exercise_minutes() -> None:
+    rows = [{"date": "2026-03-01", "timezone": "Europe/Paris", "brand": 1, "steps": 8000, "active": 2730}]
+
+    samples = _data_247().normalize_activity(rows, uuid4())
+
+    by_type = {sample.series_type: sample for sample in samples}
+    assert by_type[SeriesType.exercise_time].value == Decimal("45")
+    assert by_type[SeriesType.exercise_time].is_daily_total is True
+
+
+def test_activity_without_active_has_no_exercise_time() -> None:
+    rows = [{"date": "2026-03-01", "brand": 1, "steps": 8000}]
+
+    samples = _data_247().normalize_activity(rows, uuid4())
+
+    assert SeriesType.exercise_time not in {sample.series_type for sample in samples}
+
+
+def test_activity_request_asks_for_active() -> None:
+    assert "active" in ACTIVITY.data_fields
+
+
+# ---------------------------- intraday activity ----------------------------
+
+INTRADAY_SLICE = {"model_id": 55, "steps": 120, "distance": 96.5, "calories": 7.5}
+
+
+def test_intraday_slice_is_keyed_by_epoch_and_is_not_a_daily_total() -> None:
+    samples = _data_247().normalize_intraday_activity({"1772346600": INTRADAY_SLICE}, uuid4())
+
+    by_type = {sample.series_type: sample for sample in samples}
+    assert by_type[SeriesType.steps].value == Decimal("120")
+    assert by_type[SeriesType.steps].recorded_at == datetime(2026, 3, 1, 6, 30, tzinfo=timezone.utc)
+    # The daily total covering this slice is stored too; flagging both the same way
+    # would let the aggregation add a day to its own parts.
+    assert by_type[SeriesType.steps].is_daily_total is False
+
+
+def test_intraday_slice_from_a_relayed_tracker_is_dropped() -> None:
+    # 1058 is an Apple Watch relayed through the Withings account; those steps
+    # already reach us from the provider that recorded them.
+    series = {"1772346600": {**INTRADAY_SLICE, "model_id": 1058}}
+
+    assert _data_247().normalize_intraday_activity(series, uuid4()) == []
+
+
+def test_intraday_slice_with_an_unreadable_epoch_is_skipped() -> None:
+    series = {"not-an-epoch": INTRADAY_SLICE, "1772346600": INTRADAY_SLICE}
+
+    samples = _data_247().normalize_intraday_activity(series, uuid4())
+
+    assert {sample.recorded_at for sample in samples} == {datetime(2026, 3, 1, 6, 30, tzinfo=timezone.utc)}
+
+
+def test_intraday_slice_takes_the_zone_reported_for_its_day() -> None:
+    # An hour of the day is a local one, and the intraday response carries no zone.
+    timezones = {date(2026, 3, 1): "Europe/Warsaw"}
+
+    samples = _data_247().normalize_intraday_activity({"1772346600": INTRADAY_SLICE}, uuid4(), None, timezones)
+
+    assert {sample.zone_offset for sample in samples} == {"+01:00"}
+
+
+def test_intraday_slice_on_the_local_day_start_is_dropped() -> None:
+    # save_activity stores the day's totals at local midnight, and the two are written in
+    # separate batches, so a slice on that instant would upsert the totals away.
+    timezones = {date(2026, 3, 1): "Europe/Warsaw"}
+    local_midnight = str(int(datetime(2026, 2, 28, 23, tzinfo=timezone.utc).timestamp()))
+
+    samples = _data_247().normalize_intraday_activity({local_midnight: INTRADAY_SLICE}, uuid4(), None, timezones)
+
+    assert samples == []
+
+
+@patch("app.services.providers.withings.data_247.paginate")
+@patch("app.services.providers.withings.data_247.paginate_mapping")
+def test_intraday_is_requested_only_for_days_the_daily_rows_report(
+    mock_intraday: MagicMock, mock_daily: MagicMock
+) -> None:
+    # The action returns at most 24 h per call, so a window costs one request per day.
+    # Asking for days Withings never reported would spend the per-minute quota on nothing
+    # and leave none for the domains that run after this one.
+    mock_intraday.return_value = {}
+    mock_daily.return_value = MagicMock(
+        rows=[
+            {"date": "2026-03-01", "timezone": "Europe/Warsaw", "brand": 1, "steps": 1},
+            {"date": "2026-03-03", "timezone": "Europe/Warsaw", "brand": 1, "steps": 2},
+        ]
+    )
+    data_247 = _data_247()
+    data_247._active_connection_id = MagicMock(return_value=None)
+
+    data_247.save_intraday_activity(
+        MagicMock(),
+        uuid4(),
+        datetime(2026, 3, 1, tzinfo=timezone.utc),
+        datetime(2026, 3, 5, tzinfo=timezone.utc),
+    )
+
+    # Local midnight in Warsaw, not the window's own edges: the day asked for is the user's.
+    starts = [call.kwargs["params"]["startdate"] for call in mock_intraday.call_args_list]
+    assert starts == [
+        int(datetime(2026, 2, 28, 23, tzinfo=timezone.utc).timestamp()),
+        int(datetime(2026, 3, 2, 23, tzinfo=timezone.utc).timestamp()),
+    ]
+
+
+@patch("app.services.providers.withings.data_247.paginate")
+@patch("app.services.providers.withings.data_247.paginate_mapping")
+def test_intraday_asks_for_nothing_when_no_day_reported_activity(
+    mock_intraday: MagicMock, mock_daily: MagicMock
+) -> None:
+    mock_daily.return_value = MagicMock(rows=[])
+    data_247 = _data_247()
+    data_247._active_connection_id = MagicMock(return_value=None)
+
+    saved = data_247.save_intraday_activity(
+        MagicMock(),
+        uuid4(),
+        datetime(2026, 3, 1, tzinfo=timezone.utc),
+        datetime(2026, 4, 1, tzinfo=timezone.utc),
+    )
+
+    assert saved == 0
+    assert mock_intraday.call_args_list == []
+
+
+@patch("app.services.providers.withings.data_247.paginate")
+@patch("app.services.providers.withings.data_247.paginate_mapping")
+def test_intraday_asks_for_a_day_without_a_zone(mock_intraday: MagicMock, mock_daily: MagicMock) -> None:
+    # A missing zone costs the local offset, not the day: it is asked for from UTC midnight.
+    mock_intraday.return_value = {}
+    mock_daily.return_value = MagicMock(rows=[{"date": "2026-03-01", "brand": 1, "steps": 1}])
+    data_247 = _data_247()
+    data_247._active_connection_id = MagicMock(return_value=None)
+
+    data_247.save_intraday_activity(
+        MagicMock(), uuid4(), datetime(2026, 3, 1, tzinfo=timezone.utc), datetime(2026, 3, 2, tzinfo=timezone.utc)
+    )
+
+    starts = [call.kwargs["params"]["startdate"] for call in mock_intraday.call_args_list]
+    assert starts == [int(datetime(2026, 3, 1, tzinfo=timezone.utc).timestamp())]
+
+
+@patch("app.services.providers.withings.data_247.paginate")
+@patch("app.services.providers.withings.data_247.paginate_mapping")
+def test_intraday_zone_ignores_externally_sourced_rows(mock_intraday: MagicMock, mock_daily: MagicMock) -> None:
+    # The day's total comes from the Withings row only, so an echo row in another zone
+    # must not move the midnight the intraday request and its guard are anchored to.
+    mock_intraday.return_value = {}
+    mock_daily.return_value = MagicMock(
+        rows=[
+            {"date": "2026-03-01", "timezone": "Europe/Warsaw", "brand": 1, "steps": 1},
+            {"date": "2026-03-01", "timezone": "America/New_York", "brand": 18, "steps": 1},
+        ]
+    )
+    data_247 = _data_247()
+    data_247._active_connection_id = MagicMock(return_value=None)
+
+    data_247.save_intraday_activity(
+        MagicMock(), uuid4(), datetime(2026, 3, 1, tzinfo=timezone.utc), datetime(2026, 3, 2, tzinfo=timezone.utc)
+    )
+
+    starts = [call.kwargs["params"]["startdate"] for call in mock_intraday.call_args_list]
+    assert starts == [int(datetime(2026, 2, 28, 23, tzinfo=timezone.utc).timestamp())]
+
+
+TWO_DAYS = [
+    {"date": "2026-03-01", "timezone": "Europe/Warsaw", "brand": 1, "steps": 1},
+    {"date": "2026-03-02", "timezone": "Europe/Warsaw", "brand": 1, "steps": 1},
+]
+
+
+@patch("app.services.providers.withings.data_247.timeseries_service")
+@patch("app.services.providers.withings.data_247.paginate")
+@patch("app.services.providers.withings.data_247.paginate_mapping")
+def test_intraday_keeps_the_days_fetched_before_a_failure(
+    mock_intraday: MagicMock, mock_daily: MagicMock, mock_timeseries: MagicMock
+) -> None:
+    mock_daily.return_value = MagicMock(rows=TWO_DAYS)
+    mock_intraday.side_effect = [{"1772346600": INTRADAY_SLICE}, RuntimeError("Too Many Requests")]
+    mock_timeseries.bulk_create_samples.return_value = 3
+    data_247 = _data_247()
+    data_247._active_connection_id = MagicMock(return_value=None)
+
+    saved = data_247.save_intraday_activity(
+        MagicMock(), uuid4(), datetime(2026, 3, 1, tzinfo=timezone.utc), datetime(2026, 3, 3, tzinfo=timezone.utc)
+    )
+
+    assert saved == 3
+    written = mock_timeseries.bulk_create_samples.call_args.args[1]
+    assert {sample.recorded_at for sample in written} == {datetime(2026, 3, 1, 6, 30, tzinfo=timezone.utc)}
+
+
+@patch("app.services.providers.withings.data_247.paginate")
+@patch("app.services.providers.withings.data_247.paginate_mapping")
+def test_intraday_failure_before_anything_is_fetched_propagates(
+    mock_intraday: MagicMock, mock_daily: MagicMock
+) -> None:
+    mock_daily.return_value = MagicMock(rows=TWO_DAYS)
+    mock_intraday.side_effect = RuntimeError("Too Many Requests")
+    data_247 = _data_247()
+    data_247._active_connection_id = MagicMock(return_value=None)
+
+    with pytest.raises(RuntimeError):
+        data_247.save_intraday_activity(
+            MagicMock(), uuid4(), datetime(2026, 3, 1, tzinfo=timezone.utc), datetime(2026, 3, 3, tzinfo=timezone.utc)
+        )
+
+
 # ---------------------------- workouts ----------------------------
 
 
@@ -201,6 +415,106 @@ def test_sleep_row_stores_the_hypnogram(
     assert [stage.stage.value for stage in detail.sleep_stages] == ["light", "deep", "awake", "sleeping", "awake"]
     assert mock_request.call_args.kwargs["service_path"] == "/v2/sleep"
     assert mock_request.call_args.kwargs["action"] == "get"
+
+
+HRV_SERIES_BODY = {
+    "series": [
+        {
+            "startdate": 1594159200,
+            "enddate": 1594160100,
+            "state": 1,
+            "rmssd": {"1594159200": 25, "1594159260": 0, "1594159320": None},
+        },
+        # Unmapped state, but its readings still count.
+        {"startdate": 1594160100, "enddate": 1594163700, "state": 99, "sdnn_1": {"1594160100": 30}},
+        # After the night ends, so no night claims it.
+        {"startdate": 1594188000, "enddate": 1594188600, "state": 0, "rmssd": {"1594188300": 40}},
+    ]
+}
+
+
+def _saved_hrv(mock_timeseries: MagicMock) -> dict[SeriesType, list[float]]:
+    samples = mock_timeseries.bulk_create_samples.call_args.args[1]
+    hrv: dict[SeriesType, list[float]] = {}
+    for sample in samples:
+        if sample.series_type in (SeriesType.heart_rate_variability_rmssd, SeriesType.heart_rate_variability_sdnn):
+            hrv.setdefault(sample.series_type, []).append(float(sample.value))
+    return hrv
+
+
+@patch("app.services.providers.withings.data_247.timeseries_service")
+@patch("app.services.providers.withings.data_247.event_record_service")
+@patch("app.services.providers.withings.data_247.withings_request", side_effect=[HRV_SERIES_BODY, {"series": []}])
+@patch("app.services.providers.withings.data_247.paginate")
+def test_sleep_hrv_readings_become_samples_of_their_night(
+    mock_paginate: MagicMock, mock_request: MagicMock, mock_event: MagicMock, mock_timeseries: MagicMock
+) -> None:
+    _save_one_night(mock_paginate)
+
+    assert mock_request.call_args.kwargs["params"]["data_fields"] == "rmssd,sdnn_1"
+    # 0 and null are missed readings; their interval keeps its stage.
+    assert _saved_hrv(mock_timeseries) == {
+        SeriesType.heart_rate_variability_rmssd: [25.0],
+        SeriesType.heart_rate_variability_sdnn: [30.0],
+    }
+    detail = mock_event.create_or_merge_sleep.call_args.args[3]
+    assert detail.sleep_stages[0].stage.value == "light"
+    # Fork: each value says which Withings field it came from, since the window behind
+    # "sdnn_1" is not stated and it must be possible to set it apart from other SDNN.
+    samples = mock_timeseries.bulk_create_samples.call_args.args[1]
+    fields = {s.series_type: s.provider_metadata for s in samples if s.series_type in _saved_hrv(mock_timeseries)}
+    assert fields == {
+        SeriesType.heart_rate_variability_rmssd: {"withings_field": "rmssd"},
+        SeriesType.heart_rate_variability_sdnn: {"withings_field": "sdnn_1"},
+    }
+
+
+@patch("app.services.providers.withings.data_247.timeseries_service")
+@patch("app.services.providers.withings.data_247.event_record_service")
+@patch(
+    "app.services.providers.withings.data_247.withings_request",
+    side_effect=[WithingsAPIError(withings_status=2555, action="get"), SERIES_BODY, {"series": []}],
+)
+@patch("app.services.providers.withings.data_247.paginate")
+def test_hypnogram_survives_the_hrv_fields_being_refused(
+    mock_paginate: MagicMock, mock_request: MagicMock, mock_event: MagicMock, mock_timeseries: MagicMock
+) -> None:
+    # A plan without the HRV pack must still get its stages.
+    _save_one_night(mock_paginate)
+
+    detail = mock_event.create_or_merge_sleep.call_args.args[3]
+    assert [stage.stage.value for stage in detail.sleep_stages] == ["light", "deep", "awake", "sleeping", "awake"]
+    assert "data_fields" not in mock_request.call_args_list[1].kwargs["params"]
+
+
+@patch("app.services.providers.withings.data_247.timeseries_service")
+@patch("app.services.providers.withings.data_247.event_record_service")
+@patch(
+    "app.services.providers.withings.data_247.withings_request",
+    side_effect=WithingsAPIError(withings_status=601, action="get"),
+)
+@patch("app.services.providers.withings.data_247.paginate")
+def test_throttled_hypnogram_is_not_asked_again_without_the_hrv_fields(
+    mock_paginate: MagicMock, mock_request: MagicMock, mock_event: MagicMock, mock_timeseries: MagicMock
+) -> None:
+    # withings_request has already backed off; asking again would wait out the quota twice.
+    _save_one_night(mock_paginate)
+
+    assert mock_request.call_count == 1
+
+
+@patch("app.services.providers.withings.data_247.timeseries_service")
+@patch("app.services.providers.withings.data_247.event_record_service")
+@patch("app.services.providers.withings.data_247.withings_request", side_effect=[HRV_SERIES_BODY, {"series": []}])
+@patch("app.services.providers.withings.data_247.paginate")
+def test_sleep_hrv_is_kept_for_a_night_without_a_lowest_heart_rate(
+    mock_paginate: MagicMock, mock_request: MagicMock, mock_event: MagicMock, mock_timeseries: MagicMock
+) -> None:
+    mock_paginate.return_value = MagicMock(rows=[{**SLEEP_ROW, "data": {**SLEEP_ROW["data"], "hr_min": None}}])
+
+    _data_247().save_sleep(MagicMock(), uuid4(), *_WINDOW)
+
+    assert SeriesType.heart_rate_variability_rmssd in _saved_hrv(mock_timeseries)
 
 
 @patch("app.services.providers.withings.data_247.timeseries_service")
@@ -464,3 +778,22 @@ def test_a_night_without_a_low_heart_rate_is_still_saved(
 
     assert saved == 1
     mock_timeseries.bulk_create_samples.assert_not_called()
+
+
+@patch("app.services.providers.withings.data_247.paginate")
+@patch("app.services.providers.withings.data_247.paginate_mapping")
+def test_one_sync_asks_for_the_daily_rows_once(mock_intraday: MagicMock, mock_paginate: MagicMock) -> None:
+    # Daily and intraday activity both start from getactivity; a second call only spends quota.
+    mock_intraday.return_value = {}
+    mock_paginate.return_value = MagicMock(rows=TWO_DAYS)
+    data_247 = _data_247()
+    data_247._active_connection_id = MagicMock(return_value=None)
+
+    with patch.object(data_247, "save_measures", return_value=0), patch.object(data_247, "save_sleep", return_value=0):
+        data_247.load_and_save_all(
+            MagicMock(), uuid4(), datetime(2026, 3, 1, tzinfo=timezone.utc), datetime(2026, 3, 3, tzinfo=timezone.utc)
+        )
+
+    actions = [call.kwargs["action"] for call in mock_paginate.call_args_list]
+    assert actions.count("getactivity") == 1
+    assert mock_intraday.call_count == 2

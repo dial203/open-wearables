@@ -20,7 +20,7 @@ from app.constants.series_types.polar import (
 )
 from app.database import DbSession
 from app.repositories.user_connection_repository import UserConnectionRepository
-from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType
+from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType, daily_total_flag
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -65,6 +65,24 @@ from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
 _T = TypeVar("_T", bound=BaseModel)
+
+
+def _clear_of_daily_totals(at: datetime) -> datetime:
+    """``at``, or one second later when it falls on a UTC midnight, where Polar daily totals sit."""
+    if at.hour == at.minute == at.second == at.microsecond == 0:
+        return at + timedelta(seconds=1)
+    return at
+
+
+def _expand_repeated_steps(points: list[tuple[datetime, int]], interval: timedelta) -> dict[datetime, int]:
+    """Polar omits a sample repeating the previous count, so a longer gap after a non-zero one holds repeats."""
+    expanded: dict[datetime, int] = {}
+    next_times: list[datetime | None] = [at for at, _ in points[1:]]
+    for (at, count), next_at in zip(points, [*next_times, None], strict=True):
+        repeats = (next_at - at) // interval if count and next_at and interval > timedelta(0) else 1
+        for step in range(max(repeats, 1)):
+            expanded[at + step * interval] = count
+    return expanded
 
 
 class Polar247Data(Base247DataTemplate):
@@ -331,7 +349,7 @@ class Polar247Data(Base247DataTemplate):
                 "from": chunk_start.date().isoformat(),
                 "to": chunk_end.date().isoformat(),
                 "steps": "true",
-                "activity_zones": "false",
+                "activity_zones": "true",
                 "inactivity_stamps": "false",
             }
             response = self._make_api_request(db, user_id, "/v3/users/activities", params=params)
@@ -343,7 +361,15 @@ class Polar247Data(Base247DataTemplate):
         self,
         raw_items: list[dict[str, Any]],
         user_id: UUID,
+        sleep_starts: dict[str, datetime] | None = None,
     ) -> list[TimeSeriesSampleCreate]:  # ty:ignore[invalid-method-override]
+        """The day's totals, plus its intraday step samples where they can be placed in time.
+
+        ``sleep_starts`` (night date -> sleep start with its offset) is what places the
+        intraday samples; see ``_build_step_samples``. Without it only the totals are
+        written, as before upstream #1746.
+        """
+        sleep_starts = sleep_starts or {}
         samples: list[TimeSeriesSampleCreate] = []
         for raw in raw_items:
             if (parsed := self._parse(raw, DailyActivityJSON, user_id, "daily_activity")) is None:
@@ -364,10 +390,79 @@ class Polar247Data(Base247DataTemplate):
                         recorded_at=recorded_at,
                         value=Decimal(str(value)),
                         series_type=series_type,
-                        is_daily_total=True,
+                        is_daily_total=daily_total_flag(series_type, is_daily=True),
                     )
                 )
+            samples.extend(self._build_step_samples(parsed, user_id, recorded_at, sleep_starts))
         return samples
+
+    def _build_step_samples(
+        self,
+        parsed: DailyActivityJSON,
+        user_id: UUID,
+        daily_total_at: datetime,
+        sleep_starts: dict[str, datetime],
+    ) -> list[TimeSeriesSampleCreate]:
+        """The row's intraday step samples, placed at true UTC with the day's offset.
+
+        Fork: Polar stamps these on a zoneless local clock ("2024-01-15T07:10"), and read
+        as UTC every bout lands off by the wearer's offset - a 07:10 walk in Ohio in summer
+        stored at 03:10. The daily-activity row carries no offset either, so the day is
+        placed with the offset Polar stated on that day's sleep record: the night ending
+        that morning, else the night starting that evening. A day with neither gets no
+        intraday samples (its totals are unaffected) rather than a guessed zone, the same
+        rule normalize_nightly_recharge_hrv follows.
+
+        The day's totals are stored at its local midnight read as UTC (``daily_total_at``,
+        upstream's convention, kept so existing rows still match), and a sample on the
+        same instant would overwrite one: the unique key has no is_daily_total. A sample
+        that lands exactly on a UTC midnight - one bin a day at most, for a whole-hour
+        offset - is therefore stamped one second later instead of being dropped.
+        """
+        steps = parsed.samples.steps if parsed.samples else None
+        if not steps:
+            return []
+        day = daily_total_at.date()
+        anchor = sleep_starts.get(day.isoformat()) or sleep_starts.get((day + timedelta(days=1)).isoformat())
+        utc_offset = anchor.utcoffset() if anchor is not None else None
+        if utc_offset is None:
+            log_structured(
+                self.logger,
+                "warning",
+                "Polar intraday steps skipped: no sleep record to place the day's clock times",
+                provider="polar",
+                user_id=str(user_id),
+                date=day.isoformat(),
+            )
+            return []
+        zone = timezone(utc_offset)
+        zone_offset = offset_to_iso(int(utc_offset.total_seconds()))
+        points: list[tuple[datetime, int]] = []
+        for sample in steps.samples:
+            try:
+                points.append((datetime.fromisoformat(sample.timestamp), sample.steps))
+            except ValueError:
+                self.logger.warning("Skipping Polar step sample with an unreadable timestamp")
+        points.sort()
+        counts = _expand_repeated_steps(points, timedelta(milliseconds=steps.interval_ms))
+        if sum(counts.values()) > steps.total_steps:
+            # A gap that is not a run of repeats, e.g. the device stopped; keep only what was sent.
+            self.logger.warning("Polar step samples exceed the day's total once expanded; storing them as sent")
+            counts = dict(points)
+        return [
+            TimeSeriesSampleCreate(
+                id=uuid4(),
+                user_id=user_id,
+                provider=ProviderName.POLAR,
+                source=ProviderName.POLAR,
+                recorded_at=_clear_of_daily_totals(local.replace(tzinfo=zone).astimezone(timezone.utc)),
+                zone_offset=zone_offset,
+                value=Decimal(count),
+                series_type=SeriesType.steps,
+                is_daily_total=daily_total_flag(SeriesType.steps, is_daily=False),
+            )
+            for local, count in sorted(counts.items())
+        ]
 
     # -------------------------------------------------------------------------
     # Continuous Heart Rate - GET /v3/users/continuous-heart-rate/{date}
@@ -989,7 +1084,8 @@ class Polar247Data(Base247DataTemplate):
         path: str,
     ) -> dict[str, int]:
         """Fetch a single entity from the webhook URL path and save it. Used by webhook handler."""
-        raw = self._make_api_request(db, user_id, path)
+        params = {"activity_zones": "true"} if event_type == PolarWebhookEventType.ACTIVITY_SUMMARY else None
+        raw = self._make_api_request(db, user_id, path, params=params)
         if not raw:
             return {}
 
@@ -1008,7 +1104,11 @@ class Polar247Data(Base247DataTemplate):
                 return {"sleep": count}
 
             case PolarWebhookEventType.ACTIVITY_SUMMARY:
-                return {"daily_activity": self._save_timeseries(db, self.normalize_daily_activity([raw], user_id))}
+                return {
+                    "daily_activity": self._save_timeseries(
+                        db, self.normalize_daily_activity([raw], user_id, self._activity_sleep_starts(db, user_id, raw))
+                    )
+                }
 
             case PolarWebhookEventType.CONTINUOUS_HEART_RATE:
                 return {"continuous_hr": self._save_timeseries(db, self.normalize_continuous_hr([raw], user_id))}
@@ -1084,6 +1184,29 @@ class Polar247Data(Base247DataTemplate):
         samples.extend(self.normalize_nightly_recharge_hrv(raw_items, sleep_starts, user_id))
         return self._save_timeseries(db, samples)
 
+    def _activity_sleep_starts(self, db: DbSession, user_id: UUID, raw: dict[str, Any]) -> dict[str, datetime]:
+        """The sleep starts that can place one webhook-delivered activity day: that night and the next.
+
+        Best effort. A failed fetch leaves the day's intraday steps unplaced (skipped), never
+        its totals unsaved.
+        """
+        start = raw.get("start_time")
+        if not isinstance(start, str):
+            return {}
+        try:
+            day = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
+            return self._sleep_starts(self.get_sleep_data(db, user_id, day, day + timedelta(days=1)), user_id)
+        except Exception as e:  # noqa: BLE001 - placement is optional; the totals must still save
+            log_structured(
+                self.logger,
+                "warning",
+                "Polar sleep fetch for intraday step placement failed",
+                provider="polar",
+                user_id=str(user_id),
+                error=str(e),
+            )
+            return {}
+
     def _sleep_starts(self, raw_sleeps: list[dict[str, Any]], user_id: UUID) -> dict[str, datetime]:
         """Night date -> the sleep record's own start, with the offset Polar stated for it."""
         starts: dict[str, datetime] = {}
@@ -1133,7 +1256,9 @@ class Polar247Data(Base247DataTemplate):
             "daily_activity": lambda: self._save_timeseries(
                 db,
                 self.normalize_daily_activity(
-                    self.get_daily_activity_statistics(db, user_id, start_time, end_time), user_id
+                    self.get_daily_activity_statistics(db, user_id, start_time, end_time),
+                    user_id,
+                    self._sleep_starts(sleep_items(), user_id),
                 ),
             ),
             "continuous_hr": lambda: self._save_timeseries(
