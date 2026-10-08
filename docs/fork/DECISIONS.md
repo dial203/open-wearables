@@ -1082,3 +1082,28 @@ then tell the watch's own data from an app's.
   must not read as Oura's own connection. An import made before this keeps its rows on
   the old source, so delete those before re-importing an export, or the history is
   stored twice.
+
+## Apple sleeping wrist temperature is skin_temperature, not body_temperature
+
+- **Area**: backend
+- **Status**: active; upstreamable
+- **On conflict**: keep ours, unless upstream lands the dedicated series proposed in
+  the-momentum/open-wearables#1324, then take theirs and relabel these rows again
+- **Why**: the SDK metric map, shared by the mobile SDK and the Apple Health XML import,
+  filed `HKQuantityTypeIdentifierAppleSleepingWristTemperature` under `body_temperature`
+  beside `HKQuantityTypeIdentifierBodyTemperature`. The first is the watch's overnight
+  wrist skin temperature, the second a thermometer's core reading a few degrees higher,
+  so any analysis that read `body_temperature` mixed two constructs. A night's wrist
+  value also read as a hypothermic body temperature in the body summary. Wrist
+  temperature now maps to `skin_temperature`, where Google Health's nightly wrist
+  temperature, WHOOP, Ultrahuman and Polar's skin sensor already land. Visible effects:
+  the body summary's `latest.skin_temperature_celsius` carries it and
+  `body_temperature_celsius` no longer does. The React dashboard has no skin card, so it
+  stops showing the value. It fires `series.skin_temperature.created` instead of
+  `series.body_temperature.created`; the grouped `body_temperature.created` event is
+  unchanged. Apple now covers `skin_temperature` in the coverage docs. No score reads
+  either series. Rows written before the change are moved by
+  `scripts/data_migrations/relabel_apple_wrist_temp_to_skin_temp.py`. It is not wired
+  into startup: a row keeps no HealthKit type, so the script finds wrist temperature by
+  its Apple Watch data source (see its docstring), and that rule should be checked with
+  `--dry-run` against a deployment before applying.
