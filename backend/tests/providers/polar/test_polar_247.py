@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.repositories.data_point_series_repository import WriteCounts
-from app.schemas.enums import HealthScoreCategory, SeriesType
+from app.schemas.enums import HealthScoreCategory, SampleRoute, SeriesType
 from app.services.providers.polar.data_247 import Polar247Data
 from app.services.providers.polar.strategy import PolarStrategy
 
@@ -60,6 +60,17 @@ class TestPolar247SleepNormalization:
         assert record.start_datetime.isoformat() == "2024-01-14T23:00:00+02:00"
         assert record.end_datetime.isoformat() == "2024-01-15T07:00:00+02:00"
         assert record.duration_seconds == 8 * 3600
+
+    def test_heart_rate_of_a_night_starting_just_before_midnight_lands_on_that_night(
+        self, data_247: Polar247Data, sample_sleep: dict
+    ) -> None:
+        """A first sample after midnight belongs to the next calendar day, not 24 h early."""
+        sample_sleep["sleep_start_time"] = "2024-01-14T23:55:00+02:00"
+        sample_sleep["heart_rate_samples"] = {"00:05": 56, "00:10": 54}
+        _, _, _, hr = data_247.normalize_sleep([sample_sleep], uuid4())[0]
+
+        assert [s.recorded_at.isoformat() for s in hr] == ["2024-01-15T00:05:00+02:00", "2024-01-15T00:10:00+02:00"]
+        assert all(s.route == SampleRoute.POLAR_SLEEP for s in hr)
 
     def test_sleep_stage_minutes(self, data_247: Polar247Data, sample_sleep: dict) -> None:
         user_id = uuid4()
@@ -485,6 +496,9 @@ class TestPolar247DailyActivityNormalization:
 
 
 class TestPolar247ContinuousHRNormalization:
+    # The night ending that morning, in Helsinki winter time.
+    SLEEP_STARTS = {"2024-01-15": datetime.fromisoformat("2024-01-14T23:00:00+02:00")}
+
     @pytest.fixture
     def sample_chr(self) -> dict:
         return {
@@ -499,29 +513,41 @@ class TestPolar247ContinuousHRNormalization:
 
     def test_produces_hr_timeseries(self, data_247: Polar247Data, sample_chr: dict) -> None:
         user_id = uuid4()
-        samples = data_247.normalize_continuous_hr([sample_chr], user_id)
+        samples = data_247.normalize_continuous_hr([sample_chr], user_id, self.SLEEP_STARTS)
 
         assert len(samples) == 3
         assert all(s.series_type == SeriesType.heart_rate for s in samples)
         assert all(s.user_id == user_id for s in samples)
+        assert all(s.route == SampleRoute.POLAR_CONTINUOUS_HR for s in samples)
 
     def test_bpm_values(self, data_247: Polar247Data, sample_chr: dict) -> None:
         user_id = uuid4()
-        samples = data_247.normalize_continuous_hr([sample_chr], user_id)
+        samples = data_247.normalize_continuous_hr([sample_chr], user_id, self.SLEEP_STARTS)
         bpm_values = [s.value for s in samples]
         assert bpm_values == [62, 65, 60]
 
-    def test_timestamps_use_date_as_anchor(self, data_247: Polar247Data, sample_chr: dict) -> None:
-        user_id = uuid4()
-        samples = data_247.normalize_continuous_hr([sample_chr], user_id)
-        assert samples[0].recorded_at.date().isoformat() == "2024-01-15"
-        assert samples[0].recorded_at.hour == 8
-        assert samples[0].recorded_at.minute == 0
+    def test_the_wearers_clock_is_placed_at_true_utc(self, data_247: Polar247Data, sample_chr: dict) -> None:
+        """08:00 on a UTC+2 clock is 06:00 UTC, not 08:00 UTC."""
+        samples = data_247.normalize_continuous_hr([sample_chr], uuid4(), self.SLEEP_STARTS)
+        assert samples[0].recorded_at.isoformat() == "2024-01-15T06:00:00+00:00"
+        assert samples[0].zone_offset == "+02:00"
+
+    def test_the_next_nights_offset_places_a_day_with_no_night_before(
+        self, data_247: Polar247Data, sample_chr: dict
+    ) -> None:
+        evening = {"2024-01-16": datetime.fromisoformat("2024-01-15T22:30:00-05:00")}
+        samples = data_247.normalize_continuous_hr([sample_chr], uuid4(), evening)
+        assert samples[0].recorded_at.isoformat() == "2024-01-15T13:00:00+00:00"
+
+    def test_a_day_no_sleep_record_can_place_is_skipped_not_guessed(
+        self, data_247: Polar247Data, sample_chr: dict
+    ) -> None:
+        assert data_247.normalize_continuous_hr([sample_chr], uuid4()) == []
 
     def test_missing_samples_skipped(self, data_247: Polar247Data, sample_chr: dict) -> None:
         sample_chr["heart_rate_samples"] = []
         user_id = uuid4()
-        assert data_247.normalize_continuous_hr([sample_chr], user_id) == []
+        assert data_247.normalize_continuous_hr([sample_chr], user_id, self.SLEEP_STARTS) == []
 
     def test_empty_input(self, data_247: Polar247Data) -> None:
         assert data_247.normalize_continuous_hr([], uuid4()) == []

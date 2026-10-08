@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import fitdecode
 
+from app.schemas.enums import SampleRoute
 from app.schemas.enums.series_types import SeriesType
 from app.schemas.model_crud.activities.data_point_series import TimeSeriesSampleCreate
 from app.schemas.model_crud.activities.zones import HRZone, HRZones, PowerZone, PowerZones
@@ -101,6 +102,7 @@ def parse_fit_file(
                     if (value := _extract(frame, mapping)) is not None:
                         result.samples.append(
                             TimeSeriesSampleCreate(
+                                route=SampleRoute.FIT_RECORDS,
                                 id=uuid4(),
                                 user_id=user_id,
                                 data_source_id=data_source_id,

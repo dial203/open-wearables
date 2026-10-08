@@ -25,6 +25,13 @@ class TimeSeriesSample(BaseModel):
     # consumer re-windowing a reference recording onto this sample has to know which.
     # Only raw samples carry it; an aggregated bucket's span is the requested resolution.
     interval_seconds: int | None = None
+    # The feed that wrote the sample (e.g. "garmin.activity_details", "garmin.dailies")
+    # and its kind: workout | intraday | window | summary. One data source can hold
+    # several feeds of one series - a watch's workout trace and its all-day monitoring -
+    # and these are what tell them apart. None on a row written before feeds were
+    # recorded. Raw samples only.
+    route: str | None = None
+    route_kind: str | None = None
 
 
 class ActivityAggregateResult(TypedDict):

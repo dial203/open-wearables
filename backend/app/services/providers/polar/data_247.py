@@ -20,7 +20,7 @@ from app.constants.series_types.polar import (
 )
 from app.database import DbSession
 from app.repositories.user_connection_repository import UserConnectionRepository
-from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType, daily_total_flag
+from app.schemas.enums import HealthScoreCategory, ProviderName, SampleRoute, SeriesType, daily_total_flag
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -227,6 +227,7 @@ class Polar247Data(Base247DataTemplate):
     ) -> list[TimeSeriesSampleCreate]:
         return [
             TimeSeriesSampleCreate(
+                route=SampleRoute.POLAR_SLEEP,
                 id=uuid4(),
                 user_id=user_id,
                 provider=ProviderName.POLAR,
@@ -235,7 +236,10 @@ class Polar247Data(Base247DataTemplate):
                 value=bpm,
                 series_type=SeriesType.heart_rate,
             )
-            for dt, bpm in self._hhmm_to_datetimes(hr_samples, sleep_start)
+            # _recharge_times, not _hhmm_to_datetimes: a night that starts at 23:5x with its
+            # first sample after midnight would otherwise land a whole day early, on top of
+            # the night before.
+            for dt, bpm in self._recharge_times(hr_samples, sleep_start)
         ]
 
     SleepNormalized = tuple[
@@ -383,6 +387,7 @@ class Polar247Data(Base247DataTemplate):
                     continue
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.POLAR_DAILY_ACTIVITY,
                         id=uuid4(),
                         user_id=user_id,
                         provider=ProviderName.POLAR,
@@ -451,6 +456,7 @@ class Polar247Data(Base247DataTemplate):
             counts = dict(points)
         return [
             TimeSeriesSampleCreate(
+                route=SampleRoute.POLAR_DAILY_ACTIVITY,
                 id=uuid4(),
                 user_id=user_id,
                 provider=ProviderName.POLAR,
@@ -489,26 +495,57 @@ class Polar247Data(Base247DataTemplate):
         self,
         raw_items: list[dict[str, Any]],
         user_id: UUID,
+        sleep_starts: dict[str, datetime] | None = None,
     ) -> list[TimeSeriesSampleCreate]:
+        """Continuous heart rate, placed at true UTC with the day's offset.
+
+        Fork: Polar stamps these on a zoneless local clock (``date`` plus "HH:MM:SS"), the
+        same as the intraday steps. Read as UTC, every sample landed off by the wearer's
+        offset - a run at 22:44 in Ohio in October stored at 18:44, and the samples stored
+        at the run's real instant were the wearer asleep at 02:44. The day is placed the
+        way _build_step_samples places it: with the offset Polar stated on that day's sleep
+        record, the night ending that morning, else the night starting that evening. A day
+        with neither is skipped and logged rather than stored at a guessed instant.
+        """
+        sleep_starts = sleep_starts or {}
         samples: list[TimeSeriesSampleCreate] = []
         for raw in raw_items:
             if (parsed := self._parse(raw, ContinuousHeartRateJSON, user_id, "continuous_hr")) is None:
                 continue
             if not parsed.date or not parsed.heart_rate_samples:
                 continue
-            anchor = datetime.fromisoformat(parsed.date)
+            try:
+                day = datetime.fromisoformat(parsed.date).date()
+            except ValueError:
+                continue
+            anchor = sleep_starts.get(day.isoformat()) or sleep_starts.get((day + timedelta(days=1)).isoformat())
+            utc_offset = anchor.utcoffset() if anchor is not None else None
+            if utc_offset is None:
+                log_structured(
+                    self.logger,
+                    "warning",
+                    "Polar continuous heart rate skipped: no sleep record to place the day's clock times",
+                    provider="polar",
+                    user_id=str(user_id),
+                    date=day.isoformat(),
+                )
+                continue
+            zone = timezone(utc_offset)
+            zone_offset = offset_to_iso(int(utc_offset.total_seconds()))
             samples_dict = {s.sample_time: s.heart_rate for s in parsed.heart_rate_samples if s.sample_time}
             samples.extend(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.POLAR_CONTINUOUS_HR,
                     id=uuid4(),
                     user_id=user_id,
                     provider=ProviderName.POLAR,
                     source=ProviderName.POLAR,
-                    recorded_at=dt,
+                    recorded_at=local.replace(tzinfo=zone).astimezone(timezone.utc),
+                    zone_offset=zone_offset,
                     value=bpm,
                     series_type=SeriesType.heart_rate,
                 )
-                for dt, bpm in self._hhmm_to_datetimes(samples_dict, anchor)
+                for local, bpm in self._hhmm_to_datetimes(samples_dict, datetime.combine(day, time()))
             )
         return samples
 
@@ -634,6 +671,7 @@ class Polar247Data(Base247DataTemplate):
             if parsed.breathing_rate_avg is not None and sleep_start is not None and utc_offset is not None:
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.POLAR_NIGHTLY_RECHARGE,
                         id=uuid4(),
                         user_id=user_id,
                         provider=ProviderName.POLAR,
@@ -717,6 +755,7 @@ class Polar247Data(Base247DataTemplate):
                     continue
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.POLAR_NIGHTLY_RECHARGE,
                         id=uuid4(),
                         user_id=user_id,
                         provider=ProviderName.POLAR,
@@ -889,6 +928,7 @@ class Polar247Data(Base247DataTemplate):
             anchor = datetime.fromisoformat(parsed.start_time)
             samples.extend(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.POLAR_BODY_TEMPERATURE,
                     id=uuid4(),
                     user_id=user_id,
                     provider=ProviderName.POLAR,
@@ -932,6 +972,7 @@ class Polar247Data(Base247DataTemplate):
             if parsed.sleep_time_skin_temperature_celsius is not None:
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.POLAR_SLEEP_SKIN_TEMPERATURE,
                         id=uuid4(),
                         user_id=user_id,
                         provider=ProviderName.POLAR,
@@ -944,6 +985,7 @@ class Polar247Data(Base247DataTemplate):
             if parsed.deviation_from_baseline_celsius is not None:
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.POLAR_SLEEP_SKIN_TEMPERATURE,
                         id=uuid4(),
                         user_id=user_id,
                         provider=ProviderName.POLAR,
@@ -985,6 +1027,7 @@ class Polar247Data(Base247DataTemplate):
             if parsed.blood_oxygen_percent is not None:
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.POLAR_SPO2_TEST,
                         id=uuid4(),
                         user_id=user_id,
                         provider=ProviderName.POLAR,
@@ -997,6 +1040,7 @@ class Polar247Data(Base247DataTemplate):
             if parsed.heart_rate_variability_ms is not None:
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.POLAR_SPO2_TEST,
                         id=uuid4(),
                         user_id=user_id,
                         provider=ProviderName.POLAR,
@@ -1038,6 +1082,7 @@ class Polar247Data(Base247DataTemplate):
             if parsed.heart_rate_variability_ms is not None:
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.POLAR_WRIST_ECG,
                         id=uuid4(),
                         user_id=user_id,
                         provider=ProviderName.POLAR,
@@ -1050,6 +1095,7 @@ class Polar247Data(Base247DataTemplate):
             if parsed.average_heart_rate_bpm is not None:
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.POLAR_WRIST_ECG,
                         id=uuid4(),
                         user_id=user_id,
                         provider=ProviderName.POLAR,
@@ -1111,7 +1157,11 @@ class Polar247Data(Base247DataTemplate):
                 }
 
             case PolarWebhookEventType.CONTINUOUS_HEART_RATE:
-                return {"continuous_hr": self._save_timeseries(db, self.normalize_continuous_hr([raw], user_id))}
+                return {
+                    "continuous_hr": self._save_timeseries(
+                        db, self.normalize_continuous_hr([raw], user_id, self._day_sleep_starts(db, user_id, raw))
+                    )
+                }
 
             case PolarWebhookEventType.SLEEP_WISE_ALERTNESS:
                 return {"alertness": self._save_scores(db, self.normalize_alertness([raw], user_id))}
@@ -1207,6 +1257,29 @@ class Polar247Data(Base247DataTemplate):
             )
             return {}
 
+    def _day_sleep_starts(self, db: DbSession, user_id: UUID, raw: dict[str, Any]) -> dict[str, datetime]:
+        """The sleep starts that can place one webhook-delivered continuous-HR day: that night and the next.
+
+        Best effort, like _activity_sleep_starts. A failed fetch leaves the day unplaced
+        (skipped and logged), never stored at a guessed instant.
+        """
+        day_str = raw.get("date")
+        if not isinstance(day_str, str):
+            return {}
+        try:
+            day = datetime.fromisoformat(day_str).replace(tzinfo=timezone.utc)
+            return self._sleep_starts(self.get_sleep_data(db, user_id, day, day + timedelta(days=2)), user_id)
+        except Exception as e:  # noqa: BLE001 - placement is best effort
+            log_structured(
+                self.logger,
+                "warning",
+                "Polar sleep fetch for continuous heart rate placement failed",
+                provider="polar",
+                user_id=str(user_id),
+                error=str(e),
+            )
+            return {}
+
     def _sleep_starts(self, raw_sleeps: list[dict[str, Any]], user_id: UUID) -> dict[str, datetime]:
         """Night date -> the sleep record's own start, with the offset Polar stated for it."""
         starts: dict[str, datetime] = {}
@@ -1263,7 +1336,11 @@ class Polar247Data(Base247DataTemplate):
             ),
             "continuous_hr": lambda: self._save_timeseries(
                 db,
-                self.normalize_continuous_hr(self.get_continuous_hr_data(db, user_id, start_time, end_time), user_id),
+                self.normalize_continuous_hr(
+                    self.get_continuous_hr_data(db, user_id, start_time, end_time),
+                    user_id,
+                    self._sleep_starts(sleep_items(), user_id),
+                ),
             ),
             "cardio_load": lambda: self._save_scores(
                 db, self.normalize_cardio_load(self.get_cardio_load_data(db, user_id, start_time, end_time), user_id)

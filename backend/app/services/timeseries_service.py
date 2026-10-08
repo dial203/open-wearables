@@ -14,6 +14,8 @@ from app.models import DataPointSeries, DataSource
 from app.repositories import DataPointSeriesRepository
 from app.repositories.data_point_series_repository import AggregatedSample, WriteCounts
 from app.schemas.enums import (
+    ROUTE_BY_ID,
+    ROUTE_KIND_BY_ROUTE,
     Resolution,
     SeriesType,
     get_series_type_from_id,
@@ -68,8 +70,10 @@ def _to_sample(
     is_daily_total: bool | None,
     data_source: DataSource | None,
     provider_metadata: dict | None = None,
+    route_id: int | None = None,
 ) -> TimeSeriesSample:
     series_type = get_series_type_from_id(series_type_definition_id)
+    route = ROUTE_BY_ID.get(route_id) if route_id is not None else None
     source = None
     if data_source is not None:
         # from_data_source, not an inline SourceMetadata: it also carries the fork's
@@ -86,6 +90,8 @@ def _to_sample(
         source=source,
         is_daily_total=is_daily_total,
         interval_seconds=_interval_seconds(provider_metadata),
+        route=route.value if route is not None else None,
+        route_kind=ROUTE_KIND_BY_ROUTE[route].value if route is not None else None,
     )
 
 
@@ -375,6 +381,7 @@ class TimeSeriesService(
                 sample.is_daily_total,
                 data_source,
                 sample.provider_metadata,
+                sample.route_id,
             )
             for sample, data_source in samples
         ]

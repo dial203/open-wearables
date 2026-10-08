@@ -57,6 +57,9 @@ from app.schemas.enums import (
     TimelineGroupBy,
     get_series_type_from_id,
     get_series_type_id,
+    route_id_for,
+    route_rank,
+    route_rank_sql,
 )
 from app.schemas.enums.aggregation_method import get_aggregation_method
 from app.schemas.model_crud.activities import (
@@ -153,6 +156,20 @@ class WriteCounts(int):
 
 # Sources whose provider or device type is not ranked sort last, in id order.
 _UNRANKED = 1_000_000
+
+# The upsert's feed ranking (app/schemas/enums/sample_route.py) as SQL, for the row
+# arriving and the row already held.
+_EXCLUDED_RANK_SQL = typing_cast(LiteralString, route_rank_sql("excluded.route_id"))
+_HELD_RANK_SQL = typing_cast(LiteralString, route_rank_sql("data_point_series.route_id"))
+
+
+def _replaces(held: "DataPointSeriesRepository._StagingRow", incoming: "DataPointSeriesRepository._StagingRow") -> bool:
+    """Whether ``incoming`` takes the key from ``held`` within one batch - the merge's rule."""
+    if held.is_daily_total or incoming.is_daily_total:
+        return True
+    return route_rank(incoming.route_id) >= route_rank(held.route_id)
+
+
 SERIES_TYPE_IDS: tuple[int, ...] = tuple(get_series_type_id(t) for t in SeriesType)
 _AGGREGATE_FUNCS = {
     AggregationMethod.AVG: func.avg,
@@ -210,12 +227,14 @@ class DataPointSeriesRepository(
             "device_type",
             "series_type",
             "data_source_id",
+            "route",
         ):
             creation_data.pop(redundant_key, None)
 
         # Set the proper values
         creation_data["data_source_id"] = data_source.id
         creation_data["series_type_definition_id"] = get_series_type_id(creator.series_type)
+        creation_data["route_id"] = route_id_for(creator.route)
 
         creation = self.model(**creation_data)
         db_session.add(creation)
@@ -283,6 +302,8 @@ class DataPointSeriesRepository(
         # dumper from the Python type, and a plain dict has none registered, so the row
         # would fail to adapt. The wrapper also serialises None as a proper SQL NULL.
         provider_metadata: Jsonb | None
+        # The feed that wrote the row (app/schemas/enums/sample_route.py); None = unstated.
+        route_id: int | None
 
     # Single source of truth for the COPY/INSERT column list, derived from _StagingRow's
     # own field names above so the SQL text and the row shape can't drift apart.
@@ -315,6 +336,7 @@ class DataPointSeriesRepository(
                     series_type_definition_id=get_series_type_id(creator.series_type),
                     is_daily_total=creator.is_daily_total,
                     provider_metadata=Jsonb(creator.provider_metadata) if creator.provider_metadata else None,
+                    route_id=route_id_for(creator.route),
                 )
             )
 
@@ -322,10 +344,15 @@ class DataPointSeriesRepository(
             return WriteCounts(0, 0)
 
         # Dedup within the batch: PostgreSQL cannot upsert the same row twice in one
-        # statement. Keep the last value for each conflicting key.
+        # statement. The same rule as the merge below: the later row wins unless it comes
+        # from a lower-ranked feed than the one already held (two daily totals, or a daily
+        # total against a sample, keep last-write-wins).
         deduped: dict[tuple[UUID, int, datetime], DataPointSeriesRepository._StagingRow] = {}
         for row in rows:
-            deduped[(row.data_source_id, row.series_type_definition_id, row.recorded_at)] = row
+            key = (row.data_source_id, row.series_type_definition_id, row.recorded_at)
+            held = deduped.get(key)
+            if held is None or _replaces(held, row):
+                deduped[key] = row
         rows = list(deduped.values())
 
         raw_conn: PGConnection | None = db_session.connection().connection.driver_connection
@@ -367,16 +394,28 @@ class DataPointSeriesRepository(
                             -- what a route that does already stored.
                             provider_metadata = COALESCE(
                                 excluded.provider_metadata, data_point_series.provider_metadata
-                            )
-                        WHERE data_point_series.value IS DISTINCT FROM excluded.value
-                           OR data_point_series.external_id IS DISTINCT FROM excluded.external_id
-                           OR data_point_series.zone_offset IS DISTINCT FROM excluded.zone_offset
-                           OR data_point_series.is_daily_total IS DISTINCT FROM excluded.is_daily_total
-                           OR (
-                                excluded.provider_metadata IS NOT NULL
-                                AND data_point_series.provider_metadata
-                                    IS DISTINCT FROM excluded.provider_metadata
-                              )
+                            ),
+                            route_id = excluded.route_id
+                        WHERE (
+                                data_point_series.value IS DISTINCT FROM excluded.value
+                             OR data_point_series.external_id IS DISTINCT FROM excluded.external_id
+                             OR data_point_series.zone_offset IS DISTINCT FROM excluded.zone_offset
+                             OR data_point_series.is_daily_total IS DISTINCT FROM excluded.is_daily_total
+                             OR data_point_series.route_id IS DISTINCT FROM excluded.route_id
+                             OR (
+                                  excluded.provider_metadata IS NOT NULL
+                                  AND data_point_series.provider_metadata
+                                      IS DISTINCT FROM excluded.provider_metadata
+                                )
+                          )
+                          -- A lower-ranked feed never overwrites a higher-ranked one: an
+                          -- all-day value cannot replace a workout's own sample at the
+                          -- same second. Daily totals are left out of the ranking.
+                          AND (
+                                COALESCE(excluded.is_daily_total, FALSE)
+                             OR COALESCE(data_point_series.is_daily_total, FALSE)
+                             OR {_EXCLUDED_RANK_SQL} >= {_HELD_RANK_SQL}
+                          )
                         RETURNING (xmax = 0) AS was_insert
                     )
                     SELECT count(*) FILTER (WHERE was_insert) FROM merged

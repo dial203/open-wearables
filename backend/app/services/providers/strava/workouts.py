@@ -7,7 +7,7 @@ from app.config import settings
 from app.constants.entry_source import get_unified_strava_entry_source
 from app.constants.workout_types import get_unified_strava_workout_type
 from app.database import DbSession
-from app.schemas.enums import SeriesType, WorkoutType
+from app.schemas.enums import SampleRoute, SeriesType, WorkoutType
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -378,6 +378,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                     continue
                 result.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.STRAVA_STREAMS,
                         id=uuid4(),
                         user_id=user_id,
                         source=source,
@@ -393,6 +394,34 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                     )
                 )
         return result
+
+    def _apart_from_overlapping_activity(self, db: DbSession, record: EventRecordCreate) -> EventRecordCreate:
+        """Give an activity its own data source when another activity overlaps it on the shared one.
+
+        An activity's samples go to the data source its device name and upload channel
+        resolve to. Two activities recorded at the same time - a watch and a bike
+        computer, two watches of one model, two device-less file uploads - can resolve to
+        the same one, and then the second one's samples overwrite the first's at every
+        second they share and fill its gaps. Overlapping activities on one source can only
+        be two recorders, so the one arriving second is filed under a source of its own,
+        named after its activity: an unattributed source a person names once, rather than
+        two traces merged into one. Deterministic, so a re-delivery lands on the same
+        split source.
+        """
+        if not self.workout_repo.overlapping_workout_on_same_source(db, record):
+            return record
+        split_source = f"{record.source or 'strava'} (activity {record.external_id})"
+        log_structured(
+            self.logger,
+            "info",
+            "Strava activity overlaps another on the same data source; filing it apart",
+            provider="strava",
+            activity_id=record.external_id,
+            device_model=record.device_model,
+            source=record.source,
+            split_source=split_source,
+        )
+        return record.model_copy(update={"source": split_source})
 
     def _ingest_workout_streams(
         self,
@@ -498,6 +527,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         for activity in parsed_activities:
             activity = self._enrich_with_detail(db, user_id, activity)
             record, detail = self._normalize_workout(activity, user_id)
+            record = self._apart_from_overlapping_activity(db, record)
             created_record = event_record_service.create(db, record)
             detail_for_record = detail.model_copy(update={"record_id": created_record.id})
             event_record_service.create_detail(db, detail_for_record)
@@ -578,6 +608,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         created_ids: list[UUID] = []
 
         record, detail = self._normalize_workout(activity, user_id)
+        record = self._apart_from_overlapping_activity(db, record)
         created_record = event_record_service.create(db, record)
         detail_for_record = detail.model_copy(update={"record_id": created_record.id})
         event_record_service.create_detail(db, detail_for_record)

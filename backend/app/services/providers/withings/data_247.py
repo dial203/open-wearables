@@ -19,7 +19,7 @@ from app.constants.withings_requests import ACTIVITY, INTRADAY_ACTIVITY, MEASURE
 from app.database import DbSession
 from app.models import EventRecord
 from app.repositories import EventRecordRepository, UserConnectionRepository
-from app.schemas.enums import SeriesType, daily_total_flag
+from app.schemas.enums import SampleRoute, SeriesType, daily_total_flag
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -192,6 +192,7 @@ class Withings247Data(Base247DataTemplate):
                 value = value * factor
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.WITHINGS_MEASURE,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -281,6 +282,7 @@ class Withings247Data(Base247DataTemplate):
                     continue
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.WITHINGS_ACTIVITY,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -299,6 +301,7 @@ class Withings247Data(Base247DataTemplate):
                 if passive_calories >= 0:
                     samples.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.WITHINGS_ACTIVITY,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -420,6 +423,7 @@ class Withings247Data(Base247DataTemplate):
                     continue
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.WITHINGS_INTRADAY,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -807,6 +811,7 @@ class Withings247Data(Base247DataTemplate):
             readings.append((start_dt, SeriesType.resting_heart_rate, data.hr_min, None))
         return [
             TimeSeriesSampleCreate(
+                route=SampleRoute.WITHINGS_SLEEP,
                 id=uuid4(),
                 user_id=user_id,
                 provider=self.provider_name,

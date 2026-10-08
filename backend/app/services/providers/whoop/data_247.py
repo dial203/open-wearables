@@ -11,7 +11,7 @@ from app.database import DbSession
 from app.models import DataPointSeries, DataSource, EventRecord
 from app.repositories import EventRecordRepository, UserConnectionRepository
 from app.repositories.data_source_repository import DataSourceRepository
-from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType, get_series_type_id
+from app.schemas.enums import HealthScoreCategory, ProviderName, SampleRoute, SeriesType, get_series_type_id
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -660,6 +660,7 @@ class Whoop247Data(Base247DataTemplate):
                 if latest_height is None or abs(latest_height - height_cm) > Decimal("0.01"):
                     samples_to_create.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.WHOOP_DAILY,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -688,6 +689,7 @@ class Whoop247Data(Base247DataTemplate):
                 if latest_weight is None or abs(latest_weight - weight) > Decimal("0.01"):
                     samples_to_create.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.WHOOP_DAILY,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -836,6 +838,7 @@ class Whoop247Data(Base247DataTemplate):
                 try:
                     samples_to_create.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.WHOOP_DAILY,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -1064,6 +1067,7 @@ class Whoop247Data(Base247DataTemplate):
 
         daily_samples = [
             TimeSeriesSampleCreate(
+                route=SampleRoute.WHOOP_DAILY,
                 id=uuid4(),
                 user_id=user_id,
                 source=self.provider_name,

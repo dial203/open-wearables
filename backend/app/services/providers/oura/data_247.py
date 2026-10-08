@@ -20,6 +20,7 @@ from app.schemas.enums import (
     DeviceType,
     HealthScoreCategory,
     ProviderName,
+    SampleRoute,
     SeriesType,
     daily_total_flag,
 )
@@ -325,6 +326,7 @@ class Oura247Data(Base247DataTemplate):
                 try:
                     samples.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.OURA_ACTIVITY,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -413,6 +415,7 @@ class Oura247Data(Base247DataTemplate):
             try:
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.OURA_DAILY,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -560,6 +563,7 @@ class Oura247Data(Base247DataTemplate):
                     try:
                         samples.append(
                             TimeSeriesSampleCreate(
+                                route=SampleRoute.OURA_DAILY,
                                 id=uuid4(),
                                 user_id=user_id,
                                 source=self.provider_name,
@@ -818,6 +822,7 @@ class Oura247Data(Base247DataTemplate):
                     )
                     samples = [
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.OURA_SLEEP,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -859,6 +864,7 @@ class Oura247Data(Base247DataTemplate):
                             db,
                             [
                                 TimeSeriesSampleCreate(
+                                    route=SampleRoute.OURA_DAILY,
                                     id=uuid4(),
                                     user_id=user_id,
                                     source=self.provider_name,
@@ -1000,6 +1006,7 @@ class Oura247Data(Base247DataTemplate):
                 try:
                     samples.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.OURA_DAILY,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -1025,6 +1032,7 @@ class Oura247Data(Base247DataTemplate):
                 try:
                     samples.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.OURA_DAILY,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -1098,6 +1106,7 @@ class Oura247Data(Base247DataTemplate):
                 recorded_at = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.OURA_HEARTRATE,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -1184,6 +1193,7 @@ class Oura247Data(Base247DataTemplate):
             if latest_weight is None or abs(Decimal(str(latest_weight[0])) - new_weight) > Decimal("0.01"):
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.OURA_DAILY,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -1199,6 +1209,7 @@ class Oura247Data(Base247DataTemplate):
             if latest_height is None or abs(Decimal(str(latest_height[0])) - new_height) > Decimal("0.01"):
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.OURA_DAILY,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -1252,6 +1263,7 @@ class Oura247Data(Base247DataTemplate):
                 recorded_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.OURA_DAILY,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
