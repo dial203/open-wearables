@@ -28,7 +28,7 @@ from app.database import DbSession
 from app.models import DataSource, EventRecord, User
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.enums import ProviderName, SeriesType
+from app.schemas.enums import ProviderName, SampleRoute, SeriesType
 from app.schemas.model_crud.activities import TimeSeriesSampleCreate
 from app.schemas.providers.polar.v4 import (
     ListPpiSamplesResponseJSON,
@@ -243,6 +243,7 @@ class PolarV4Data:
                         continue
                     samples.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.POLAR_PPI,
                             id=uuid4(),
                             user_id=user_id,
                             provider=ProviderName.POLAR,

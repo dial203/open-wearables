@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.schemas.enums import DeviceType, Resolution, SeriesType
+from app.schemas.enums import DeviceType, Resolution, SampleRoute, SeriesType
 from app.utils.dates import ZoneOffset
 from app.utils.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
@@ -40,6 +40,9 @@ class TimeSeriesSampleCreate(TimeSeriesSampleBase):
     # the column, and putting it on the base would add it to every response body.
     provider_metadata: dict[str, Any] | None = None
     device_type: DeviceType | None = None
+    # The feed that wrote this sample; stored as data_point_series.route_id. Two feeds of
+    # one provider can share a data source, and this is the only thing telling them apart.
+    route: SampleRoute | None = None
 
 
 class TimeSeriesSampleUpdate(TimeSeriesSampleBase):

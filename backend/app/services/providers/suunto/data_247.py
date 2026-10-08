@@ -18,7 +18,7 @@ from app.models import DataPointSeries, DataSource, EventRecord
 from app.repositories import EventRecordRepository, UserConnectionRepository
 from app.repositories.data_point_series_repository import DataPointSeriesRepository
 from app.repositories.data_source_repository import DataSourceRepository
-from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType, daily_total_flag
+from app.schemas.enums import HealthScoreCategory, ProviderName, SampleRoute, SeriesType, daily_total_flag
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -326,6 +326,7 @@ class Suunto247Data(Base247DataTemplate):
         sleep_id = normalized_sleep.get("suunto_sleep_id")
         samples = [
             TimeSeriesSampleCreate(
+                route=SampleRoute.SUUNTO_SLEEP,
                 id=uuid4(),
                 user_id=user_id,
                 source=self.provider_name,
@@ -571,6 +572,7 @@ class Suunto247Data(Base247DataTemplate):
 
                 all_samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.SUUNTO_ACTIVITY_247,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -685,6 +687,7 @@ class Suunto247Data(Base247DataTemplate):
 
                 all_samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.SUUNTO_DAILY,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,

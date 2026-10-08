@@ -1,8 +1,8 @@
 from uuid import UUID
 from datetime import datetime
 
-from sqlalchemy import UniqueConstraint
-from sqlalchemy.orm import Mapped
+from sqlalchemy import SmallInteger, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import BaseDbModel
 from app.mappings import (
@@ -48,3 +48,9 @@ class DataPointSeries(BaseDbModel):
     # iOS SDK stringifies values on the way out ("70 count/min"), so anything typed has
     # to be derived from this rather than replace it.
     provider_metadata: Mapped[json_object | None]
+    # Which feed wrote this row (app/schemas/enums/sample_route.py), or NULL for a row
+    # written before routes existed. One provider can have several feeds for one series
+    # - a watch's workout trace and its all-day monitoring - that resolve to the same
+    # data source and the same key, so the source alone cannot say which one a second
+    # came from. It also ranks the feeds: a lower-ranked one never overwrites a higher.
+    route_id: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)

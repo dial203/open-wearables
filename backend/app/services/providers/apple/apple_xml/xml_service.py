@@ -9,7 +9,7 @@ from xml.etree import ElementTree as ET
 from app.config import settings
 from app.constants.series_types.sdk import get_apple_sleep_phase, get_series_type_from_metric_type
 from app.constants.workout_types import get_unified_apple_workout_type_xml
-from app.schemas.enums import SeriesType, daily_total_flag
+from app.schemas.enums import SampleRoute, SeriesType, daily_total_flag
 from app.schemas.enums.provider import ProviderName
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
@@ -29,6 +29,10 @@ from app.schemas.providers.mobile_sdk import (
 from app.services.sdk.measurement_window import WINDOWED_SERIES, with_measurement_window
 from app.services.sdk.record_metadata import normalize_record_metadata
 from app.utils.structured_logging import log_structured
+
+# What a record that names no writer is filed under; also every series row before
+# records were keyed on their writer app.
+XML_SOURCE = "apple_health_xml"
 
 
 class XMLService:
@@ -216,12 +220,21 @@ class XMLService:
             return None
 
         device_info = self._extract_device_info(document.get("device", ""))
+        # The app that wrote the record, the same key the SDK route uses (HKSource name).
+        # One constant here put every writer that names no device model - Polar Flow,
+        # Oura, WHOOP - and every Apple Watch (all model "Watch") on one data source, and
+        # at whole-second precision any second two of them shared kept only the last.
+        writer = (document.get("sourceName") or "").strip() or XML_SOURCE
 
         sample = TimeSeriesSampleCreate(
+            route=SampleRoute.APPLE_XML_RECORDS,
             id=uuid4(),
             external_id=None,
             user_id=user_id,
-            source="apple_health_xml",
+            source=writer,
+            # Explicit: a writer name like "Oura" or "Polar Flow" would otherwise be read
+            # as that vendor's own direct connection.
+            provider=ProviderName.APPLE,
             device_model=device_info.device_model,
             software_version=device_info.device_software_version,
             recorded_at=document["startDate"],

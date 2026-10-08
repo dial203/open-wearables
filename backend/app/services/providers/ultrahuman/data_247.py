@@ -13,7 +13,7 @@ from app.database import DbSession
 from app.models import EventRecord
 from app.repositories import EventRecordRepository, UserConnectionRepository
 from app.repositories.data_point_series_repository import WriteCounts
-from app.schemas.enums import daily_total_flag
+from app.schemas.enums import SampleRoute, daily_total_flag
 from app.schemas.model_crud.activities.data_point_series import TimeSeriesSampleCreate
 from app.schemas.model_crud.activities.event_record import EventRecordCreate
 from app.schemas.model_crud.activities.event_record_detail import EventRecordDetailCreate
@@ -482,6 +482,7 @@ class Ultrahuman247Data(Base247DataTemplate):
                     recorded_at = datetime.fromisoformat(recorded_at_str.replace("Z", "+00:00"))
                     samples.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.ULTRAHUMAN_METRICS,
                             id=uuid4(),
                             user_id=user_id,
                             provider=self.provider_name,
@@ -609,6 +610,7 @@ class Ultrahuman247Data(Base247DataTemplate):
                             continue
                         daily_samples.append(
                             TimeSeriesSampleCreate(
+                                route=SampleRoute.ULTRAHUMAN_DAILY,
                                 id=uuid4(),
                                 user_id=user_id,
                                 provider=self.provider_name,

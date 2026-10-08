@@ -11,7 +11,7 @@ from app.constants.series_types.sensorbio import SLEEP_STATUS_STAGE_MAP
 from app.database import DbSession
 from app.models import EventRecord
 from app.repositories import EventRecordRepository, UserConnectionRepository
-from app.schemas.enums import HealthScoreCategory, ProviderName
+from app.schemas.enums import HealthScoreCategory, ProviderName, SampleRoute
 from app.schemas.model_crud.activities import HealthScoreCreate, SleepStage
 from app.schemas.model_crud.activities.data_point_series import TimeSeriesSampleCreate
 from app.schemas.model_crud.activities.event_record import EventRecordCreate
@@ -424,6 +424,7 @@ class SensorBio247Data(Base247DataTemplate):
                 continue
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.SENSORBIO_DAILY,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -623,6 +624,7 @@ class SensorBio247Data(Base247DataTemplate):
                     continue
                 all_samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.SENSORBIO_BIOMETRICS,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -719,6 +721,7 @@ class SensorBio247Data(Base247DataTemplate):
                 continue
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.SENSORBIO_DAILY,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,

@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from app.constants.series_types.polar import RR_INTERVAL_SAMPLE_TYPE
 from app.constants.workout_types.polar import get_unified_workout_type
 from app.database import DbSession
-from app.schemas.enums import ProviderName, SeriesType
+from app.schemas.enums import ProviderName, SampleRoute, SeriesType
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -242,6 +242,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
                 continue
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.POLAR_EXERCISE,
                     id=uuid4(),
                     user_id=user_id,
                     provider=ProviderName.POLAR,

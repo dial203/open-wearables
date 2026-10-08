@@ -42,18 +42,36 @@ def _polar_samples(db: Session, user_id: Any) -> list[DataPointSeries]:
     )
 
 
+# The night ending that morning: what places the day's zoneless clock times.
+SLEEP_RESPONSE: dict[str, Any] = {
+    "date": "2026-09-10",
+    "sleep_start_time": "2026-09-09T23:10:00-04:00",
+    "sleep_end_time": "2026-09-10T06:40:00-04:00",
+}
+
+
+def _polar_api(db: Any, user_id: Any, path: str, params: Any = None) -> Any:
+    if path == "/v3/users/sleep/available":
+        return {"available": [{"date": "2026-09-10"}]}
+    if path.startswith("/v3/users/sleep/"):
+        return SLEEP_RESPONSE
+    return DAY_RESPONSE
+
+
 def test_continuous_hr_webhook_saves_the_single_day_response(db: Session) -> None:
     user = UserFactory()
     data_247 = PolarStrategy().data_247
     assert isinstance(data_247, Polar247Data)
 
-    with patch.object(Polar247Data, "_make_api_request", return_value=DAY_RESPONSE):
+    with patch.object(Polar247Data, "_make_api_request", side_effect=_polar_api):
         saved = data_247.fetch_and_save_from_webhook(
             db, UUID(str(user.id)), PolarWebhookEventType.CONTINUOUS_HEART_RATE, ENDPOINT
         )
 
     assert saved == {"continuous_hr": 2}
-    assert len(_polar_samples(db, user.id)) == 2
+    samples = sorted(_polar_samples(db, user.id), key=lambda s: s.recorded_at)
+    # 04:34 on the wearer's clock, four hours behind UTC that night.
+    assert [s.recorded_at.isoformat() for s in samples] == ["2026-09-10T08:34:00+00:00", "2026-09-10T08:40:00+00:00"]
 
 
 def _webhook_payload() -> dict[str, Any]:

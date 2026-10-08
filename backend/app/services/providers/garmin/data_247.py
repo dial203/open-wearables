@@ -18,7 +18,7 @@ from app.repositories import (
     UserConnectionRepository,
 )
 from app.repositories.data_point_series_repository import DataPointSeriesRepository
-from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType, daily_total_flag
+from app.schemas.enums import HealthScoreCategory, ProviderName, SampleRoute, SeriesType, daily_total_flag
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -566,6 +566,7 @@ class Garmin247Data(Base247DataTemplate):
             if value is not None:
                 samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.GARMIN_DAILIES,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -635,6 +636,7 @@ class Garmin247Data(Base247DataTemplate):
                 recorded_at = base_dt + timedelta(seconds=offset_seconds)
 
                 sample = TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_DAILIES,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -764,6 +766,7 @@ class Garmin247Data(Base247DataTemplate):
                 try:
                     recorded_at = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
                     sample_create = TimeSeriesSampleCreate(
+                        route=SampleRoute.GARMIN_EPOCHS,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -832,6 +835,7 @@ class Garmin247Data(Base247DataTemplate):
         if weight_grams:
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_BODY_COMP,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -848,6 +852,7 @@ class Garmin247Data(Base247DataTemplate):
         if body_fat:
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_BODY_COMP,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -864,6 +869,7 @@ class Garmin247Data(Base247DataTemplate):
         if bmi:
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_BODY_COMP,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -880,6 +886,7 @@ class Garmin247Data(Base247DataTemplate):
         if muscle_mass_grams:
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_BODY_COMP,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -954,6 +961,7 @@ class Garmin247Data(Base247DataTemplate):
             recorded_at = self._from_epoch_seconds(start_ts)
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_HRV,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -978,6 +986,7 @@ class Garmin247Data(Base247DataTemplate):
                     offset_seconds = int(offset_str)
                     recorded_at = self._from_epoch_seconds(start_ts + offset_seconds)
                     sample = TimeSeriesSampleCreate(
+                        route=SampleRoute.GARMIN_HRV,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -1111,6 +1120,7 @@ class Garmin247Data(Base247DataTemplate):
                     continue
                 result.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.GARMIN_ACTIVITY_DETAILS,
                         id=uuid4(),
                         user_id=user_id,
                         source=self.provider_name,
@@ -1298,6 +1308,7 @@ class Garmin247Data(Base247DataTemplate):
                     recorded_at = self._from_epoch_seconds(start_ts + offset_seconds)
                     samples.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.GARMIN_STRESS,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -1321,6 +1332,7 @@ class Garmin247Data(Base247DataTemplate):
                     recorded_at = self._from_epoch_seconds(start_ts + offset_seconds)
                     samples.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.GARMIN_STRESS,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -1377,6 +1389,7 @@ class Garmin247Data(Base247DataTemplate):
             recorded_at = self._from_epoch_seconds(start_ts)
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_RESPIRATION,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1398,6 +1411,7 @@ class Garmin247Data(Base247DataTemplate):
                     recorded_at = self._from_epoch_seconds(start_ts + offset_seconds)
                     samples.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.GARMIN_RESPIRATION,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -1453,6 +1467,7 @@ class Garmin247Data(Base247DataTemplate):
             recorded_at = self._from_epoch_seconds(start_ts)
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_PULSE_OX,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1475,6 +1490,7 @@ class Garmin247Data(Base247DataTemplate):
                     recorded_at = self._from_epoch_seconds(start_ts + offset_seconds)
                     samples.append(
                         TimeSeriesSampleCreate(
+                            route=SampleRoute.GARMIN_PULSE_OX,
                             id=uuid4(),
                             user_id=user_id,
                             source=self.provider_name,
@@ -1540,6 +1556,7 @@ class Garmin247Data(Base247DataTemplate):
         if systolic:
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_BLOOD_PRESSURE,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1556,6 +1573,7 @@ class Garmin247Data(Base247DataTemplate):
         if diastolic:
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_BLOOD_PRESSURE,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1611,6 +1629,7 @@ class Garmin247Data(Base247DataTemplate):
         if vo2_max:
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_USER_METRICS,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1626,6 +1645,7 @@ class Garmin247Data(Base247DataTemplate):
         if fitness_age:
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_USER_METRICS,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1681,6 +1701,7 @@ class Garmin247Data(Base247DataTemplate):
         if deviation is not None:
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_SKIN_TEMP,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1735,6 +1756,7 @@ class Garmin247Data(Base247DataTemplate):
         if heart_rate := summaries.get("heart_rate", {}).get("avgValue"):
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_HEALTH_SNAPSHOT,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1750,6 +1772,7 @@ class Garmin247Data(Base247DataTemplate):
         if rmssd := summaries.get("rmssd_hrv", {}).get("avgValue"):
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_HEALTH_SNAPSHOT,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1765,6 +1788,7 @@ class Garmin247Data(Base247DataTemplate):
         if sdrr := summaries.get("sdrr_hrv", {}).get("avgValue"):
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_HEALTH_SNAPSHOT,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1782,6 +1806,7 @@ class Garmin247Data(Base247DataTemplate):
         if stress is not None and stress >= 0:
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_HEALTH_SNAPSHOT,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1797,6 +1822,7 @@ class Garmin247Data(Base247DataTemplate):
         if spo2 := summaries.get("pulse_ox", {}).get("avgValue"):
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_HEALTH_SNAPSHOT,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,
@@ -1812,6 +1838,7 @@ class Garmin247Data(Base247DataTemplate):
         if respiration := summaries.get("respiration", {}).get("avgValue"):
             samples.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.GARMIN_HEALTH_SNAPSHOT,
                     id=uuid4(),
                     user_id=user_id,
                     source=self.provider_name,

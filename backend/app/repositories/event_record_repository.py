@@ -121,6 +121,27 @@ class EventRecordRepository(
             creation_data.pop(redundant_key, None)
         return data_source_id, self.model(**creation_data)
 
+    def overlapping_workout_on_same_source(self, db_session: DbSession, creator: EventRecordCreate) -> bool:
+        """Whether another workout already sits on the data source *creator* would land on,
+        overlapping it in time.
+
+        Two activities that overlap on one data source share its time series, and a
+        sample from one overwrites the other's at every second they both have. A device
+        records one activity at a time, so an overlap on one source means two recorders
+        the source cannot tell apart (two device-less uploads, two units of one model).
+        Resolves the source the way create does, which creates it if it is new.
+        """
+        data_source_id, _ = self._build_creation(db_session, creator)
+        query = db_session.query(self.model.id).filter(
+            self.model.data_source_id == data_source_id,
+            self.model.category == creator.category,
+            self.model.start_datetime < creator.end_datetime,
+            self.model.end_datetime > creator.start_datetime,
+        )
+        if creator.external_id is not None:
+            query = query.filter(self.model.external_id.is_distinct_from(creator.external_id))
+        return db_session.query(query.exists()).scalar() or False
+
     def account_for(self, db_session: DbSession, creator: EventRecordCreate) -> UUID | None:
         """The account ``_build_creation`` will file *creator* under, without creating anything.
 

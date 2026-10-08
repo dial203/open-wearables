@@ -27,7 +27,7 @@ from app.database import DbSession
 from app.repositories.data_point_series_repository import WriteCounts
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
-from app.schemas.enums import GRANULARITY_WINDOW_SECONDS, DataGranularity, DeviceType, SeriesType
+from app.schemas.enums import GRANULARITY_WINDOW_SECONDS, DataGranularity, DeviceType, SampleRoute, SeriesType
 from app.schemas.enums.aggregation_method import daily_total_flag
 from app.schemas.model_crud.activities import TimeSeriesSampleCreate
 from app.schemas.providers.google import (
@@ -600,6 +600,7 @@ class GoogleHealth247Data(Base247DataTemplate):
         device_type: DeviceType | None = None,
     ) -> TimeSeriesSampleCreate:
         return TimeSeriesSampleCreate(
+            route=(SampleRoute.GOOGLE_HEALTH_DAILY if is_daily_total else SampleRoute.GOOGLE_HEALTH_SAMPLES),
             id=uuid4(),
             user_id=user_id,
             source=GOOGLE_HEALTH_API_SOURCE,

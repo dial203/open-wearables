@@ -20,7 +20,7 @@ from app.constants.series_types.sdk import (
 from app.constants.workout_types import get_unified_sdk_workout_type
 from app.database import DbSession
 from app.repositories.user_connection_repository import UserConnectionRepository
-from app.schemas.enums import DeviceType, SeriesType, daily_total_flag
+from app.schemas.enums import DeviceType, SampleRoute, SeriesType, daily_total_flag
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -321,6 +321,7 @@ class ImportService:
             device_model, software_version, original_source_name = extract_device_info(rjson.source)
 
             sample = TimeSeriesSampleCreate(
+                route=SampleRoute.SDK_RECORDS,
                 id=uuid4(),
                 external_id=rjson.id,
                 user_id=user_uuid,
@@ -389,6 +390,7 @@ class ImportService:
             if series_type:
                 time_series_samples.append(
                     TimeSeriesSampleCreate(
+                        route=SampleRoute.SDK_WORKOUT_STATISTICS,
                         id=uuid4(),
                         external_id=None,
                         user_id=user_uuid,

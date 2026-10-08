@@ -39,6 +39,15 @@ from .provider import (
     ProviderName,
 )
 from .relay_visibility import RelayVisibility
+from .sample_route import (
+    ROUTE_BY_ID,
+    ROUTE_KIND_BY_ROUTE,
+    RouteKind,
+    SampleRoute,
+    route_id_for,
+    route_rank,
+    route_rank_sql,
+)
 from .sdk_connection_outcome import SdkConnectionOutcome
 from .series_types import (
     SERIES_TYPE_DEFINITIONS,
@@ -95,6 +104,13 @@ __all__ = [
     "IngestionRoute",
     "ProviderName",
     "RelayVisibility",
+    "ROUTE_BY_ID",
+    "ROUTE_KIND_BY_ROUTE",
+    "RouteKind",
+    "SampleRoute",
+    "route_id_for",
+    "route_rank",
+    "route_rank_sql",
     "DEFAULT_PROVIDER_PRIORITY",
     "HealthScoreCategory",
     "SdkConnectionOutcome",

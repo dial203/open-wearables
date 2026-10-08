@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 from app.database import DbSession
 from app.models import DataPointSeries
 from app.repositories import DataPointSeriesRepository
-from app.schemas.enums import SeriesType
+from app.schemas.enums import SampleRoute, SeriesType
 from app.schemas.model_crud.activities import TimeSeriesSampleCreate
 from app.services.event_record_service import event_record_service
 
@@ -85,6 +85,7 @@ class PolarRrImportService:
                 continue  # dropout gap: keep the clock moving, don't store a bogus beat
             creators.append(
                 TimeSeriesSampleCreate(
+                    route=SampleRoute.POLAR_RR_IMPORT,
                     id=uuid4(),
                     user_id=user_id,
                     provider="polar",

@@ -10,9 +10,12 @@ attribute saying whose night it was.
 
 from logging import getLogger
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
+from app.schemas.enums import SampleRoute
+from app.schemas.model_crud.activities import TimeSeriesSampleCreate
 from app.services.providers.apple.apple_xml.xml_service import XMLService
 
 logger = getLogger(__name__)
@@ -116,3 +119,51 @@ class TestTheImportDeclaresTheRealProvider:
 
         # Constructing it must not raise; that is what the old value did.
         assert ProviderName(service._wrap_sleep_data([]).provider) is ProviderName.APPLE
+
+
+def _hr_record(source_name: str | None, value: str, device: str | None = None) -> dict:
+    record = {
+        "type": "HKQuantityTypeIdentifierHeartRate",
+        "unit": "count/min",
+        "startDate": "2026-10-05 22:44:10 -0400",
+        "endDate": "2026-10-05 22:44:10 -0400",
+        "value": value,
+    }
+    if source_name is not None:
+        record["sourceName"] = source_name
+    if device is not None:
+        record["device"] = device
+    return record
+
+
+class TestSeriesRecordsAreKeyedOnTheirWriter:
+    """Two apps writing heart rate at the same second are two sources, not one row."""
+
+    def _sample(self, service: XMLService, record: dict) -> TimeSeriesSampleCreate:
+        sample = service._create_record(dict(record), uuid4())
+        assert sample is not None
+        return sample
+
+    def test_two_writers_that_name_no_device_stay_apart(self, service: XMLService) -> None:
+        polar = self._sample(service, _hr_record("Polar Flow", "142"))
+        oura = self._sample(service, _hr_record("Oura", "128"))
+
+        assert (polar.source, oura.source) == ("Polar Flow", "Oura")
+        assert polar.recorded_at == oura.recorded_at
+
+    def test_a_writer_named_after_a_vendor_is_still_an_apple_health_row(self, service: XMLService) -> None:
+        """ "Oura" is the writing app inside Apple Health, not Oura's own connection."""
+        oura = self._sample(service, _hr_record("Oura", "128"))
+
+        assert oura.provider == "apple"
+        assert oura.route == SampleRoute.APPLE_XML_RECORDS
+
+    def test_two_watches_of_one_model_are_told_apart_by_their_names(self, service: XMLService) -> None:
+        left = self._sample(service, _hr_record("Watch Left", "140", DEVICE_STRING))
+        right = self._sample(service, _hr_record("Watch Right", "141", DEVICE_STRING))
+
+        assert left.device_model == right.device_model == "Watch"
+        assert left.source != right.source
+
+    def test_a_record_naming_no_writer_keeps_the_old_source(self, service: XMLService) -> None:
+        assert self._sample(service, _hr_record(None, "70")).source == "apple_health_xml"
