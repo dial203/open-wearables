@@ -6,11 +6,11 @@ Upstream is [`the-momentum/open-wearables`](https://github.com/the-momentum/open
 
 | | |
 |---|---|
-| Generated | 2026-10-08 14:27 UTC |
-| Our ref | `HEAD` — e41ef52 (2026-10-08) Let an account be one declared device or file each record under its own |
+| Generated | 2026-10-08 14:35 UTC |
+| Our ref | `HEAD` — 4ad0a11 (2026-10-08) Merge remote-tracking branch 'origin/main' into claude/serene-davinci-s734wy |
 | Upstream `main` | a8c59af (2026-10-08) feat: extension point for add-on modules (#1795) |
 | Last common commit | e5c5f94 (2026-10-06) fix(frontend): show a notice instead of a 500 when outgoing webhooks are off (#1785) |
-| Commits we are ahead | 218 |
+| Commits we are ahead | 223 |
 | Upstream commits not merged | 19 |
 | Latest sync tag | _none yet_ |
 
@@ -38,7 +38,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 
 ## Diverged files
 
-515 files: 368 fork-only, 147 modified.
+521 files: 373 fork-only, 148 modified.
 
 ### `backend`
 
@@ -51,7 +51,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/api/routes/v1/connections.py` | modified | +326/-6 |
 | `backend/app/api/routes/v1/data_sources.py` | modified | +31/-2 |
 | `backend/app/api/routes/v1/devices.py` | fork-only | — |
-| `backend/app/api/routes/v1/events.py` | modified | +48/-1 |
+| `backend/app/api/routes/v1/events.py` | modified | +162/-2 |
 | `backend/app/api/routes/v1/import_xml.py` | modified | +54/-1 |
 | `backend/app/api/routes/v1/oauth.py` | modified | +86/-5 |
 | `backend/app/api/routes/v1/summaries.py` | modified | +83/-4 |
@@ -73,6 +73,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/integrations/celery/tasks/sync_vendor_data_task.py` | modified | +60/-6 |
 | `backend/app/main.py` | modified | +1/-0 |
 | `backend/app/mappings.py` | modified | +18/-0 |
+| `backend/app/middlewares.py` | modified | +4/-0 |
 | `backend/app/models/__init__.py` | modified | +10/-0 |
 | `backend/app/models/data_point_series.py` | modified | +12/-0 |
 | `backend/app/models/data_source.py` | modified | +66/-3 |
@@ -176,6 +177,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/app/services/summaries_service.py` | modified | +357/-77 |
 | `backend/app/services/timeseries_service.py` | modified | +64/-11 |
 | `backend/app/services/user_connection_service.py` | modified | +299/-35 |
+| `backend/app/services/workout_export_service.py` | fork-only | — |
 | `backend/app/utils/connection_context.py` | fork-only | — |
 | `backend/app/utils/device_naming.py` | fork-only | — |
 | `backend/app/utils/device_registry.py` | fork-only | — |
@@ -229,6 +231,7 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `backend/tests/api/v1/test_sync_data.py` | modified | +30/-2 |
 | `backend/tests/api/v1/test_timeseries_apple_hrv.py` | fork-only | — |
 | `backend/tests/api/v1/test_timeseries_oura_hrv.py` | fork-only | — |
+| `backend/tests/api/v1/test_workout_export.py` | fork-only | — |
 | `backend/tests/constants/test_device_types.py` | modified | +3/-1 |
 | `backend/tests/constants/test_sleep_stage_mapping.py` | fork-only | — |
 | `backend/tests/devices/__init__.py` | fork-only | — |
@@ -292,8 +295,9 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `docs/dev-guides/how-to-add-new-provider.mdx` | modified | +28/-1 |
 | `docs/dev-guides/integration-guide.mdx` | modified | +13/-0 |
 | `docs/dev-guides/multiple-provider-accounts.mdx` | fork-only | — |
-| `docs/docs.json` | modified | +8/-0 |
-| `docs/openapi.json` | modified | +11399/-6479 |
+| `docs/dev-guides/workout-export.mdx` | fork-only | — |
+| `docs/docs.json` | modified | +9/-0 |
+| `docs/openapi.json` | modified | +11345/-6086 |
 | `docs/providers/coverage.mdx` | modified | +180/-178 |
 | `docs/providers/google-api-integration.mdx` | modified | +3/-3 |
 | `docs/providers/polar-api-integration.mdx` | modified | +110/-1 |
@@ -503,6 +507,8 @@ Rationale for each intentional divergence lives in [DECISIONS.md](./DECISIONS.md
 | `frontend-react/src/lib/utils/clipboard.ts` | fork-only | — |
 | `frontend-react/src/lib/utils/device.test.ts` | fork-only | — |
 | `frontend-react/src/lib/utils/device.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/download.test.ts` | fork-only | — |
+| `frontend-react/src/lib/utils/download.ts` | fork-only | — |
 | `frontend-react/src/lib/utils/format.test.ts` | fork-only | — |
 | `frontend-react/src/lib/utils/format.ts` | fork-only | — |
 | `frontend-react/src/lib/utils/multipart.test.ts` | fork-only | — |
