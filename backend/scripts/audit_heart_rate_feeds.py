@@ -145,16 +145,19 @@ _WORKOUT_SPANS = """
 """
 
 _OVERLAPS = """
+    -- a is the earlier-starting workout of each pair (then by external_id, then id), so a pair
+    -- reads the same on every run rather than following the order of random UUIDs
     SELECT a.data_source_id, ds.provider, a.external_id, b.external_id,
            EXTRACT(EPOCH FROM LEAST(a.end_datetime, b.end_datetime) - GREATEST(a.start_datetime, b.start_datetime))
     FROM event_record a
     JOIN event_record b
-      ON b.data_source_id = a.data_source_id AND b.category = a.category AND a.id < b.id
+      ON b.data_source_id = a.data_source_id AND b.category = a.category
+     AND (a.start_datetime, COALESCE(a.external_id, ''), a.id) < (b.start_datetime, COALESCE(b.external_id, ''), b.id)
      AND b.start_datetime < a.end_datetime AND b.end_datetime > a.start_datetime
      AND b.external_id IS DISTINCT FROM a.external_id
     JOIN data_source ds ON ds.id = a.data_source_id
     WHERE a.category = 'workout' AND a.start_datetime < :end AND a.end_datetime > :start {user}
-    ORDER BY a.start_datetime
+    ORDER BY a.start_datetime, a.external_id, b.start_datetime, b.external_id, a.id, b.id
 """
 
 _UNTAGGED = """
