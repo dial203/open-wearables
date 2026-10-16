@@ -34,9 +34,12 @@ from .device_type import (
 from .entry_source import EntrySource
 from .health_score_category import HealthScoreCategory
 from .provider import (
+    ADD_ON_GRANTS,
     DEFAULT_PROVIDER_PRIORITY,
     IngestionRoute,
     ProviderName,
+    add_on_grants_of,
+    is_add_on_grant,
 )
 from .relay_visibility import RelayVisibility
 from .sample_route import (
@@ -103,6 +106,9 @@ __all__ = [
     "WORKOUTS_WITH_PACE",
     "IngestionRoute",
     "ProviderName",
+    "ADD_ON_GRANTS",
+    "add_on_grants_of",
+    "is_add_on_grant",
     "RelayVisibility",
     "ROUTE_BY_ID",
     "ROUTE_KIND_BY_ROUTE",

@@ -329,6 +329,8 @@ export interface Provider {
   icon_url: string;
   live_sync_mode: 'pull' | 'webhook' | null;
   live_sync_configurable: boolean;
+  /** Grants connecting this provider also asks for, e.g. ['polar_v4'] on Polar. */
+  add_on_grants?: string[];
 }
 
 export type WearableProvider =
@@ -575,6 +577,8 @@ export interface UserConnection {
   webhook_callback?: boolean;
   live_sync_mode?: 'pull' | 'webhook' | null;
   linked_user_ids?: string[];
+  /** Add-on grants held as part of this connection, e.g. ['polar_v4']. */
+  add_on_grants?: string[];
 }
 
 // ============================================================================

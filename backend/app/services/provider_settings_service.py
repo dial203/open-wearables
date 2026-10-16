@@ -1,16 +1,31 @@
+from app.config import settings
 from app.database import DbSession
 from app.models import ProviderSetting
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.auth import LiveSyncMode
-from app.schemas.enums import ProviderName
+from app.schemas.enums import ProviderName, add_on_grants_of, is_add_on_grant
 from app.schemas.model_crud.data_priority import (
     ProviderSettingRead,
     ProviderSettingUpdate,
 )
-from app.services.providers.base_strategy import ProviderCapabilities
+from app.services.providers.base_strategy import BaseProviderStrategy, ProviderCapabilities
 from app.services.providers.factory import ProviderFactory
 
 _NON_PROVIDER_NAMES = {ProviderName.UNKNOWN, ProviderName.INTERNAL}
+
+
+def listed_providers() -> list[ProviderName]:
+    """Providers a user connects and an admin configures: no sentinels, no add-on grants."""
+    return [p for p in ProviderName if p not in _NON_PROVIDER_NAMES and not is_add_on_grant(p.value)]
+
+
+def add_on_grant_enabled(grant: str) -> bool:
+    """Whether connecting the host asks for this grant. A deploy-time switch, not a provider setting."""
+    return grant == ProviderName.POLAR_V4.value and settings.polar_v4_enabled
+
+
+def enabled_add_on_grants(provider: str) -> list[str]:
+    return [grant for grant in add_on_grants_of(provider) if add_on_grant_enabled(grant)]
 
 
 def live_sync_mode_of(provider: str, provider_settings: dict[str, ProviderSetting]) -> LiveSyncMode | None:
@@ -37,9 +52,8 @@ class ProviderSettingsService:
         provider_settings = self.repo.get_all(db)
         return [
             name.value
-            for name in ProviderName
-            if name not in _NON_PROVIDER_NAMES
-            and include_in_periodic_pull(
+            for name in listed_providers()
+            if include_in_periodic_pull(
                 self.factory.get_provider(name.value).capabilities,
                 live_sync_mode_of(name.value, provider_settings),
                 is_historical=False,
@@ -65,6 +79,7 @@ class ProviderSettingsService:
             ),
             live_sync_configurable=strategy.live_sync_configurable,
             data_granularity=setting.data_granularity if setting else None,
+            add_on_grants=enabled_add_on_grants(provider_key),
         )
 
     def is_enabled(self, db: DbSession, provider: str) -> bool:
@@ -75,7 +90,7 @@ class ProviderSettingsService:
     def get_all_providers(self, db: DbSession) -> list[ProviderSettingRead]:
         """Get all providers merged with their DB settings and strategy metadata."""
         db_settings_map = self.repo.get_all(db)
-        return [self._to_read(p.value, db_settings_map) for p in ProviderName if p not in _NON_PROVIDER_NAMES]
+        return [self._to_read(p.value, db_settings_map) for p in listed_providers()]
 
     def update_provider_setting(
         self,
@@ -84,10 +99,7 @@ class ProviderSettingsService:
         update: ProviderSettingUpdate,
     ) -> ProviderSettingRead:
         """Update is_enabled and/or live_sync_mode for a provider."""
-        try:
-            strategy = self.factory.get_provider(provider)
-        except ValueError:
-            raise ValueError(f"Unknown provider: {provider}")
+        strategy = self._configurable_strategy(provider)
 
         if update.live_sync_mode is not None and not strategy.live_sync_configurable:
             raise ValueError(f"Provider '{provider}' does not support live sync mode configuration")
@@ -120,15 +132,22 @@ class ProviderSettingsService:
             ),
             live_sync_configurable=strategy.live_sync_configurable,
             data_granularity=setting.data_granularity,
+            add_on_grants=enabled_add_on_grants(provider),
         )
+
+    def _configurable_strategy(self, provider: str) -> BaseProviderStrategy:
+        # An add-on grant is configured through its host (Polar), not as a provider.
+        if is_add_on_grant(provider):
+            raise ValueError(f"Unknown provider: {provider}")
+        try:
+            return self.factory.get_provider(provider)
+        except ValueError:
+            raise ValueError(f"Unknown provider: {provider}")
 
     def bulk_update_providers(self, db: DbSession, updates: dict[str, bool]) -> list[ProviderSettingRead]:
         """Bulk update is_enabled for multiple providers."""
         for provider in updates:
-            try:
-                self.factory.get_provider(provider)
-            except ValueError:
-                raise ValueError(f"Unknown provider: {provider}")
+            self._configurable_strategy(provider)
 
         self.repo.bulk_update(db, updates)
         return self.get_all_providers(db)

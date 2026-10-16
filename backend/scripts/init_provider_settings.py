@@ -3,14 +3,14 @@
 from app.database import SessionLocal
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.auth import LiveSyncMode
-from app.schemas.enums import ProviderName
+from app.services.provider_settings_service import listed_providers
 from app.services.providers.factory import ProviderFactory
 
 
 def init_provider_settings() -> None:
     """Ensure all providers exist and have correct live_sync_mode defaults."""
     factory = ProviderFactory()
-    all_providers = [p.value for p in ProviderName if p.value not in ("unknown", "internal")]
+    all_providers = [p.value for p in listed_providers()]
 
     default_modes = {}
     for provider in all_providers:

@@ -11,17 +11,20 @@ from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.integrations.redis_client import get_redis_client
 from app.models import UserConnection
-from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.auth import ConnectionStatus
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.credentials import OAuthState
+from app.services.provider_settings_service import provider_settings_service
 from app.services.providers.factory import ProviderFactory
-from tests.factories import UserConnectionFactory, UserFactory
+from tests.factories import ApiKeyFactory, UserConnectionFactory, UserFactory
+from tests.utils import api_key_headers
 
 V4_AUTHORIZE = "https://auth.polar.com/oauth/authorize"
 V3_AUTHORIZE = "https://flow.polar.com/oauth2/authorization"
@@ -91,11 +94,11 @@ class TestAuthorizeStartsWithV4:
 
         assert _authorize(client, user_id=str(user.id)).startswith(V4_AUTHORIZE)
 
-    def test_straight_to_polar_when_the_admin_has_switched_v4_off(self, client: TestClient, db: Session) -> None:
+    def test_straight_to_polar_when_the_deployment_has_switched_v4_off(self, client: TestClient, db: Session) -> None:
         user = UserFactory()
-        ProviderSettingsRepository().upsert(db, ProviderName.POLAR_V4.value, is_enabled=False)
 
-        assert _authorize(client, user_id=str(user.id)).startswith(V3_AUTHORIZE)
+        with patch.object(settings, "polar_v4_enabled", False):
+            assert _authorize(client, user_id=str(user.id)).startswith(V3_AUTHORIZE)
 
     def test_reconnecting_one_named_account_reauthorizes_only_that_grant(self, client: TestClient, db: Session) -> None:
         user = UserFactory()
@@ -199,9 +202,45 @@ class TestV4CallbackHandsOnToPolar:
         assert response.headers["location"].startswith("/api/v1/oauth/error")
 
 
-class TestV4ProviderListing:
-    def test_v4_is_named_for_what_it_adds_and_wears_the_polar_icon(self, client: TestClient, db: Session) -> None:
+class TestPolarIsOneProvider:
+    def test_v4_is_not_listed_as_a_provider_of_its_own(self, client: TestClient, db: Session) -> None:
         providers = {p["provider"]: p for p in client.get("/api/v1/oauth/providers").json()}
 
-        assert providers["polar_v4"]["name"] == "Polar beat-to-beat (v4)"
-        assert providers["polar_v4"]["icon_url"] == "/static/provider-icons/polar.svg"
+        assert ProviderName.POLAR_V4.value not in providers
+        assert providers["polar"]["add_on_grants"] == [ProviderName.POLAR_V4.value]
+
+    def test_polar_lists_no_add_on_when_v4_is_switched_off(self, client: TestClient, db: Session) -> None:
+        with patch.object(settings, "polar_v4_enabled", False):
+            providers = {p["provider"]: p for p in client.get("/api/v1/oauth/providers").json()}
+
+        assert providers["polar"]["add_on_grants"] == []
+
+    def test_v4_cannot_be_configured_as_a_provider(self, db: Session) -> None:
+        with pytest.raises(ValueError, match="Unknown provider"):
+            provider_settings_service.bulk_update_providers(db, {ProviderName.POLAR_V4.value: False})
+
+    def test_v4_folds_into_the_polar_connection(self, client: TestClient, db: Session) -> None:
+        user = UserFactory()
+        headers = api_key_headers(ApiKeyFactory().plain_key)
+        UserConnectionFactory(user=user, provider=ProviderName.POLAR.value)
+        UserConnectionFactory(user=user, provider=ProviderName.POLAR_V4.value, provider_user_id=None)
+
+        response = client.get(f"/api/v1/users/{user.id}/connections", headers=headers)
+
+        assert response.status_code == 200
+        rows = response.json()
+        assert [r["provider"] for r in rows] == [ProviderName.POLAR.value]
+        assert rows[0]["add_on_grants"] == [ProviderName.POLAR_V4.value]
+
+    def test_disconnecting_polar_withdraws_the_v4_grant(self, client: TestClient, db: Session) -> None:
+        user = UserFactory()
+        headers = api_key_headers(ApiKeyFactory().plain_key)
+        UserConnectionFactory(user=user, provider=ProviderName.POLAR.value)
+        v4 = UserConnectionFactory(user=user, provider=ProviderName.POLAR_V4.value, provider_user_id=None)
+
+        with patch("app.services.providers.polar.oauth.PolarOAuth.deregister_user"):
+            response = client.delete(f"/api/v1/users/{user.id}/connections/polar", headers=headers)
+
+        assert response.status_code == 204
+        db.refresh(v4)
+        assert v4.status == ConnectionStatus.REVOKED

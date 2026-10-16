@@ -26,6 +26,7 @@ from app.models import DataSource, EventRecord, MenstrualCycleDetails, User
 from app.models.user_connection import UserConnection
 from app.repositories.repositories import CrudRepository
 from app.schemas.auth import ConnectionStatus
+from app.schemas.enums import ADD_ON_GRANTS
 from app.schemas.model_crud.user_management import (
     CREATED_BY_UNKNOWN,
     USER_SORT_COLUMNS,
@@ -287,4 +288,10 @@ class UserRepository(CrudRepository[User, UserCreateInternal, UserUpdateInternal
         else:
             columns.append(null().label("connections"))
 
-        return select(*columns).where(connection.user_id == page_user.id).correlate(page_user).lateral("conn_summary")
+        return (
+            select(*columns)
+            # An add-on grant (Polar v4) is part of its host's account, not a connection to list.
+            .where(connection.user_id == page_user.id, connection.provider.not_in([g.value for g in ADD_ON_GRANTS]))
+            .correlate(page_user)
+            .lateral("conn_summary")
+        )

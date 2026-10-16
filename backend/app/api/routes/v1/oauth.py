@@ -19,7 +19,7 @@ from app.schemas.model_crud.data_priority import (
     ProviderSettingUpdate,
 )
 from app.services import DeveloperDep, user_connection_service
-from app.services.provider_settings_service import provider_settings_service
+from app.services.provider_settings_service import add_on_grant_enabled, provider_settings_service
 from app.services.providers.base_strategy import BaseProviderStrategy
 from app.services.providers.factory import ProviderFactory
 from app.utils.structured_logging import log_structured
@@ -56,10 +56,10 @@ def _polar_v4_goes_first(db: DbSession, user_id: UUID) -> bool:
     exact RR. Without a v4 token at that moment the backfill stores v3's reconstructed
     beat clock, which a later v4 read cannot replace: the series upserts on timestamp and
     the two place beats differently. So v4 is authorised first, in the same click, and its
-    callback hands on to the ordinary Polar consent. Nothing to add when the admin has
-    switched polar_v4 off or the user already holds a v4 token.
+    callback hands on to the ordinary Polar consent. Nothing to add when the deployment has
+    switched v4 off (``POLAR_V4_ENABLED``) or the user already holds a v4 token.
     """
-    if not provider_settings_service.is_enabled(db, ProviderName.POLAR_V4.value):
+    if not add_on_grant_enabled(ProviderName.POLAR_V4.value):
         return False
     return not user_connection_service.get_accounts_for_provider(
         db, user_id, ProviderName.POLAR_V4.value, active_only=True

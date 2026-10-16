@@ -3,7 +3,7 @@ from logging import getLogger
 from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import CursorResult, and_, func, or_, select, tuple_, update
+from sqlalchemy import ColumnElement, CursorResult, and_, func, or_, select, tuple_, update
 from sqlalchemy.orm import Query
 from sqlalchemy.orm.exc import MultipleResultsFound
 
@@ -11,7 +11,7 @@ from app.database import DbSession
 from app.models import UserConnection
 from app.repositories.repositories import CrudRepository
 from app.schemas.auth import ConnectionStatus
-from app.schemas.enums import SdkConnectionOutcome
+from app.schemas.enums import ADD_ON_GRANTS, SdkConnectionOutcome
 from app.schemas.model_crud.user_management import (
     UserConnectionCreate,
     UserConnectionUpdate,
@@ -27,12 +27,17 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
     def __init__(self, model: type[UserConnection] = UserConnection):
         super().__init__(model)
 
+    def _counted(self) -> ColumnElement[bool]:
+        """Active connections that count as a connection: an add-on grant (Polar v4) is part
+        of its host's account, so a Polar user with beat-to-beat access is one connection."""
+        return and_(
+            self.model.status == ConnectionStatus.ACTIVE,
+            self.model.provider.not_in([grant.value for grant in ADD_ON_GRANTS]),
+        )
+
     def get_active_count(self, db_session: DbSession) -> int:
         """Get total count of active connections."""
-        return (
-            db_session.query(func.count(self.model.id)).filter(self.model.status == ConnectionStatus.ACTIVE).scalar()
-            or 0
-        )
+        return db_session.query(func.count(self.model.id)).filter(self._counted()).scalar() or 0
 
     def get_active_count_in_range(self, db_session: DbSession, start_date: datetime, end_date: datetime) -> int:
         """Get count of active connections created within a date range."""
@@ -40,7 +45,7 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
             db_session.query(func.count(self.model.id))
             .filter(
                 and_(
-                    self.model.status == ConnectionStatus.ACTIVE,
+                    self._counted(),
                     self.model.created_at >= start_date,
                     self.model.created_at < end_date,
                 ),
@@ -51,18 +56,13 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
 
     def get_users_with_active_conn_count(self, db_session: DbSession) -> int:
         """Count of distinct users with at least one active connection."""
-        return (
-            db_session.query(func.count(func.distinct(self.model.user_id)))
-            .filter(self.model.status == ConnectionStatus.ACTIVE)
-            .scalar()
-            or 0
-        )
+        return db_session.query(func.count(func.distinct(self.model.user_id))).filter(self._counted()).scalar() or 0
 
     def get_users_with_multi_active_conn_count(self, db_session: DbSession) -> int:
         """Count of distinct users with more than one active connection."""
         subq = (
             select(self.model.user_id)
-            .where(self.model.status == ConnectionStatus.ACTIVE)
+            .where(self._counted())
             .group_by(self.model.user_id)
             .having(func.count(self.model.id) > 1)
             .subquery()
@@ -73,7 +73,7 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         """Top providers by active connection count, returns (provider, count) pairs."""
         rows = (
             db_session.query(self.model.provider, func.count(self.model.id).label("cnt"))
-            .filter(self.model.status == ConnectionStatus.ACTIVE)
+            .filter(self._counted())
             .group_by(self.model.provider)
             .order_by(func.count(self.model.id).desc())
             .limit(limit)

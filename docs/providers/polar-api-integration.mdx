@@ -142,33 +142,40 @@ POLAR_V4_DEFAULT_SCOPE=training_sessions:read ppi_data:read
 ```
 
 3. Nothing else. No extra client id or secret is needed; v4 reuses `POLAR_CLIENT_ID` /
-   `POLAR_CLIENT_SECRET`.
+   `POLAR_CLIENT_SECRET`. To turn v4 off, set `POLAR_V4_ENABLED=false`.
 
-With `polar_v4` enabled in the provider settings (it is by default), connecting Polar is one
-step for the user and two Polar consent screens. `/api/v1/oauth/polar/authorize` returns the
-v4 authorization URL first; the v4 callback stores that token and redirects straight on to
-the ordinary Polar consent, carrying the same `redirect_uri` and account details. The
-historical sync that follows the Polar callback therefore always has v4 in place. The v4
-step is skipped when the user already holds an active v4 token, and when the call
-re-authorizes one named account (`connection_id`). If the user declines the v4 screen, the
-flow still continues to the Polar one, so they end up with an ordinary v3 connection.
+Polar is one provider. The v4 grant is part of the Polar connection, not a provider of its
+own: it is not in the provider list or the provider settings, the pairing pages and connect
+widget show Polar once, the coverage tables have one Polar column, and a user's connections
+list shows one Polar connection carrying `add_on_grants: ["polar_v4"]` once beat-to-beat
+access is granted. `GET /api/v1/oauth/providers` reports `add_on_grants: ["polar_v4"]` on
+Polar while v4 is switched on, so a client can warn that Polar will show two consent screens.
+
+With v4 on (`POLAR_V4_ENABLED=true`, the default), connecting Polar is one step for the user
+and two Polar consent screens. `/api/v1/oauth/polar/authorize` returns the v4 authorization
+URL first; the v4 callback stores that token and redirects straight on to the ordinary Polar
+consent, carrying the same `redirect_uri` and account details. The historical sync that
+follows the Polar callback therefore always has v4 in place. The v4 step is skipped when the
+user already holds an active v4 token, and when the call re-authorizes one named account
+(`connection_id`). If the user declines the v4 screen, the flow still continues to the Polar
+one, so they end up with an ordinary v3 connection.
 
 <Warning>
-With `polar_v4` enabled, every Polar connection starts at `auth.polar.com`. If the v4
-callback URL from step 1 is not registered on your AccessLink client, Polar shows an error
-there and the user never reaches the Polar consent. Register it, or switch `polar_v4` off in
-the provider settings to go back to v3 only.
+With v4 on, every Polar connection starts at `auth.polar.com`. If the v4 callback URL from
+step 1 is not registered on your AccessLink client, Polar shows an error there and the user
+never reaches the Polar consent. Register it, or set `POLAR_V4_ENABLED=false` to go back to
+v3 only.
 </Warning>
 
-The pairing pages list Polar once. `polar_v4` stays in the provider list (as "Polar
-beat-to-beat (v4)") so the admin can switch it off, and so v4 can be linked on its own via
-`/api/v1/oauth/polar_v4/authorize?user_id=...` for a user who connected Polar before v4 was
-set up.
+A user who connected Polar before v4 was set up gets it by connecting Polar again
+(`/api/v1/oauth/polar/authorize` without `connection_id`): with no v4 token on file, the flow
+asks for it first, then re-authorizes their Polar account.
 
-The `polar_v4` connection is a token holder only. It declares no coverage and a scheduled
-sync over it does nothing: the v4 endpoints are read during the Polar sync, and all
-v4-derived data is filed under the user's ordinary Polar data source. A v4 token without a
-Polar connection syncs nothing.
+Under the hood the v4 token is stored as its own `polar_v4` connection row, because it comes
+from a different OAuth server; that row is never surfaced as a connection. A scheduled sync
+over it does nothing: the v4 endpoints are read during the Polar sync, and all v4-derived
+data is filed under the user's ordinary Polar data source. Disconnecting the user's last
+Polar account also revokes the v4 grant.
 
 | | v3 | v4 |
 |---|---|---|

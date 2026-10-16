@@ -6,7 +6,7 @@ from app.database import DbSession
 from app.models import UserConnection
 from app.repositories.data_source_repository import DataSourceRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
-from app.schemas.enums import ProviderName, SdkConnectionOutcome
+from app.schemas.enums import ProviderName, SdkConnectionOutcome, add_on_grants_of
 from app.schemas.model_crud.user_management import (
     UserConnectionAccountUpdate,
     UserConnectionCreate,
@@ -360,10 +360,25 @@ class UserConnectionService(
                 revoked_at=connection.updated_at.isoformat(),
             )
 
+        self._release_add_on_grants(db_session, user_id, provider, reason)
+
         if not revoked_any:
             # Every target was already revoked. Idempotent, as before: the caller
             # asked for a state that already holds.
             return
+
+    def _release_add_on_grants(self, db_session: DbSession, user_id: UUID, provider: str, reason: str) -> None:
+        """Revoke the grants riding on ``provider`` once the user has no active account left with it.
+
+        A Polar v4 token is part of the person's Polar connection; with Polar gone it syncs
+        nothing, and keeping it would hold a grant the person believes they withdrew.
+        """
+        grants = add_on_grants_of(provider)
+        if not grants or self.get_accounts_for_provider(db_session, user_id, provider, active_only=True):
+            return
+        for grant in grants:
+            if self.get_accounts_for_provider(db_session, user_id, grant, active_only=True):
+                self.disconnect(db_session, user_id, grant, reason=reason)
 
     def _disconnect_targets(
         self,

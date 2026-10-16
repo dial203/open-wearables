@@ -1292,3 +1292,22 @@ then tell the watch's own data from an app's.
   `scripts/data_migrations/backfill_garmin_sleep_end_datetime.py` built libpq `key=value`
   strings by hand, which break on spaces or quotes; they now pass keyword arguments
   (`make_conninfo` in the backfill, matching `backfill_is_daily_total.py`).
+
+## Polar AccessLink v4 is folded into Polar everywhere
+
+- **Area**: backend / frontend / docs
+- **Status**: active
+- **On conflict**: keep ours. When upstream adds a place that enumerates `ProviderName`
+  (provider lists, settings, coverage, connection counts), skip add-on grants there too.
+- **Why**: The v4 grant is stored as its own `polar_v4` connection row because it comes from
+  a separate OAuth server, and that row leaked out as a second provider: in the provider
+  list and settings, the coverage matrix ("Polar V4" column), the user list, a user's
+  connections, and the dashboard connection counts. Only the React pairing page filtered it.
+  `ADD_ON_GRANTS` in `app/schemas/enums/provider.py` now maps the grant to its host, and
+  every surface that lists providers or connections skips it: the provider list reports
+  `add_on_grants: ["polar_v4"]` on Polar instead, and the connections list folds the v4 row
+  into the Polar connection as `add_on_grants`. The on/off switch moved from the
+  `polar_v4` provider setting, which no longer appears in the settings page, to
+  `POLAR_V4_ENABLED`. Disconnecting the last Polar account now revokes the v4 grant as well.
+  The enum value, the `/oauth/polar_v4/callback` URL registered with Polar, and the token
+  row are unchanged.

@@ -16,7 +16,6 @@ import { useMemo, useState } from 'react';
 import { API_CONFIG } from '@/lib/api/config';
 import { isAuthenticated } from '@/lib/auth/session';
 import { ACCOUNT_TYPES, type AccountType } from '@/lib/api/types';
-import { ADD_ON_PROVIDERS, isAddOnProvider } from '@/lib/constants/providers';
 
 export const Route = createFileRoute('/users/$userId/pair/')({
   component: PairWearablePage,
@@ -55,35 +54,40 @@ function PairWearablePage() {
 
   const displayProviders = useMemo(() => {
     if (!apiProviders) return [];
-    return apiProviders
-      .filter((apiProvider) => !isAddOnProvider(apiProvider.provider))
-      .map((apiProvider) => {
-        const linkedCount = accountCounts.get(apiProvider.provider) ?? 0;
-        return {
-          id: apiProvider.provider,
-          name: apiProvider.name,
-          description: linkedCount
-            ? `${linkedCount} account${linkedCount > 1 ? 's' : ''} linked`
-            : 'Connect your device',
-          logoPath: apiProvider.icon_url
-            ? `${API_CONFIG.baseUrl}${apiProvider.icon_url}`
-            : '',
-          isAvailable: apiProvider.is_enabled,
-          linkedCount,
-        };
-      });
+    return apiProviders.map((apiProvider) => {
+      const linkedCount = accountCounts.get(apiProvider.provider) ?? 0;
+      return {
+        id: apiProvider.provider,
+        name: apiProvider.name,
+        description: linkedCount
+          ? `${linkedCount} account${linkedCount > 1 ? 's' : ''} linked`
+          : 'Connect your device',
+        logoPath: apiProvider.icon_url
+          ? `${API_CONFIG.baseUrl}${apiProvider.icon_url}`
+          : '',
+        isAvailable: apiProvider.is_enabled,
+        linkedCount,
+      };
+    });
   }, [apiProviders, accountCounts]);
 
   // Whether connecting this provider will also ask for an add-on grant first
   // (Polar's beat-to-beat v4 access), so the person expects a second consent
   // screen rather than wondering why Polar asked twice.
-  const asksForAddOn = (providerId: string) =>
-    (apiProviders ?? []).some(
-      (p) =>
-        ADD_ON_PROVIDERS[p.provider] === providerId &&
-        p.is_enabled &&
-        !accountCounts.get(p.provider)
+  const asksForAddOn = (providerId: string) => {
+    const grants =
+      (apiProviders ?? []).find((p) => p.provider === providerId)
+        ?.add_on_grants ?? [];
+    return (
+      grants.length > 0 &&
+      !(connections ?? []).some(
+        (c) =>
+          c.provider === providerId &&
+          c.status === 'active' &&
+          grants.every((g) => c.add_on_grants?.includes(g))
+      )
     );
+  };
 
   const connectingProviderData = connectingProvider
     ? displayProviders.find((p) => p.id === connectingProvider)

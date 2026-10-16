@@ -187,3 +187,8 @@ class UserConnectionWithCapabilities(UserConnectionRead):
     # account whose provider sends device metadata labels itself. Empty for
     # providers that report none (Whoop), where `device_label` is the fallback.
     observed_devices: list[str] = Field(default_factory=list)
+    # Add-on grants the user holds on this provider, e.g. ["polar_v4"] when Polar's
+    # beat-to-beat (AccessLink v4) access is granted. They are part of this connection,
+    # not connections of their own, and are held per user, so every account with the
+    # provider carries them.
+    add_on_grants: list[str] = Field(default_factory=list)

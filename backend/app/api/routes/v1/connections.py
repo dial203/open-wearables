@@ -9,7 +9,7 @@ from app.database import DbSession
 from app.models import ProviderSetting, UserConnection
 from app.repositories.data_source_repository import DataSourceRepository
 from app.schemas.auth import ConnectionStatus, LiveSyncMode, SDKAuthContext
-from app.schemas.enums import ProviderName
+from app.schemas.enums import ProviderName, add_on_grants_of, is_add_on_grant
 from app.schemas.model_crud.user_management import (
     DeviceDetectRequest,
     DeviceDetectResult,
@@ -39,8 +39,10 @@ def _with_capabilities(
     account_index: int = 1,
     account_count: int = 1,
     observed_devices: list[str] | None = None,
+    add_on_grants: list[str] | None = None,
 ) -> UserConnectionWithCapabilities:
     enriched = UserConnectionWithCapabilities.model_validate(conn)
+    enriched.add_on_grants = add_on_grants or []
     enriched.account_index = account_index
     enriched.account_count = account_count
     enriched.observed_devices = observed_devices or []
@@ -78,9 +80,15 @@ def get_connections_endpoint(
     contain more than one entry per provider. ``account_index`` / ``account_count``
     position each one within its provider (oldest first) and ``display_label``
     names it, so a client can render three Garmins without guessing which is which.
+
+    Add-on grants are not listed as connections: Polar's beat-to-beat (v4) access shows
+    as ``add_on_grants: ["polar_v4"]`` on the user's Polar connection.
     """
     settings_map = provider_settings_service.get_settings_map(db)
-    connections = user_connection_service.get_connections_by_user(db, user_id)
+    every_row = user_connection_service.get_connections_by_user(db, user_id)
+    # Add-on grants (Polar v4) are folded into their host's connection rather than listed.
+    held_grants = {c.provider for c in every_row if is_add_on_grant(c.provider) and c.status == ConnectionStatus.ACTIVE}
+    connections = [c for c in every_row if not is_add_on_grant(c.provider)]
     provider_pairs = [
         (c.provider, c.provider_user_id)
         for c in connections
@@ -97,6 +105,7 @@ def get_connections_endpoint(
             linked_map.get((conn.provider, conn.provider_user_id)) if conn.provider_user_id else None,
             *positions[conn.id],
             observed_devices=observed.get(conn.id, []),
+            add_on_grants=[g for g in add_on_grants_of(conn.provider) if g in held_grants],
         )
         for conn in connections
     ]
@@ -146,6 +155,11 @@ def _enriched_account(db: DbSession, connection: UserConnection) -> UserConnecti
     siblings = user_connection_service.get_accounts_for_provider(db, connection.user_id, connection.provider)
     index = next((i for i, c in enumerate(siblings, start=1) if c.id == connection.id), 1)
     observed = data_source_repo.observed_devices_by_connection(db, connection.user_id)
+    held_grants = [
+        g
+        for g in add_on_grants_of(connection.provider)
+        if user_connection_service.get_accounts_for_provider(db, connection.user_id, g, active_only=True)
+    ]
     return _with_capabilities(
         connection,
         settings_map,
@@ -153,6 +167,7 @@ def _enriched_account(db: DbSession, connection: UserConnection) -> UserConnecti
         index,
         len(siblings),
         observed_devices=observed.get(connection.id, []),
+        add_on_grants=held_grants,
     )
 
 

@@ -15,4 +15,6 @@ export type Connection = {
 	webhook_callback: boolean;
 	live_sync_mode: string | null;
 	linked_user_ids: string[];
+	/** Extra grants that are part of this connection, e.g. Polar's beat-to-beat v4 access. */
+	add_on_grants?: string[];
 };

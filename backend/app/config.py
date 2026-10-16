@@ -229,6 +229,10 @@ class Settings(BaseSettings):
     # v4 reuses the same AccessLink client credentials but issues scoped tokens from
     # auth.polar.com. Only the scopes we actually read are requested.
     polar_v4_default_scope: str = "training_sessions:read ppi_data:read"
+    # Whether connecting Polar asks for the v4 grant first. Part of Polar rather than a
+    # provider switch of its own; turn it off if the v4 callback is not registered on the
+    # AccessLink client, or every Polar connection stops at auth.polar.com.
+    polar_v4_enabled: bool = True
 
     # WHOOP OAUTH SETTINGS
     whoop_client_id: str | None = None

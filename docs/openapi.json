@@ -853,7 +853,7 @@
           "External: Connections"
         ],
         "summary": "Get Connections Endpoint",
-        "description": "Get all connections for a user, enriched with provider capability metadata.\n\nA user may hold several accounts with the same provider, so this list can\ncontain more than one entry per provider. ``account_index`` / ``account_count``\nposition each one within its provider (oldest first) and ``display_label``\nnames it, so a client can render three Garmins without guessing which is which.",
+        "description": "Get all connections for a user, enriched with provider capability metadata.\n\nA user may hold several accounts with the same provider, so this list can\ncontain more than one entry per provider. ``account_index`` / ``account_count``\nposition each one within its provider (oldest first) and ``display_label``\nnames it, so a client can render three Garmins without guessing which is which.\n\nAdd-on grants are not listed as connections: Polar's beat-to-beat (v4) access shows\nas ``add_on_grants: [\"polar_v4\"]`` on the user's Polar connection.",
         "operationId": "get_connections_endpoint_api_v1_users__user_id__connections_get",
         "security": [
           {
@@ -20719,6 +20719,14 @@
               }
             ],
             "description": "How finely 24/7 data is stored ('daily', 'hourly', 'raw'). Null = provider default."
+          },
+          "add_on_grants": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Add On Grants",
+            "description": "Extra grants that belong to this provider's accounts rather than being providers of their own, e.g. ['polar_v4'] (Polar's beat-to-beat AccessLink v4 access) on Polar."
           }
         },
         "type": "object",
@@ -24915,6 +24923,13 @@
             },
             "type": "array",
             "title": "Observed Devices"
+          },
+          "add_on_grants": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Add On Grants"
           },
           "device_attribution": {
             "$ref": "#/components/schemas/DeviceAttribution",

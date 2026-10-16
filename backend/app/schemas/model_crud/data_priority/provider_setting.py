@@ -30,6 +30,13 @@ class ProviderSettingRead(BaseModel):
         None,
         description="How finely 24/7 data is stored ('daily', 'hourly', 'raw'). Null = provider default.",
     )
+    add_on_grants: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Extra grants that belong to this provider's accounts rather than being providers of"
+            " their own, e.g. ['polar_v4'] (Polar's beat-to-beat AccessLink v4 access) on Polar."
+        ),
+    )
 
 
 class ProviderSettingUpdate(BaseModel):

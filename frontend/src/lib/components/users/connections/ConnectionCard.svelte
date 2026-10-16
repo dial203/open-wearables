@@ -25,12 +25,18 @@
 	} = $props();
 
 	const shared = $derived(connection.linked_user_ids.length);
+	// Polar's AccessLink v4 grant belongs to the Polar connection, never a card of its own.
+	const beatToBeat = $derived(connection.add_on_grants?.includes('polar_v4') ?? false);
 </script>
 
 <article class="flex flex-col gap-3 rounded-xl border border-border bg-background p-4">
 	<ConnectionHeader {connection} {label} {onrevoke} {onpurge} />
 
 	<ConnectionRoutes {connection} {viaSdk} />
+
+	{#if beatToBeat}
+		<p class="text-xs text-muted-foreground">Includes beat-to-beat (AccessLink v4) access.</p>
+	{/if}
 
 	{#if shared > 0}
 		<p class="text-xs text-muted-foreground">

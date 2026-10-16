@@ -63,9 +63,29 @@ class ProviderName(str, Enum):
         return cls.UNKNOWN
 
 
+# Grants that ride on another provider's account rather than being a provider of their
+# own: grant -> the provider whose account it belongs to. Polar's AccessLink v4 token is
+# the beat-to-beat grant on the person's Polar account. These keep their own enum value
+# (it names the OAuth server, the callback URL and the token row), but everywhere a
+# provider is listed or shown they are folded into the host: one Polar, never two.
+ADD_ON_GRANTS: dict[ProviderName, ProviderName] = {
+    ProviderName.POLAR_V4: ProviderName.POLAR,
+}
+
+
+def is_add_on_grant(provider: str) -> bool:
+    return provider in {grant.value for grant in ADD_ON_GRANTS}
+
+
+def add_on_grants_of(host: str) -> list[str]:
+    """The add-on grants that belong to ``host``'s accounts."""
+    return [grant.value for grant, owner in ADD_ON_GRANTS.items() if owner.value == host]
+
+
 # Default order for a fresh deployment. Covers every provider a user can connect;
 # UNKNOWN and INTERNAL are deliberately absent because they are not configurable;
-# POLAR_V4 is too, because it only holds tokens and its data files under POLAR.
+# add-on grants (POLAR_V4) are too, because they hold tokens and their data files under
+# the host provider.
 DEFAULT_PROVIDER_PRIORITY: dict[ProviderName, int] = {
     ProviderName.APPLE: 1,
     ProviderName.GARMIN: 2,
