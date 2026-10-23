@@ -85,7 +85,12 @@ class SourceActivityRepository:
             )
             .group_by(HealthScore.data_source_id, HealthScore.category)
         )
-        return [SourceActivityRow(r[0], _value_of(r[1]), r[2], r[3], r[4]) for r in db_session.execute(stmt).all()]
+        # data_source_id IS NOT NULL is in the query; the check only narrows the type.
+        return [
+            SourceActivityRow(r[0], _value_of(r[1]), r[2], r[3], r[4])
+            for r in db_session.execute(stmt).all()
+            if r[0] is not None
+        ]
 
     def metrics(self, db_session: DbSession, user_id: UUID, days: int) -> list[SourceActivityRow]:
         """Which time-series a source carries: heart rate, HRV, SpO2, steps.

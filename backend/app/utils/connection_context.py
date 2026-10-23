@@ -24,7 +24,7 @@ scope. The value is a connection *id* rather than an ORM object on purpose: an
 object would outlive its session.
 """
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from uuid import UUID
@@ -38,7 +38,7 @@ def get_active_connection_id() -> UUID | None:
 
 
 @contextmanager
-def active_connection(connection_id: UUID | None) -> Iterator[None]:
+def active_connection(connection_id: UUID | None) -> Generator[None]:
     """Bind provider credential lookups to one account for the duration of the block.
 
     ``None`` clears any inherited scope rather than leaving the enclosing one in

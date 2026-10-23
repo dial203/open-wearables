@@ -260,6 +260,8 @@ class DeviceTimelineService:
         counts: dict[str, bool] = {}
         evidence: list[Evidence] = []
         for at, model in rows:
+            if model is None:  # excluded by the query; narrows the type
+                continue
             if model not in counts:
                 counts[model] = is_evidence_device(model)
             if counts[model]:

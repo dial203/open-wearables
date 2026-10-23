@@ -112,6 +112,10 @@ adopting it.
 
 **Declined divergences** (revisit only if the human asks):
 
+- OW native Sleep/Resilience scores, deprecated upstream in #1968 and removed from
+  2026-11-06. Take upstream's removal; do not keep the code or adopt the extension. See
+  `docs/fork/DECISIONS.md`.
+
 - MCP HTTP transport + OAuth, reverted upstream in #1640. Restore with
   `git revert 126735d9`, keep the current `README.md` on the one conflict, re-add the
   local-or-remote bullet to its MCP section. ~626 lines, `mcp/app/oauth.py` has no

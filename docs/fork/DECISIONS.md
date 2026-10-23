@@ -1465,3 +1465,19 @@ then tell the watch's own data from an app's.
   rows under a window-kind route (`manual.windows`) rather than being inferred from
   sample spacing, for the same reason the Oura and Apple windows are stated, never
   guessed.
+
+## OW native health scores follow upstream's deprecation
+
+- **Area**: backend, frontend
+- **Status**: active
+- **On conflict**: take theirs
+- **Why**: Upstream deprecated its own Sleep Score and Resilience Score (#1968): from
+  2026-11-06 it stops computing new `provider: internal` scores and removes the code,
+  which moves to a separately licensed extension. Decided 2026-10-23 not to keep the
+  scoring code as a fork divergence or adopt the extension. When the removal lands, take
+  upstream's deletion as is. Scores already computed stay in the database and are still
+  returned by `/health-scores`; provider scores (Garmin, Oura, Whoop, Polar, ...) are
+  unaffected. The React dashboard's scores section
+  (`frontend-react/src/components/user/scores-section.tsx`) keeps showing historical
+  internal scores; if the removal breaks an import there, drop the internal-score
+  handling rather than restore the code.

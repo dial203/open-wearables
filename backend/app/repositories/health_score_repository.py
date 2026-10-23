@@ -65,7 +65,7 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
         query = db_session.query(HealthScore).filter(and_(*filters))
 
         total_count = query.count()
-        results = query.order_by(desc(HealthScore.recorded_at)).offset(params.offset).limit(params.limit).all()
+        results = query.order_by(HealthScore.recorded_at.desc()).offset(params.offset).limit(params.limit).all()
         return results, total_count
 
     def bulk_create(self, db_session: DbSession, creators: list[HealthScoreCreate]) -> WriteCounts:
@@ -95,7 +95,7 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
         return (
             db_session.query(HealthScore)
             .filter(HealthScore.user_id == user_id, HealthScore.category == category)
-            .order_by(desc(HealthScore.recorded_at))
+            .order_by(HealthScore.recorded_at.desc())
             .first()
         )
 
@@ -189,9 +189,9 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
             if not page:
                 return []
             ordering = (
-                (desc(HealthScore.recorded_at), desc(HealthScore.id))
+                (HealthScore.recorded_at.desc(), HealthScore.id.desc())
                 if descending
-                else (asc(HealthScore.recorded_at), asc(HealthScore.id))
+                else (HealthScore.recorded_at.asc(), HealthScore.id.asc())
             )
             query = query.filter(day.in_(page)).order_by(*ordering)
             rows = query.all()
@@ -199,14 +199,14 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
             cursor_ts, cursor_id, direction = decode_cursor(cursor)
             if direction == "prev":
                 query = query.filter(tuple_(HealthScore.recorded_at, HealthScore.id) < (cursor_ts, cursor_id)).order_by(
-                    desc(HealthScore.recorded_at), desc(HealthScore.id)
+                    HealthScore.recorded_at.desc(), HealthScore.id.desc()
                 )
             else:
                 query = query.filter(tuple_(HealthScore.recorded_at, HealthScore.id) > (cursor_ts, cursor_id)).order_by(
-                    asc(HealthScore.recorded_at), asc(HealthScore.id)
+                    HealthScore.recorded_at.asc(), HealthScore.id.asc()
                 )
         else:
-            query = query.order_by(asc(HealthScore.recorded_at), asc(HealthScore.id))
+            query = query.order_by(HealthScore.recorded_at.asc(), HealthScore.id.asc())
 
         if not page_by_date:
             rows = query.limit(limit + 1).all()
@@ -255,6 +255,6 @@ class HealthScoreRepository(CrudRepository[HealthScore, HealthScoreCreate, Healt
             db_session.query(HealthScore)
             .filter(HealthScore.user_id == user_id)
             .distinct(HealthScore.category)
-            .order_by(HealthScore.category, desc(HealthScore.recorded_at))
+            .order_by(HealthScore.category, HealthScore.recorded_at.desc())
             .all()
         )

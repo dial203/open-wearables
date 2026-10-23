@@ -58,7 +58,7 @@ _MEAN_PLACES = Decimal("0.001")
 
 # A stored sample as the export reads it: recorded_at, zone_offset, series type id,
 # value, data source id, provider_metadata.
-_SampleRow = Row[tuple[datetime, str | None, int, Decimal, UUID, dict[str, Any] | None]]
+_SampleRow = Row[datetime, str | None, int, Decimal, UUID, dict[str, Any] | None]
 
 # Heart rate first, since it is what most exports are for; everything else in id order.
 _TYPE_ORDER_FIRST = (SeriesType.heart_rate,)

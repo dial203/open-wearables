@@ -6,7 +6,7 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeVar, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import CursorResult, and_, asc, delete, func, select
+from sqlalchemy import CursorResult, and_, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -715,7 +715,7 @@ class DataSourceRepository(
         rows = (
             db_session.query(UserConnection.id, UserConnection.created_at)
             .filter(UserConnection.user_id == user_id, UserConnection.provider == provider.value)
-            .order_by(asc(UserConnection.created_at))
+            .order_by(UserConnection.created_at.asc())
             .all()
         )
         return [(row[0], row[1]) for row in rows]
@@ -1345,6 +1345,8 @@ class DataSourceRepository(
         )
         observed: dict[UUID, list[str]] = {}
         for connection_id, device_model in rows:
+            if connection_id is None or device_model is None:  # excluded by the query; narrows the types
+                continue
             if is_handset_model(device_model):
                 continue
             name = humanize_device_model(device_model) or device_model
@@ -1397,7 +1399,7 @@ class DataSourceRepository(
         return (
             db_session.query(self.model)
             .filter(self.model.user_id == user_id)
-            .order_by(asc(self.model.provider), asc(self.model.device_model))
+            .order_by(self.model.provider.asc(), self.model.device_model.asc())
             .all()
         )
 

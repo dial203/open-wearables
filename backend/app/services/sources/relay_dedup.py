@@ -52,6 +52,7 @@ Known limits, stated because they decide whether an analysis can trust this:
   tolerance.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -528,7 +529,7 @@ def _direct_source_count(candidates: "_Candidates") -> int:
 def build_event_plan(
     db_session: DbSession,
     user_id: UUID,
-    categories: list[str],
+    categories: Sequence[str],
     start: datetime | None = None,
     end: datetime | None = None,
 ) -> RelayDedupPlan:
@@ -564,7 +565,7 @@ def build_event_plan(
 def build_score_plan(
     db_session: DbSession,
     user_id: UUID,
-    categories: list[str],
+    categories: Sequence[str],
     start: datetime | None = None,
     end: datetime | None = None,
 ) -> RelayDedupPlan:
